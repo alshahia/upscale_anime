@@ -1,0 +1,272 @@
+base: base.yaml
+
+# -------------------------------------------------------------------------
+# V7 — ANIME SOTA CONFIG (2026-06-14)
+# -------------------------------------------------------------------------
+# Synthesizes Phase A (APISR two-stage degradation + shuffled resize) +
+# Phase B (XDoG/USM pseudo-GT) + Phase C (loss rebalance) + Phase D
+# (EMA + NR-IQA) from the v7 roadmap.
+# Inherits base: base.yaml for default values, then overrides per v6.
+# -------------------------------------------------------------------------
+
+# Checkpoint Management
+output:
+  run_name: NEOSR_SPAN_V7_ANIME
+  duplicate_handling: auto_increment
+  log_dir: null
+  results_dir: null
+
+data:
+  batch_size: 128
+  crop_size: 64
+  num_workers: 8
+  prefetch_factor: 4
+
+  sample_ratio: null
+
+  datasets:
+    - name: anime_faces
+      hr_dir: data/anime_faces
+      enabled: true
+      weight: 1.0
+      sample_ratio: 1.0
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true
+      weight: 1.0
+      sample_ratio: 1.0
+
+  preprocessing:
+    mode: "hybrid"
+
+    storage:
+      available_space_gb: 10
+      crop_size: 64
+      format: "png"
+
+    dataset_sampling:
+      anime_hr_v6: 1.0
+
+    precomputed:
+      enabled: false
+      base_dir: "data/precomputed_4x"
+      cache_in_memory: false
+
+    hybrid:
+      precomputed_base: false
+      base_dir: "data/precomputed_4x"
+      runtime_augmentation:
+        enabled: false
+        blur_prob: 0.3
+        noise_sigma: [0, 15]
+        jpeg_quality: [75, 95]
+        quantization: true
+        quantization_levels: [8, 16]
+
+    gpu_degradation:
+      enabled: false
+      modules:
+        blur: true
+        directional_blur: true
+        noise: true
+        quantization: true
+        banding: true
+        ringing: true
+      blur_prob: 0.5
+      noise_prob: 0.4
+      quantization_prob: 0.3
+
+    quality_adaptive:
+      enabled: false
+      cache_scores: true
+      tier_thresholds:
+        light: 75
+        medium: 45
+        heavy: 0
+
+    # === LINE ENHANCEMENT (XDoG Pseudo-GT) — Phase B ===
+    line_enhancement:
+      enabled: true
+      apply_to_gt: true
+      pseudo_gt_mode: "apisr"   # full APISR pipeline (3-round USM + XDoG + composite)
+      usm_rounds: 3
+      usm_radius: 50
+      usm_sigma: 0
+      usm_threshold: 10
+      usm_weight: 0.5
+      xdog_sigma: 0.6
+      xdog_k: 2.5
+      xdog_gamma: 0.97
+      xdog_eps: -15.0
+      xdog_phi: 1.0e9
+      outlier_min_size: 32
+      dilation_threshold: 3
+
+  # === APISR-STYLE DEGRADATION (Phase A) ===
+  degradation:
+    enabled: true
+    mode: anime_heavy
+    degrade_before_crop: true
+    shuffled_resize: true
+    two_stage_compression: true
+    compression_stage1:
+      - jpeg
+      - webp
+    compression_stage2:
+      - avif
+      - h264
+      - h265
+      - jpeg
+    compression_prob: 0.8
+    blur_prob: 0.8
+    blur_sigma: [0.1, 3.0]
+    noise_prob: 0.6
+    noise_sigma: [0, 30]
+    jpeg_prob: 0.6
+    jpeg_quality: [50, 60, 70, 80, 90]
+    second_order_prob: 0.4
+
+  video:
+    enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_pix_pretrain_4x.pth
+  # Phase E: opt-in MambaIRv2 attention block. Default `conv3xc` keeps
+  # v6 warm-start checkpoints loadable; set to `mamba_v2` to swap in
+  # ASSM blocks (~20K params each vs SPAB's ~285K).
+  sab_type: conv3xc
+  mamba:
+    d_state: 16
+    num_tokens: 64
+    inner_rank: 32
+    mlp_ratio: 2.0
+
+training:
+  mode: finetune
+  batch_size: 128
+  persistent_workers: true
+  use_tensorboard: true
+  # Phase D-EMA: explicit (base.yaml already enables, but make it visible
+  # in the v7 config for self-documentation).
+  use_ema: true
+  ema_decay: 0.999
+  finetune:
+    enabled: true
+    epochs: 80
+    batch_size: 128
+    lr: 0.00005
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.0000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_pix_pretrain_4x.pth
+    freeze_layers: []
+    val_interval: 1
+    save_interval: 2
+    torch_compile: false
+    gradient_checkpointing: false
+
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 40
+      phase_adversarial_ramp_epochs: 15
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.3
+        adversarial_weight: 0.0
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.05
+      phase2:
+        pixel_weight: 0.5
+        perceptual_weight: 0.5
+        adversarial_weight: 0.005
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.15
+
+    progressive_crop:
+      enabled: true
+      default_crop_size: 192
+      stages:
+        - crop_size: 128
+          epochs: 15
+        - crop_size: 192
+          epochs: 20
+        - crop_size: 256
+          epochs: 45
+
+    loss:
+      pixel:
+        type: charbonnier
+        weight: 1.0
+        eps: 1e-6
+
+      perceptual:
+        enabled: true
+        type: twin
+        weight: 0.3
+        warmup_epochs: 10
+        delta: 0.1
+        danbooru_weight: 0.5
+        vgg_weight: 0.5
+
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.005
+        start_epoch: 10
+        max_weight: 0.01
+        gradient_penalty: true
+        label_smoothing: false   # explicit no-op with relativistic
+        discriminator_lr: 0.0001
+
+      frequency:
+        enabled: true
+        weight: 0.15
+        block_size: 8
+        high_freq_weight: 1.5
+
+      fdl:
+        enabled: true
+        weight: 0.5    # was 0.03 in v6; APISR/neosr standard 0.75
+        num_proj: 24
+        dino_variant: small
+        compute_every: 4
+
+      wavelet_guided:
+        enabled: true
+        weight: 0.5
+        hh_weight: 2.0
+        start_epoch: 5   # was wavelet_init: 40 in v6; ~5% into training
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 15
+      mode: min
