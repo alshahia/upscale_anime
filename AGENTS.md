@@ -249,6 +249,27 @@ The v7 build (`d0f7f23` on `fix/neosr-pipeline-vv-2026-06`) is **complete in cod
 
 **MANIQA is the gap.** All other targets are already cleared by stock pretrained or v4 finetune. After v7 finetune, watch MANIQA most closely.
 
+## V7 Smoke Testing
+
+Before kicking off the 80-epoch v7 finetune on real GPU time, run the 2-epoch smoke variant end-to-end. It exercises every v7 feature (APISR two-stage degradation, XDoG/USM pseudo-GT, EMA, twin perceptual, FDL=0.5, MambaIRv2-ready `sab_type` factory) at minimal compute.
+
+**Config**: `configs/finetune_neosr_span_v7_anime_smoke.yaml` — inherits from the real v7 config and overrides only the size knobs: `epochs=2`, `batch_size=4`, `crop_size=32`, `num_workers=2`, `run_name=NEOSR_SPAN_V7_ANIME_SMOKE` (so it cannot clobber the real v7 run). ~1.6 GB VRAM, 4-10 min on RTX 4000 Mobile.
+
+**CI runner**: `scripts/run_v7_smoke.py` — runs the 11 v7-relevant test files in a single pytest invocation, skipping `@pytest.mark.slow` tests and the known-flaky `test_topiq_higher_for_cleaner_image`. ~55 s on CPU. Exits 0 on full pass, 1 on any failure.
+
+**Meta-test**: `tests/test_v7_smoke_runner.py` — subprocess-invokes the smoke runner and asserts rc=0. Validates the CI pipeline itself.
+
+```bash
+# Validate the smoke config (no GPU needed)
+python scripts/train.py --config configs/finetune_neosr_span_v7_anime_smoke.yaml --dry-run
+
+# Run the 2-epoch smoke on your GPU
+python scripts/train.py --config configs/finetune_neosr_span_v7_anime_smoke.yaml
+
+# Run the CPU-friendly test subset (CI)
+python scripts/run_v7_smoke.py
+```
+
 ## Checkpoint Management
 
 The training system includes automatic checkpoint management to prevent overwriting previous runs.

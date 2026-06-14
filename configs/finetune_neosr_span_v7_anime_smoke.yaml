@@ -1,0 +1,39 @@
+base: finetune_neosr_span_v7_anime.yaml
+
+# -------------------------------------------------------------------------
+# V7 — 2-EPOCH SMOKE VARIANT (2026-06-14)
+# -------------------------------------------------------------------------
+# Fast GPU smoke for the v7 anime SOTA config. Mirrors the full v7 config
+# feature-for-feature (APISR two-stage degradation, XDoG/USM pseudo-GT,
+# EMA, twin perceptual, FDL=0.5, MambaIRv2-ready sab_type factory, two-phase
+# schedule) but with minimal compute so the trainer can run end-to-end in
+# a couple of minutes on 8GB GPUs.
+#
+# Use this before kicking off the real 80-epoch v7 run:
+#   python scripts/train.py --config configs/finetune_neosr_span_v7_anime_smoke.yaml
+#
+# Dedicated run name prevents the smoke run from clobbering the real v7
+# checkpoint directory.
+# -------------------------------------------------------------------------
+
+output:
+  run_name: NEOSR_SPAN_V7_ANIME_SMOKE
+
+data:
+  batch_size: 4
+  crop_size: 32
+  num_workers: 2
+  prefetch_factor: 1
+
+  preprocessing:
+    storage:
+      crop_size: 32
+
+training:
+  batch_size: 4
+  persistent_workers: false
+  finetune:
+    epochs: 2
+    batch_size: 4
+    val_interval: 1
+    save_interval: 1
