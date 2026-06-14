@@ -13,6 +13,8 @@ Supports:
 - 'heavy'         : strong blur + noise + JPEG
 - 'anime'         : anime-tuned (banding, color quantization)
 - 'anime_heavy'   : APISR-style anime heavy degradation (default)
+- 'apisr'         : v7 APISR-aligned preset (two-stage + shuffled resize +
+                    degrade-before-crop, stage2 = [avif, h264, h265, jpeg])
 - 'two_stage'     : APISR two-stage compression (degrade -> resize -> second-order)
 - 'shuffled'      : randomize order of blur/noise/resize/compression
 
@@ -74,6 +76,24 @@ PRESETS: Dict[str, Dict] = {
         'anime_degradation': True, 'color_quantization': True,
         'banding_simulation': True,
     },
+    # v7 APISR-aligned preset. Algorithmic config matches `anime_heavy`;
+    # preset-level metadata (`two_stage`, `shuffled_resize`,
+    # `degrade_before_crop`, `compression_stage1`, `compression_stage2`) is
+    # consumed by DegradationPipeline.__init__ and the dataset/preprocessing
+    # layer to make the v7 recipe a single `mode: apisr` switch in configs.
+    'apisr': {
+        'blur_prob': 0.8, 'blur_sigma': [0.1, 3.0],
+        'noise_prob': 0.6, 'noise_sigma': [0, 30],
+        'jpeg_prob': 0.6, 'jpeg_quality': [50, 60, 70, 80, 90],
+        'compression_prob': 0.8, 'second_order_prob': 0.4,
+        'anime_degradation': True, 'color_quantization': True,
+        'banding_simulation': True,
+        'two_stage': True,
+        'shuffled_resize': True,
+        'degrade_before_crop': True,
+        'compression_stage1': ['jpeg', 'webp'],
+        'compression_stage2': ['avif', 'h264', 'h265', 'jpeg'],
+    },
 }
 
 
@@ -113,10 +133,14 @@ class DegradationPipeline:
         scale: Upscale factor (HR size / LR size).
         two_stage: If True and mode is one of the heavy presets, use two-stage
             compression (Stage 1 degrade full image, resize, Stage 2 light degrade).
+            When None (the default), the value is taken from the matching PRESETS
+            entry if it specifies `two_stage`, otherwise False.
         compression_stage1: List of compression types for stage 1
-            (e.g. ['jpeg', 'webp']). Defaults to ['jpeg', 'webp'].
+            (e.g. ['jpeg', 'webp']). Defaults to ['jpeg', 'webp'] or the value
+            from the matching PRESETS entry.
         compression_stage2: List of compression types for stage 2
-            (e.g. ['avif', 'h264', 'jpeg']). Defaults to ['avif', 'h264', 'jpeg'].
+            (e.g. ['avif', 'h264', 'jpeg']). Defaults to ['avif', 'h264', 'jpeg']
+            or the value from the matching PRESETS entry.
         seed: Optional integer for deterministic degradation.
     """
 
@@ -125,30 +149,59 @@ class DegradationPipeline:
         mode: str = 'anime_heavy',
         cfg: Optional[Dict] = None,
         scale: int = 4,
-        two_stage: bool = False,
+        two_stage: Optional[bool] = None,
         compression_stage1: Optional[List[str]] = None,
         compression_stage2: Optional[List[str]] = None,
         seed: Optional[int] = None,
     ):
         self.mode = mode
         self.scale = scale
-        self.two_stage = two_stage
         self.seed = seed
         self._rng = np.random.default_rng(seed)
 
         if cfg is None and mode in PRESETS:
-            self.cfg = dict(PRESETS[mode])
+            preset = PRESETS[mode]
+            self.cfg = dict(preset)
+            # Preset-level metadata: consumed by the pipeline and/or the
+            # dataset layer. We pop them from `self.cfg` so callers that
+            # introspect `self.cfg` only see algorithmic (probability) knobs.
+            preset_two_stage = self.cfg.pop('two_stage', False)
+            preset_shuffled_resize = self.cfg.pop('shuffled_resize', False)
+            preset_degrade_before_crop = self.cfg.pop('degrade_before_crop', False)
+            preset_stage1 = self.cfg.pop('compression_stage1', None)
+            preset_stage2 = self.cfg.pop('compression_stage2', None)
         else:
             self.cfg = dict(cfg or {})
+            preset_two_stage = False
+            preset_shuffled_resize = False
+            preset_degrade_before_crop = False
+            preset_stage1 = None
+            preset_stage2 = None
 
         if mode == 'bicubic':
             self.cfg = {}
 
-        self._stage1_types = compression_stage1 or ['jpeg', 'webp']
-        self._stage2_types = compression_stage2 or ['avif', 'h264', 'jpeg']
+        # Resolve two_stage default: explicit arg > preset metadata > False.
+        self.two_stage = two_stage if two_stage is not None else preset_two_stage
+
+        # Expose preset-level metadata as informational attributes. These are
+        # read by callers (e.g. tests) but are not enforced by the pipeline
+        # itself; `shuffled_resize` and `degrade_before_crop` are wired at the
+        # BaseDataset / PreprocessingManager layer.
+        self.shuffled_resize = preset_shuffled_resize
+        self.degrade_before_crop = preset_degrade_before_crop
+
+        self._stage1_types = (
+            compression_stage1 if compression_stage1 is not None
+            else (preset_stage1 or ['jpeg', 'webp'])
+        )
+        self._stage2_types = (
+            compression_stage2 if compression_stage2 is not None
+            else (preset_stage2 or ['avif', 'h264', 'jpeg'])
+        )
         self._stage1_pipeline = None
         self._stage2_pipeline = None
-        if two_stage and CompressionPipeline is not None:
+        if self.two_stage and CompressionPipeline is not None:
             try:
                 self._stage1_pipeline = CompressionPipeline(
                     compression_types=self._stage1_types,
