@@ -1,9 +1,14 @@
 # Anime Super-Resolution v7 — TODO Tracker
 
-**Plan:** `C:\Users\Ahmad Mahmoud\.local\share\opencode\plans\v7_anime_roadmap.md` and `docs/plans/v7_anime_roadmap.md`
+**Plan:** `C:\Users\Ahmad Mahmoud\.local\share\opencode\plans\v7_anime_roadmap.md` and `docs\plans\v7_anime_roadmap.md`
 **Project:** `E:\python projects\upscale_anime`
 **Started:** 2026-06-14
-**Branch:** to be created `feature/anime-v7-sota-2026-06`
+**Branch:** `fix/neosr-pipeline-vv-2026-06`
+**Commits (most recent first):**
+- `d0f7f23` v7: anime SOTA build (28 files, 10,768 insertions)
+- `b14ef79` Initial commit: existing upscale_anime project state (357 files, 101,755 insertions)
+**v7 test status:** 94/95 pass + 1 flaky pyiqa test; 87/87 regression pass
+**Dry-run status:** `python scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml --dry-run` -> PASSED
 
 ---
 
@@ -240,16 +245,83 @@ Sub-agent: run baselines and write v7_results.md.
 
 | Phase | Total | Done | In progress | Blocked |
 |---|---|---|---|---|
-| Phase 0 (pre-work) | 6 | 4 | 0 | 0 |
+| Phase 0 (pre-work) | 6 | 6 | 0 | 0 |
 | Phase A (degradation) | 18 | 18 | 0 | 0 |
 | Phase B (XDoG) | 14 | 14 | 0 | 0 |
 | Phase C (loss rebalance) | 13 | 13 | 0 | 0 |
 | Phase D (EMA + NR-IQA) | 22 | 22 | 0 | 0 |
 | Phase E (MambaIRv2) | 16 | 16 | 0 | 0 |
 | Phase F (eval) | 11 | 11 | 0 | 0 |
-| **Total** | **100** | **98** | **0** | **0** |
+| Phase G (post-build follow-ons) | 18 | 0 | 0 | 0 |
+| **Total** | **118** | **100** | **0** | **0** |
 
-Test summary: **94 passed, 1 flaky** (test_topiq_higher_for_cleaner_image — non-deterministic when run after other pyiqa tests; passes in isolation).
+Test summary: **94 v7 tests pass, 1 flaky** (test_topiq_higher_for_cleaner_image — non-deterministic when run after other pyiqa tests; passes in isolation). **87/87 regression tests pass on prior V&V Phases 1-5.**
+
+---
+
+## Phase G — Post-Build Follow-Ons (active)
+
+### Phase G.1 — Verify v7 end-to-end (deferred to user GPU)
+
+- [ ] G.1.1  2-epoch smoke test: `python scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml --epochs 2`
+- [ ] G.1.2  80-epoch full run on RTX 4000 Mobile: same command with `--epochs 80`
+- [ ] G.1.3  Compare v6 vs v7 once v7 checkpoint exists:
+  ```
+  python scripts/compare_checkpoints.py ^
+    --baseline checkpoints/NEOSR_SPAN_V6_ANIME/finetune_best.pth ^
+    --v7 checkpoints/NEOSR_SPAN_V7_ANIME/finetune_best.pth ^
+    --input data/val_hr --gt data/val_hr ^
+    --output results/comparison_v6_vs_v7/ ^
+    --metrics psnr ssim lpips clipiqa maniqa niqe topiq_nr
+  ```
+- [ ] G.1.4  Update `docs/v7_results.md` Section 3 with the v7 column
+
+### Phase G.2 — Add APISR preset to degradation config (active, sub-agent)
+
+- [ ] G.2.1  Create `src/data/degradation_presets.py` with named presets (`anime_heavy`, `anime`, `light`, `medium`, `heavy`, `apisr`)
+- [ ] G.2.2  The `apisr` preset maps to the v7 codec list `[avif, h264, h265, jpeg]`
+- [ ] G.2.3  Refactor v7 config to use `degrade_mode: apisr` shortcut
+- [ ] G.2.4  Tests: `tests/test_degradation_presets.py` (preset name -> config dict, all presets instantiate)
+
+### Phase G.3 — Curate disjoint held-out test set (deferred, requires user)
+
+- [ ] G.3.1  Hand-pick 30-50 Danbooru frames (no overlap with `data/anime_hr` or `data/val_hr`)
+- [ ] G.3.2  File-hash dedup verification
+- [ ] G.3.3  Save to `data/anime_hr_holdout/`
+- [ ] G.3.4  Update `docs/v7_results.md` Section 3 with holdout numbers
+
+### Phase G.4 — Fix pre-existing test collection errors (active, sub-agent)
+
+15 test files fail to import — discovered during v7 build, unrelated to v7 changes. Common errors:
+- `ModuleNotFoundError: No module named 'utils.test_data_manager'` (in `tests/test_e2e_small_dataset_pipeline.py` — likely should be `tests.utils.test_data_manager`)
+- `ImportError: cannot import name 'load_config' from 'utils.config'` (in `tests/test_grad_scaler.py`)
+
+**Action:** Inspect each error, add a `tests/__init__.py`-friendly import or alias, and verify the rest of the test suite still passes.
+
+- [ ] G.4.1  `tests/test_e2e_small_dataset_pipeline.py` — `utils.test_data_manager` import
+- [ ] G.4.2  `tests/test_grad_scaler.py` — `load_config` import
+- [ ] G.4.3  Run `pytest tests/ --collect-only 2>&1 | grep -E "ERROR|error"` and triage all remaining collection errors
+- [ ] G.4.4  Add a CI-friendly smoke runner that doesn't require GPU (skip integration tests on CPU-only)
+
+### Phase G.5 — Add `sab_type: mamba_v2` integration test (active, sub-agent)
+
+The v7 config defaults to `sab_type: conv3xc` for v6 warm-start compatibility. MambaSPAB is wired but not end-to-end exercised.
+
+- [ ] G.5.1  Verify `python scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml --sab-type mamba_v2 --dry-run` (after wiring `--sab-type` CLI override)
+- [ ] G.5.2  Add 1-epoch smoke with `sab_type: mamba_v2` to verify the GPU forward pass (deferred to user GPU)
+- [ ] G.5.3  Update `docs/v7_results.md` with MambaIRv2 vs SPAN param count comparison (already in Phase F report — verify)
+
+### Phase G.6 — Optional: request AVC-RealLQ access (deferred)
+
+- [ ] G.6.1  Send email to `wuyanze123@gmail.com` with signed LICENSE AGREEMENT from `github.com/TencentARC/AnimeSR/blob/main/assets/LICENSE%20AGREEMENT.pdf`
+- [ ] G.6.2  Once received, drop AVC-RealLQ frames into `data/avc_reallq/`
+- [ ] G.6.3  Re-run `compare_checkpoints.py` with `--input data/avc_reallq/` (no `--gt` — NR-IQA only) for paper-grade APISR-comparable numbers
+
+### Phase G.7 — Optional: MambaIRv2 GPU benchmark (deferred to user GPU)
+
+- [ ] G.7.1  Profile `MambaSPAB` fwd+bwd time per step on RTX 4000 Mobile, batch=8, crop=64 vs SPAB Conv3XC
+- [ ] G.7.2  Verify VRAM headroom at v7's worst-case batch (`sab_type: mamba_v2`, crop=128, all losses on)
+- [ ] G.7.3  Report results in `docs/v7_results.md` Section 4
 
 ---
 

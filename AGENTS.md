@@ -222,6 +222,33 @@ python scripts/compare_checkpoints.py --baseline checkpoints/NEOSR_SPAN_V6_ANIME
 # 4. Update docs/v7_results.md Section 3 with the v7 column.
 ```
 
+## V7 Post-Build Follow-Ons (Phase G)
+
+The v7 build (`d0f7f23` on `fix/neosr-pipeline-vv-2026-06`) is **complete in code and tests** but the long finetune run is deferred to user GPU. Four follow-on items were identified after commit. See `docs/plans/todos_v7_anime_2026_06.md` for full list.
+
+### Status (2026-06-14)
+
+| Item | Status | Owner | Priority |
+|---|---|---|---|
+| G.1 Run v7 finetune (2-epoch smoke + 80-epoch full) | pending | user GPU | high |
+| G.2 Add `apisr` named preset to degradation config | active (sub-agent) | sub-agent | medium |
+| G.3 Curate `data/anime_hr_holdout/` (30-50 Danbooru frames) | pending | user | medium |
+| G.4 Fix 15 pre-existing test collection errors | active (sub-agent) | sub-agent | medium |
+| G.5 End-to-end MambaIRv2 integration test | active (sub-agent) | sub-agent | medium |
+| G.6 Optional: request AVC-RealLQ access | pending | user (email) | low |
+| G.7 Optional: MambaIRv2 GPU benchmark | pending | user GPU | low |
+
+### v7 baseline measurements (already in `docs/v7_results.md` Section 3)
+
+| Metric | Direction | Stock pretrained | v4 finetune best | HR ceiling | APISR target |
+|---|:---:|---:|---:|---:|---:|
+| CLIPIQA  | up   | **0.667** | 0.632 | 0.608 | >= 0.65 |
+| MANIQA   | up   | **0.422** | 0.334 | 0.371 | >= 0.48 |
+| NIQE     | down | 7.681     | **7.123** | 6.054 | <= 7.5  |
+| TOPIQ_NR | up   | **0.556** | 0.462 | 0.558 | (n/a)   |
+
+**MANIQA is the gap.** All other targets are already cleared by stock pretrained or v4 finetune. After v7 finetune, watch MANIQA most closely.
+
 ## Checkpoint Management
 
 The training system includes automatic checkpoint management to prevent overwriting previous runs.
