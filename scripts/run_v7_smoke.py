@@ -1,7 +1,7 @@
 """
 CI-friendly smoke runner for the v7 anime SOTA test subset.
 
-Runs the 11 v7-relevant test files in a single pytest invocation.
+Runs the 12 v7-relevant test files in a single pytest invocation.
 Skips tests marked with @pytest.mark.slow and the known-flaky
 test_topiq_higher_for_cleaner_image (already slow-marked, but
 deselected explicitly for self-documentation).
@@ -23,6 +23,7 @@ TEST_FILES = [
     "tests/test_xdog_pseudo_gt.py",
     "tests/test_v7_loss_schedule.py",
     "tests/test_ema_integration.py",
+    "tests/test_ema_resume.py",
     "tests/test_topiq_metric.py",
     "tests/test_evaluate_quality_smoke.py",
     "tests/test_mamba_spab.py",
