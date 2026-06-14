@@ -25,10 +25,12 @@ from pathlib import Path
 import torch
 
 # Add src and utils to path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
-sys.path.insert(0, str(Path(__file__).parent / 'tests' / 'utils'))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from test_data_manager import ensure_test_data, get_val_hr_path, get_test_hr_path, create_temp_dataset
+for _tdm_k in ('utils', 'utils.test_data_manager'):
+    sys.modules.pop(_tdm_k, None)
+from utils.test_data_manager import ensure_test_data, get_val_hr_path, get_test_hr_path, create_temp_dataset
 
 
 @pytest.fixture(scope='module')

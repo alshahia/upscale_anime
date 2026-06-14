@@ -22,10 +22,12 @@ from pathlib import Path
 import numpy as np
 
 # Add src and utils to path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
-sys.path.insert(0, str(Path(__file__).parent / 'tests' / 'utils'))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from test_data_manager import ensure_test_data, create_fallback_data
+for _tdm_k in ('utils', 'utils.test_data_manager'):
+    sys.modules.pop(_tdm_k, None)
+from utils.test_data_manager import ensure_test_data, create_fallback_data
 
 
 def create_synthetic_video(output_path: Path, num_frames: int = 100, fps: int = 30, 

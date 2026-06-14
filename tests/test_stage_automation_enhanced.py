@@ -21,10 +21,12 @@ from pathlib import Path
 import torch
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
-sys.path.insert(0, str(Path(__file__).parent / 'tests' / 'utils'))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from test_data_manager import ensure_test_data, get_val_hr_path, cleanup_temp_data
+for _tdm_k in ('utils', 'utils.test_data_manager'):
+    sys.modules.pop(_tdm_k, None)
+from utils.test_data_manager import ensure_test_data, get_val_hr_path, cleanup_temp_data
 
 
 @pytest.fixture(scope='module')

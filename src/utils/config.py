@@ -9,6 +9,34 @@ from typing import Any, Dict, Optional, Union
 from dataclasses import dataclass, field
 
 
+def load_config(path: Union[str, Path]) -> dict:
+    """Load a YAML config file (with base: inheritance) as a plain dict.
+
+    Mirrors the per-script `load_config` helpers in scripts/precompute_degradation.py,
+    scripts/debug_transfer_learning.py, scripts/manage_stages.py. Returns the merged
+    dict (NOT a Config instance) for compatibility with those call sites.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+    with open(path, 'r', encoding='utf-8') as f:
+        config_dict = yaml.safe_load(f) or {}
+    if 'base' in config_dict:
+        base_path = path.parent / config_dict.pop('base')
+        base = load_config(base_path)
+
+        def _merge(b, o):
+            for k, v in o.items():
+                if k in b and isinstance(b[k], dict) and isinstance(v, dict):
+                    b[k] = _merge(b[k], v)
+                else:
+                    b[k] = v
+            return b
+
+        return _merge(base, config_dict)
+    return config_dict
+
+
 class Config:
     """
     Hierarchical configuration manager.

@@ -3,9 +3,11 @@ import pytest, sys
 from pathlib import Path
 import torch, torch.nn as nn
 
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
-sys.path.insert(0, str(Path(__file__).parent / 'tests' / 'utils'))
-from test_data_manager import ensure_test_data
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent))
+for _tdm_k in ('utils', 'utils.test_data_manager'):
+    sys.modules.pop(_tdm_k, None)
+from utils.test_data_manager import ensure_test_data
 
 @pytest.fixture(scope='module')
 def test_data_dir():

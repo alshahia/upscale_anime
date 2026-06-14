@@ -14,6 +14,9 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+for _tdm_k in ('utils', 'utils.metrics'):
+    sys.modules.pop(_tdm_k, None)
+
 from utils.metrics import (  # noqa: E402
     PYIQA_AVAILABLE,
     PYIQA_DIRECTION,

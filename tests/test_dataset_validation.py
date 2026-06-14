@@ -22,10 +22,12 @@ import numpy as np
 from PIL import Image
 
 # Add src and utils to path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
-sys.path.insert(0, str(Path(__file__).parent / 'tests' / 'utils'))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from test_data_manager import ensure_test_data, create_fallback_data, cleanup_temp_data
+for _tdm_k in ('utils', 'utils.test_data_manager'):
+    sys.modules.pop(_tdm_k, None)
+from utils.test_data_manager import ensure_test_data, create_fallback_data, cleanup_temp_data
 
 
 class TestDatasetValidation:
@@ -269,7 +271,9 @@ class TestValidationIntegration:
 
 def test_data_source_report():
     """Report which data source is being used for tests."""
-    from test_data_manager import print_data_summary
+    for _tdm_k in ('utils', 'utils.test_data_manager'):
+        sys.modules.pop(_tdm_k, None)
+    from utils.test_data_manager import print_data_summary
     print_data_summary()
 
 
