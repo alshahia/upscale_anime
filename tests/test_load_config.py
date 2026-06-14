@@ -14,10 +14,15 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+# Invalidate any cached 'utils' module so pytest's collection order
+# (where some other test file may have already imported a different utils)
+# does not shadow the project's src/utils package.
+for _cached in ("utils", "utils.config"):
+    sys.modules.pop(_cached, None)
 
 from utils.config import load_config  # noqa: E402
 
