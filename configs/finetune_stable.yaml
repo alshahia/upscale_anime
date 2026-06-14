@@ -1,0 +1,208 @@
+defaults:
+  - base
+
+# Stable fine-tuning configuration for SPAN-F with stability fixes
+# This config provides a robust fallback when checkpoint loading fails
+
+training:
+  mode: auto_stage
+  
+  # Use checkpoint-compatible SPAN weights (may have partial loading)
+  pretrained_checkpoint: checkpoints/span/spanx4_ch48.pth
+  # Stable fine-tuning hyperparameters
+  epochs: 200
+  batch_size: 4
+  lr: 1e-7  # Very low LR for stability with partial loading
+  min_lr: 1e-8
+  
+  # Gradient clipping for stability
+  max_grad_norm: 1.0
+  
+  # Freeze strategy for transfer learning
+  freeze_strategy:
+    enabled: true
+    freeze_layers:
+      - type: blocks
+        count: 3  # Freeze first 3 blocks (out of 6)
+    unfreeze_schedule:
+      - epoch: 20
+        unfreeze_blocks: 1
+        lr_multiplier: 0.5
+      - epoch: 40
+        unfreeze_blocks: 1
+        lr_multiplier: 0.4
+      - epoch: 60
+        unfreeze_all: true
+        lr_multiplier: 0.3
+  
+  optimizer: adamw
+  weight_decay: 0.001
+  warmup_epochs: 10  # Longer warmup for stability
+  
+  # Gradient accumulation for larger effective batch
+  gradient_accumulation_steps: 1
+  
+  # Mixed precision
+  mixed_precision: true
+  
+  # EMA
+  use_ema: true
+  ema_decay: 0.999
+  
+  # Stage 1: Knowledge aggregation with stable settings
+  stage1:
+    enabled: true
+    epochs: 50
+    lr: 1e-7  # Very low LR for stability
+    min_lr: 1e-8
+    optimizer: adamw
+    weight_decay: 0.001
+    warmup_epochs: 10  # Longer warmup
+    scheduler: cosine
+    
+    # Use checkpoint-compatible SPAN as base
+    use_pretrained_teacher: true
+    
+    # Teacher models for knowledge distillation (only working ones)
+    teachers:
+      - name: swinir
+        weight: 1.0  # Only use SwinIR which works
+    
+    # Knowledge distillation weights (reduced for stability)
+    distillation_weight: 0.1  # Reduced from 0.3
+    perceptual_weight: 0.2   # Reduced from 0.4
+    pixel_weight: 1.0
+    feature_distillation_weight: 0.05  # Reduced from 0.1
+    
+    aggregation_type: simple
+    auto_download_teachers: true
+  
+  # Stage 2: Student refinement with stable settings
+  stage2:
+    enabled: true
+    epochs: 100
+    lr: 5e-7  # Even lower LR for refinement
+    min_lr: 1e-8
+    optimizer: adamw
+    weight_decay: 0.001
+    warmup_epochs: 5
+    scheduler: plateau
+    
+    distillation_weight: 0.05  # Further reduced
+    perceptual_weight: 0.3
+    pixel_weight: 1.0
+    use_stage1_checkpoint: true
+  
+  # Stage automation
+  stage_automation:
+    enabled: true
+    auto_advance: true
+    stage1:
+      enabled: true
+      min_epochs_before_advance: 30
+      max_epochs: 60
+      target_metric: psnr
+      target_threshold: 32.0  # Lower threshold for stability
+      advance_on_convergence: true
+      advance_on_plateau: true
+    stage2:
+      enabled: true
+      min_epochs: 50
+      max_epochs: 150
+      target_metric: psnr
+      target_threshold: 33.0  # Lower threshold
+  
+  # Progressive crop size training (slower progression)
+  progressive_crop:
+    enabled: true
+    sizes: [64, 80, 96, 112]  # Smaller sizes for stability
+    epochs_per_size: 30  # More epochs per size
+  
+  # Early stopping (more patient)
+  early_stopping:
+    enabled: true
+    patience: 50  # More patient
+    min_epochs: 50
+    min_delta: 0.0001
+    mode: min
+    monitor: val_loss
+    restore_best_weights: true
+
+data:
+  datasets:
+    - name: anime_train
+      hr_dir: data/val_hr
+      lr_dir: null
+      enabled: true
+      weight: 1
+      crop_size_mode: auto
+  
+  crop_size: 64  # Start with smaller crop size
+  auto_crop_min: 48
+  auto_crop_max: 128
+  num_workers: 8
+  pin_memory: true
+  augment: true
+  sampling_mode: size_proportional
+  
+  # Conservative degradation for stability
+  degradation:
+    enabled: true
+    mode: smart
+    blur_prob: 0.4  # Reduced from 0.6
+    noise_prob: 0.3  # Reduced from 0.4
+    jpeg_prob: 0.3  # Reduced from 0.4
+    auto_quality_thresholds:
+      hd_threshold: 0.8
+      standard_threshold: 0.5
+
+# Stable SPAN Model Configuration
+model:
+  name: model_stable_spanf  # Required identifier
+  type: checkpoint_compatible  # Use checkpoint-compatible variant
+  scale: 4
+  in_channels: 3
+  out_channels: 3
+  channels: 48  # Match checkpoint
+  hidden_channels: 96  # Match checkpoint
+  num_blocks: 6  # Match checkpoint
+  # No LoRA for checkpoint-compatible model
+
+loss:
+  pixel:
+    enabled: true
+    type: l1
+    weight: 1.0
+  
+  perceptual:
+    enabled: true
+    type: dists
+    weight: 0.2  # Reduced for stability
+  
+  # Feature distillation from teachers (minimal)
+  feature_distillation:
+    enabled: true
+    layers: [2, 4]  # Fewer layers for stability
+    weight: 0.05  # Very low weight
+  
+  # Anime-specific losses (reduced)
+  anime:
+    enabled: true
+    line_art_weight: 0.05  # Reduced
+    color_consistency_weight: 0.1  # Reduced
+  
+  # Self-supervised consistency loss (minimal)
+  consistency:
+    enabled: true
+    weight: 0.02  # Very low weight
+
+checkpoint:
+  save_dir: checkpoints/finetune_stable
+  save_interval: 10
+  keep_best: true
+  keep_last_n: 10
+
+paths:
+  checkpoint_dir: checkpoints/finetune_stable
+  log_dir: logs/finetune_stable
+  pretrained_dir: pretrained

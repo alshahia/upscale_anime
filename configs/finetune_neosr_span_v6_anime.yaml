@@ -1,0 +1,247 @@
+base: base.yaml
+
+# -------------------------------------------------------------------------
+# V6 — ANIME FIX CONFIG (2026-06-06)
+# -------------------------------------------------------------------------
+# Changes from v4:
+#   1. Preprocessing: hybrid -> on_the_fly (avoids missing precomputed_4x)
+#   2. APISR-style two-stage degradation enabled
+#   3. Crop size: 128 -> 192, progressive crop enabled (128->192->256)
+#   4. Warm-start: span_nomosuni_4x.pth -> span_pix_pretrain_4x.pth (9MB)
+#   5. Loss rebalance: higher perceptual + adversarial weights in phase 2
+#   6. Training data: deduplicated corpus (data/anime_hr_v6)
+#   7. Val data: data/val_hr (CAVEAT: known train/val overlap from mp4upload)
+#
+# CAVEAT: val_hr shares frames with anime_hr (mp4upload source). Val metrics
+# will be optimistic. Use NIQE/MANIQA/CLIPIQA on real frames for honest eval.
+# -------------------------------------------------------------------------
+
+output:
+  run_name: NEOSR_SPAN_V6_ANIME
+  duplicate_handling: auto_increment
+  log_dir: null
+  results_dir: null
+
+data:
+  batch_size: 128
+  crop_size: 64
+  num_workers: 8
+  prefetch_factor: 4
+
+  sample_ratio: null
+
+  datasets:
+    - name: anime_faces
+      hr_dir: data/anime_faces
+      enabled: true
+      weight: 1.0
+      sample_ratio: 1.0
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true
+      weight: 1.0
+      sample_ratio: 1.0
+
+  preprocessing:
+    mode: None
+
+    storage:
+      available_space_gb: 10
+      crop_size: 64
+      format: "png"
+
+    dataset_sampling:
+      anime_hr_v6: 1.0
+
+    precomputed:
+      enabled: false
+      base_dir: "data/precomputed_4x"
+      cache_in_memory: false
+
+    hybrid:
+      precomputed_base: false
+      base_dir: "data/precomputed_4x"
+      runtime_augmentation:
+        enabled: false
+        blur_prob: 0.3
+        noise_sigma: [0, 15]
+        jpeg_quality: [75, 95]
+        quantization: true
+        quantization_levels: [8, 16]
+
+    gpu_degradation:
+      enabled: false
+      modules:
+        blur: true
+        directional_blur: true
+        noise: true
+        quantization: true
+        banding: true
+        ringing: true
+      blur_prob: 0.5
+      noise_prob: 0.4
+      quantization_prob: 0.3
+
+    quality_adaptive:
+      enabled: false
+      cache_scores: true
+      tier_thresholds:
+        light: 75
+        medium: 45
+        heavy: 0
+
+    line_enhancement:
+      enabled: false
+
+  # APISR-STYLE DEGRADATION (active in on_the_fly mode)
+  degradation:
+    enabled: false
+    mode: anime_heavy
+    degrade_before_crop: true
+    shuffled_resize: true
+    two_stage_compression: true
+    compression_stage1:
+      - jpeg
+      - webp
+    compression_stage2:
+      - avif
+      - h264
+      - jpeg
+    compression_prob: 0.8
+    blur_prob: 0.8
+    blur_sigma: [0.1, 3.0]
+    noise_prob: 0.6
+    noise_sigma: [0, 30]
+    jpeg_prob: 0.6
+    jpeg_quality: [50, 60, 70, 80, 90]
+    second_order_prob: 0.4
+
+  video:
+    enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_pix_pretrain_4x.pth
+
+training:
+  mode: finetune
+  batch_size: 128
+  persistent_workers: true
+  use_tensorboard: true
+  finetune:
+    enabled: true
+    epochs: 80
+    batch_size: 128
+    lr: 0.00005
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.0000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_pix_pretrain_4x.pth
+    freeze_layers: []
+    val_interval: 1
+    save_interval: 2
+    torch_compile: false
+    gradient_checkpointing: false
+
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 40
+      phase_adversarial_ramp_epochs: 15
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.3
+        adversarial_weight: 0.0
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.05
+      phase2:
+        pixel_weight: 0.5
+        perceptual_weight: 0.5
+        adversarial_weight: 0.005
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.15
+
+    progressive_crop:
+      enabled: true
+      default_crop_size: 192
+      stages:
+        - crop_size: 128
+          epochs: 15
+        - crop_size: 192
+          epochs: 20
+        - crop_size: 256
+          epochs: 45
+
+    loss:
+      pixel:
+        type: charbonnier
+        weight: 1.0
+        eps: 1e-6
+
+      perceptual:
+        enabled: true
+        type: twin
+        weight: 0.3
+        warmup_epochs: 10
+        delta: 0.1
+
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.005
+        start_epoch: 10
+        max_weight: 0.01
+        gradient_penalty: true
+        label_smoothing: true
+        discriminator_lr: 0.0002
+
+      frequency:
+        enabled: true
+        weight: 0.15
+        block_size: 8
+        high_freq_weight: 1.5
+
+      fdl:
+        enabled: true
+        weight: 0.03
+        num_proj: 24
+        dino_variant: small
+        compute_every: 4
+
+      wavelet_guided:
+        enabled: true
+        weight: 0.5
+        hh_weight: 2.0
+        wavelet_init: 40
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 15
+      mode: min

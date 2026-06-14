@@ -1,0 +1,74 @@
+# Test Config: Inference Only
+# For testing inference pipeline (no training)
+
+base: "../../configs/base.yaml"
+
+model:
+  name: "test_inference_model"
+  type: "span"
+  scale: 4
+  channels: 16
+  num_blocks: 4
+
+training:
+  mode: "inference"  # Inference-only mode
+  enabled: false  # Disable training
+
+distillation:
+  enabled: false
+
+data:
+  datasets:
+    - name: "test_input"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/test_hr"
+  
+  # Inference settings
+  crop_size: 256  # Larger for inference
+  augment: false
+  
+  degradation:
+    enabled: false  # No degradation for inference
+
+inference:
+  enabled: true
+  
+  # Test different inference modes
+  modes:
+    - "basic"           # Standard inference
+    - "tta"             # Test-time augmentation
+    - "ema"             # EMA model inference
+    - "ensemble"        # A+B ensemble
+  
+  # TTA settings
+  tta:
+    enabled: true
+    transforms: ["flip_h", "flip_v", "rot90"]
+    merge_mode: "mean"
+  
+  # EMA settings
+  ema:
+    enabled: true
+    decay: 0.999
+  
+  # Batch processing
+  batch_size: 1
+  
+  # Output settings
+  output_dir: "tests/temp_outputs"
+  save_format: "png"
+  
+  # Metrics
+  compute_metrics: true
+  metrics: ["psnr", "ssim"]
+
+checkpoint:
+  # Use pre-trained checkpoint
+  path: "checkpoints/test_model.pth"
+  use_ema: false
+
+system:
+  seed: 42
+  # Use CPU for consistent inference testing
+  device: "cpu"

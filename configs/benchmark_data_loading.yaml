@@ -1,0 +1,129 @@
+# Data Loading Benchmark Configuration
+# Use this config to test different data loading settings quickly
+# without running full training.
+#
+# Usage:
+#   python scripts/benchmark_data_loading.py --config configs/benchmark_data_loading.yaml
+
+base: "base.yaml"
+
+model:
+  name: "benchmark_model"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 12
+  use_lora: false
+
+training:
+  mode: "model_a"
+  
+  # Minimal training for quick benchmark
+  stage1:
+    enabled: true
+    epochs: 1           # Single epoch for quick test
+    
+    aggregation_type: "simple"
+    num_blocks: 4
+    embed_dim: 64
+    
+    optimizer: "adam"
+    lr: 0.0001
+    scheduler: "cosine"
+    warmup_epochs: 0
+    
+    batch_size: 16
+    gradient_accumulation_steps: 1
+    
+    ohem_enabled: false
+    
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+    freeze_teachers: true
+    
+    use_combined_loss: false
+    anime:
+      line_art_preservation: false
+      color_consistency: false
+      flat_region_preservation: false
+    
+    temporal_consistency: false
+    log_teacher_disagreement: false
+    debug_nan: false
+  
+  stage2:
+    enabled: false  # Skip stage 2 for benchmark
+
+  # Async prefetcher test
+  use_async_prefetcher: false  # Toggle to test
+  prefetcher_num_prefetch: 2
+
+distillation:
+  enabled: true
+  mtkd:
+    enabled: true
+    wavelet_levels: 2
+    wavelet_type: "haar"
+  fakd:
+    enabled: false
+
+data:
+  datasets:
+    - name: "benchmark_dataset"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/anime_video_frames"
+      preload: false  # Toggle to test RAM caching
+      max_images: 100  # Small subset for quick benchmark
+  
+  crop_size: 128
+  augment: true
+  
+  # DataLoader parameters to benchmark
+  # These are the key parameters to experiment with:
+  num_workers: 8          # Try: 4, 8, 12, 16
+  prefetch_factor: 4      # Try: 2, 4, 8
+  pin_memory: true
+  persistent_workers: true
+  auto_tune_workers: false  # Set to true to test auto-tuning
+  
+  # GPU degradation test
+  use_gpu_degradation: false  # Toggle to test GPU vs CPU degradation
+  
+  degradation:
+    enabled: true
+    blur_kernel_size: [5, 9, 13]
+    blur_sigma: [0.5, 1.0, 2.0]
+    noise_sigma: [5, 15, 25]
+    jpeg_quality: [70, 85, 95]
+    jpeg_prob: 0.5
+    anime_degradation: false
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.0
+
+checkpoint:
+  save_dir: "checkpoints/benchmark"
+  keep_last_n: 1
+  keep_best: false  # Don't save during benchmark
+
+paths:
+  log_dir: "logs/benchmark"
+
+system:
+  seed: 42
+  cudnn_benchmark: true
+  cudnn_deterministic: false
+
+# Benchmark-specific settings
+benchmark:
+  duration_seconds: 60  # Run benchmark for 60 seconds
+  warmup_batches: 10    # Warmup batches before timing
+  profile_gpu: true     # Enable GPU profiling

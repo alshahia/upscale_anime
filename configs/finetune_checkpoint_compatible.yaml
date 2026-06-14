@@ -1,0 +1,206 @@
+defaults:
+  - base
+
+# Checkpoint-compatible SPAN fine-tuning configuration
+# This config uses the exact checkpoint architecture for 100% parameter loading
+
+training:
+  mode: auto_stage
+  
+  # Use checkpoint-compatible SPAN weights
+  pretrained_checkpoint: checkpoints/span/spanx4_ch48.pth
+  # Fine-tuning hyperparameters
+  epochs: 200
+  batch_size: 4
+  lr: 1e-5  # Low LR for fine-tuning
+  min_lr: 1e-8
+  
+  # Freeze strategy for transfer learning
+  freeze_strategy:
+    enabled: true
+    freeze_layers:
+      - type: blocks
+        count: 3  # Freeze first 3 blocks (out of 6)
+    unfreeze_schedule:
+      - epoch: 20
+        unfreeze_blocks: 1
+        lr_multiplier: 0.5
+      - epoch: 40
+        unfreeze_blocks: 1
+        lr_multiplier: 0.4
+      - epoch: 60
+        unfreeze_all: true
+        lr_multiplier: 0.3
+  
+  optimizer: adamw
+  weight_decay: 0.001
+  warmup_epochs: 5
+  
+  # Gradient accumulation for larger effective batch
+  gradient_accumulation_steps: 2
+  
+  # Mixed precision
+  mixed_precision: true
+  
+  # EMA
+  use_ema: true
+  ema_decay: 0.999
+  
+  # Stage 1: Knowledge aggregation with checkpoint-compatible base
+  stage1:
+    enabled: true
+    epochs: 50
+    lr: 1e-5
+    min_lr: 1e-8
+    optimizer: adamw
+    weight_decay: 0.001
+    warmup_epochs: 5
+    scheduler: cosine
+    
+    # Use checkpoint-compatible SPAN as base
+    use_pretrained_teacher: false
+    
+    # Teacher models for knowledge distillation (limited to working ones)
+    teachers:
+      - name: swinir
+        weight: 1.0  # Only use SwinIR which works
+    
+    # Knowledge distillation weights
+    distillation_weight: 0.3
+    perceptual_weight: 0.4
+    pixel_weight: 1.0
+    feature_distillation_weight: 0.1
+    
+    aggregation_type: simple
+    auto_download_teachers: true
+  
+  # Stage 2: Student refinement
+  stage2:
+    enabled: true
+    epochs: 100
+    lr: 5e-6
+    min_lr: 1e-8
+    optimizer: adamw
+    weight_decay: 0.001
+    warmup_epochs: 3
+    scheduler: plateau
+    
+    distillation_weight: 0.2
+    perceptual_weight: 0.5
+    pixel_weight: 1.0
+    use_stage1_checkpoint: true
+  
+  # Stage automation
+  stage_automation:
+    enabled: true
+    auto_advance: true
+    stage1:
+      enabled: true
+      min_epochs_before_advance: 30
+      max_epochs: 60
+      target_metric: psnr
+      target_threshold: 35.0
+      advance_on_convergence: true
+      advance_on_plateau: true
+    stage2:
+      enabled: true
+      min_epochs: 50
+      max_epochs: 150
+      target_metric: psnr
+      target_threshold: 36.0
+  
+  # Progressive crop size training
+  progressive_crop:
+    enabled: true
+    sizes: [64, 96, 128, 160]
+    epochs_per_size: 25
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 30
+    min_epochs: 50
+    min_delta: 0.0001
+    mode: min
+    monitor: val_loss
+    restore_best_weights: true
+
+data:
+  datasets:
+    - name: anime_train
+      hr_dir: data/val_hr
+      lr_dir: null
+      enabled: true
+      weight: 1
+      crop_size_mode: auto
+  
+  crop_size: 128
+  auto_crop_min: 64
+  auto_crop_max: 192
+  num_workers: 8
+  pin_memory: true
+  augment: true
+  sampling_mode: size_proportional
+  
+  # Advanced degradation for fine-tuning
+  degradation:
+    enabled: true
+    mode: smart
+    blur_prob: 0.6
+    noise_prob: 0.4
+    jpeg_prob: 0.4
+    auto_quality_thresholds:
+      hd_threshold: 0.8
+      standard_threshold: 0.5
+
+# Checkpoint-compatible SPAN Model Configuration
+# Matches exact checkpoint architecture for 100% parameter loading
+model:
+  name: model_checkpoint_compatible  # Required identifier
+  type: checkpoint_compatible  # Use checkpoint-compatible variant
+  scale: 4
+  in_channels: 3
+  out_channels: 3
+  channels: 48  # Match checkpoint
+  hidden_channels: 96  # Match checkpoint
+  num_blocks: 6  # Match checkpoint
+  # No LoRA for checkpoint-compatible model
+
+loss:
+  pixel:
+    enabled: true
+    type: l1
+    weight: 1.0
+  
+  perceptual:
+    enabled: true
+    type: dists
+    weight: 0.4  # Higher for fine-tuning
+  
+  # Feature distillation from teachers (reduced)
+  feature_distillation:
+    enabled: true
+    layers: [2, 4]  # Fewer layers for checkpoint model
+    weight: 0.1
+  
+  # Anime-specific losses
+  anime:
+    enabled: true
+    line_art_weight: 0.1
+    color_consistency_weight: 0.15
+  
+  # Self-supervised consistency loss
+  consistency:
+    enabled: true
+    weight: 0.05
+
+checkpoint:
+  save_dir: checkpoints/finetune_checkpoint_compatible
+  save_interval: 10
+  keep_best: true
+  keep_last_n: 10
+
+paths:
+  checkpoint_dir: checkpoints/finetune_checkpoint_compatible
+  log_dir: logs/finetune_checkpoint_compatible
+  pretrained_dir: pretrained

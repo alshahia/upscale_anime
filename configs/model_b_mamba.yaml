@@ -1,0 +1,95 @@
+# Model B: Mamba-PAN + MTKD + FAKD
+base: "base.yaml"
+
+# Model configuration
+model:
+  name: "model_b_mamba"
+  type: "mamba_pan"
+  scale: 4
+  
+  # Mamba-PAN configuration
+  channels: 32
+  num_blocks: 8               # Fewer blocks than SPAN (Mamba is deeper)
+  
+  # Mamba settings
+  mamba_dim: 32
+  mamba_d_state: 16         # SSM state dimension
+  mamba_d_conv: 4           # Convolution kernel size
+  mamba_expand: 2           # Expansion factor
+  
+  # Directional scanning
+  directions: ["h", "v", "rh", "rv"]  # Horizontal, Vertical, Reverse H, Reverse V
+  use_direction_fusion: true
+
+# Training mode
+training:
+  mode: "model_b"
+  
+  # Stage 1: Knowledge Aggregation
+  stage1:
+    enabled: true
+    epochs: 100
+    lr: 0.0001
+    batch_size: 4             # Lower batch size for Mamba
+    
+  # Stage 2: Direction-aware Distillation
+  stage2:
+    enabled: true
+    epochs: 250               # More epochs for stability
+    lr: 0.00005               # Lower LR for fine-tuning
+    batch_size: 4
+    
+    use_stage1_checkpoint: true
+
+# Distillation (with direction-aware modifications)
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 3
+    wavelet_type: "haar"
+    # Direction-aware wavelet loss
+    per_direction_loss: true
+    direction_weights: [1.0, 1.0, 1.0, 1.0]  # H, V, RH, RV
+    
+  fakd:
+    enabled: true
+    layers: [2, 4, 6, 8]
+    layer_weights: [0.1, 0.2, 0.3, 0.4]
+    per_direction_affinity: true  # Compute affinity per direction
+    
+  # Cross-direction consistency loss (Mamba-specific)
+  consistency:
+    enabled: true
+    weight: 0.1
+    type: "variance"          # variance, cosine
+
+# Memory optimization for Mamba
+training:
+  gradient_checkpointing: true
+  mixed_precision: true
+
+data:
+  batch_size: 4               # Lower batch size
+  crop_size: 128
+  
+  datasets:
+    - name: "div2k"
+      weight: 0.5
+      enabled: true
+      hr_dir: "data/DIV2K_train_HR"
+    - name: "anime_custom"
+      weight: 0.5
+      enabled: true
+      hr_dir: "data/anime_hr"
+
+# Loss weights
+loss:
+  pixel_loss:
+    weight: 1.0
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+    consistency_weight: 0.1   # Mamba-specific

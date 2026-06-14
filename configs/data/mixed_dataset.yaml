@@ -1,0 +1,96 @@
+# Mixed Dataset Configuration
+# For combining multiple datasets with different weights
+
+datasets:
+  # DIV2K - High quality photography
+  - name: "div2k"
+    weight: 0.3
+    enabled: true
+    hr_dir: "data/DIV2K_train_HR"
+    lr_dir: "data/DIV2K_train_LR_bicubic/X4"
+    preprocessing:
+      crop_size: 128
+      augment: true
+    
+  # Flickr2K - Internet photos
+  - name: "flickr2k"
+    weight: 0.2
+    enabled: true
+    hr_dir: "data/Flickr2K_HR"
+    preprocessing:
+      crop_size: 128
+      augment: true
+  
+  # Anime content
+  - name: "anime_bluray"
+    weight: 0.3
+    enabled: true
+    hr_dir: "data/anime_bluray"
+    preprocessing:
+      crop_size: 128
+      augment: true
+      # Anime-specific
+      preserve_edges: true
+      denoise: false
+  
+  # Web anime (lower quality)
+  - name: "anime_web"
+    weight: 0.2
+    enabled: true
+    hr_dir: "data/anime_web"
+    preprocessing:
+      crop_size: 128
+      augment: true
+      quality_filter:
+        min_resolution: [480, 270]
+        min_sharpness: 50
+
+# Global preprocessing
+preprocessing:
+  scale: 4
+  crop_size: 128
+  augment: true
+  
+  # Balance datasets
+  balance_method: "weight"  # weight, oversample, or undersample
+  
+  # If using oversample/undersample
+  target_samples_per_dataset: 1000
+
+# Mixed degradation - balanced for all content types
+degradation:
+  scale: 4
+  enabled: true
+  
+  # Balanced degradation parameters
+  blur_kernel_size: [5, 7, 9, 11]
+  blur_sigma: [0.5, 1.5, 2.5]
+  noise_sigma: [10, 20, 30]
+  jpeg_quality: [60, 75, 90]
+  
+  # Random degradation per image
+  random_degradation: true
+  
+  # High-order degradation (RealESRGAN style)
+  first_order:
+    blur_prob: 0.5
+    noise_prob: 0.4
+    jpeg_prob: 0.5
+  
+  second_order:
+    blur_prob: 0.3
+    noise_prob: 0.3
+    jpeg_prob: 0.3
+
+# Training configuration
+training:
+  batch_size: 8
+  num_workers: 4
+  
+  # Loss weights
+  losses:
+    pixel:
+      weight: 1.0
+    perceptual:
+      enabled: true
+      weight: 0.1

@@ -1,0 +1,67 @@
+# Test Config: Model B Only (Mamba-PAN)
+# For testing Model B training in isolation (if mamba available)
+
+base: "../../configs/base.yaml"
+
+model:
+  name: "test_model_b_only"
+  type: "mamba_pan"  # Only if mamba_ssm available
+  scale: 4
+  channels: 16
+  num_blocks: 4
+
+training:
+  mode: "model_b"
+  batch_size: 2
+  epochs: 3
+  lr: 0.001
+  
+  # Model B typically doesn't use stages
+  stage1:
+    enabled: false
+  stage2:
+    enabled: false
+
+distillation:
+  enabled: false  # No distillation for isolated Model B test
+
+data:
+  datasets:
+    - name: "test_dataset"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/val_hr"
+  
+  crop_size: 64
+  augment: false
+  num_workers: 2
+  
+  degradation:
+    enabled: true
+    mode: "light"
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  # Model B specific losses
+  perceptual:
+    enabled: false  # Skip for speed
+  
+  # Mamba-specific (if available)
+  mamba:
+    state_loss: false
+    selective_loss: false
+
+checkpoint:
+  save_dir: "tests/temp_checkpoints/model_b"
+  keep_last_n: 2
+  save_interval: 1
+
+system:
+  seed: 42
+
+# Note: This config is only usable if mamba_ssm is installed
+# Run test with: python scripts/train.py --config tests/configs/test_model_b.yaml
+# Will skip gracefully if mamba not available

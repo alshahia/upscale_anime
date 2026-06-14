@@ -1,0 +1,161 @@
+checkpoint:
+  keep_best: true
+  keep_last_n: 10
+  save_dir: checkpoints/finetune_stable
+  save_interval: 10
+data:
+  augment: true
+  auto_crop_max: 128
+  auto_crop_min: 48
+  crop_size: 64
+  datasets:
+  - crop_size_mode: auto
+    enabled: true
+    hr_dir: data/val_hr
+    lr_dir: null
+    name: anime_train
+    weight: 1
+  degradation:
+    auto_quality_thresholds:
+      hd_threshold: 0.8
+      standard_threshold: 0.5
+    blur_prob: 0.4
+    enabled: true
+    jpeg_prob: 0.3
+    mode: smart
+    noise_prob: 0.3
+  num_workers: 8
+  pin_memory: true
+  sampling_mode: size_proportional
+defaults:
+- base
+loss:
+  anime:
+    color_consistency_weight: 0.1
+    enabled: true
+    line_art_weight: 0.05
+  consistency:
+    enabled: true
+    weight: 0.02
+  feature_distillation:
+    enabled: true
+    layers:
+    - 2
+    - 4
+    weight: 0.05
+  perceptual:
+    enabled: true
+    type: dists
+    weight: 0.2
+  pixel:
+    enabled: true
+    type: l1
+    weight: 1.0
+model:
+  channels: 48
+  hidden_channels: 96
+  in_channels: 3
+  name: model_stable_spanf
+  num_blocks: 6
+  out_channels: 3
+  scale: 4
+  type: checkpoint_compatible
+paths:
+  checkpoint_dir: checkpoints/finetune_stable
+  log_dir: logs/finetune_stable
+  pretrained_dir: pretrained
+training:
+  batch_size: 4
+  early_stopping:
+    enabled: true
+    min_delta: 0.0001
+    min_epochs: 50
+    mode: min
+    monitor: val_loss
+    patience: 50
+    restore_best_weights: true
+  ema_decay: 0.999
+  epochs: 200
+  freeze_strategy:
+    enabled: true
+    freeze_layers:
+    - count: 3
+      type: blocks
+    unfreeze_schedule:
+    - epoch: 20
+      lr_multiplier: 0.5
+      unfreeze_blocks: 1
+    - epoch: 40
+      lr_multiplier: 0.4
+      unfreeze_blocks: 1
+    - epoch: 60
+      lr_multiplier: 0.3
+      unfreeze_all: true
+  gradient_accumulation_steps: 1
+  lr: 5e-7
+  max_grad_norm: 1.0
+  min_lr: 1e-8
+  mixed_precision: true
+  mode: auto_stage
+  optimizer: adamw
+  pretrained_checkpoint: checkpoints/span/spanx4_ch48.pth
+  progressive_crop:
+    enabled: true
+    epochs_per_size: 30
+    sizes:
+    - 64
+    - 80
+    - 96
+    - 112
+  stage1:
+    aggregation_type: simple
+    auto_download_teachers: true
+    distillation_weight: 0.1
+    enabled: true
+    epochs: 50
+    feature_distillation_weight: 0.05
+    lr: 5e-7
+    min_lr: 1e-8
+    optimizer: adamw
+    perceptual_weight: 0.2
+    pixel_weight: 1.0
+    scheduler: cosine
+    teachers:
+    - name: swinir
+      weight: 1.0
+    use_pretrained_teacher: false
+    warmup_epochs: 10
+    weight_decay: 0.001
+  stage2:
+    distillation_weight: 0.05
+    enabled: true
+    epochs: 100
+    lr: 5e-7
+    min_lr: 1e-8
+    optimizer: adamw
+    perceptual_weight: 0.3
+    pixel_weight: 1.0
+    scheduler: plateau
+    use_stage1_checkpoint: true
+    warmup_epochs: 5
+    weight_decay: 0.001
+  stage_automation:
+    auto_advance: true
+    enabled: true
+    stage1:
+      advance_on_convergence: true
+      advance_on_plateau: true
+      enabled: true
+      max_epochs: 60
+      min_epochs_before_advance: 30
+      target_metric: psnr
+      target_threshold: 32.0
+    stage2:
+      enabled: true
+      max_epochs: 150
+      min_epochs: 50
+      target_metric: psnr
+      target_threshold: 33.0
+  use_ema: true
+  warmup_epochs: 10
+  weight_decay: 0.001

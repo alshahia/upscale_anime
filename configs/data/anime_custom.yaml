@@ -1,0 +1,90 @@
+# Anime Custom Dataset Configuration
+# For training on anime-specific content
+
+dataset:
+  name: "anime_custom"
+  type: "anime"
+  enabled: true
+  
+  # Path configuration
+  hr_dir: "data/anime_hr"
+  lr_dir: null  # Auto-generate via degradation
+  
+  # File patterns
+  supported_formats: [".png", ".jpg", ".jpeg", ".webp", ".bmp"]
+  recursive_search: true  # Search subdirectories
+  
+  # Quality filtering (optional)
+  quality_filter:
+    enabled: false
+    min_resolution: [256, 256]
+    min_sharpness: 100  # Laplacian variance threshold
+    max_blur: 0.5  # Blur detection threshold
+  
+  # Anime-specific processing
+  preprocessing:
+    # Anime often has flat colors and sharp edges
+    preserve_edges: true
+    denoise: false  # Keep anime textures
+    normalize_colors: true
+    
+  # Metadata (optional)
+  metadata:
+    source_type: "anime"  # anime, cartoon, game
+    extract_tags: false  # Extract tags from filenames/paths
+
+# Anime-specific degradation
+degradation:
+  scale: 4
+  
+  # Anime degradation is different from photos
+  # Less blur (anime has sharp lines)
+  # More color banding (JPEG compression)
+  # Less noise (clean animation)
+  
+  first_order:
+    blur_prob: 0.4  # Lower than photos
+    blur_kernel_size: [3, 5, 7]  # Smaller kernels
+    blur_sigma: [0.5, 1.0, 1.5]  # Less blur
+    
+    noise_prob: 0.2  # Less noise
+    noise_sigma: [5, 10, 15]  # Lower noise levels
+    
+    resize_prob: [0.3, 0.6, 0.1]
+    resize_range: [0.3, 1.2]
+    
+    jpeg_prob: 0.7  # Higher - anime has compression artifacts
+    jpeg_quality: [50, 60, 70, 80, 90]  # Lower quality range
+  
+  second_order:
+    blur_prob: 0.2
+    noise_prob: 0.1
+    jpeg_prob: 0.4
+
+# Training configuration specific to anime
+training:
+  # Anime benefits from edge-preserving losses
+  losses:
+    pixel:
+      type: "charbonnier"  # Better for sharp edges
+      weight: 1.0
+    
+    # Perceptual loss tuned for anime
+    perceptual:
+      enabled: true
+      layers: ["relu2_2", "relu3_3", "relu4_3"]  # VGG layers
+      weights: [0.1, 0.3, 0.5]
+      weight: 0.1
+    
+    # GAN loss for anime style
+    adversarial:
+      enabled: false  # Optional - enable for style transfer
+      weight: 0.05
+  
+  # Data augmentation for anime
+  augmentation:
+    enabled: true
+    random_flip: true
+    random_rotate: true
+    color_jitter: false  # Keep anime colors consistent
+    mixup: false

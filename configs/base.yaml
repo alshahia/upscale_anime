@@ -1,0 +1,491 @@
+# Base configuration for all models
+# Other configs inherit from this
+
+# Model settings
+model:
+  name: "span"                # Model architecture (span, edsr, rcan, swinir)
+  scale: 4                    # Upsampling factor (2, 3, 4)
+  in_channels: 3              # RGB input
+  out_channels: 3             # RGB output
+
+# Training settings
+training:
+  # Device
+  device: "cuda"              # cuda or cpu
+  mixed_precision: true       # Use torch.cuda.amp
+  gradient_checkpointing: false
+  
+  # Optimization
+  optimizer: "adam"           # adam, adamw, sgd
+  lr: 0.0001                  # Learning rate
+  weight_decay: 0.0
+  betas: [0.9, 0.99]          # Adam betas
+  
+  # Scheduler
+  scheduler: "step"           # step, cosine, multistep, constant
+  step_size: 200000           # For step scheduler
+  gamma: 0.5                  # LR decay factor
+  warmup_epochs: 0            # Linear warmup epochs (0 to disable)
+  min_lr: 0.0                 # Minimum LR for cosine annealing
+  
+  # Training loop
+  epochs: 1000
+  batch_size: 8
+  accumulation_steps: 1       # Gradient accumulation
+  
+  # Validation
+  val_interval: 5            # Validate every N epochs
+  save_interval: 5           # Save checkpoint every N epochs
+  
+  # Logging
+  log_interval: 100           # Log every N iterations
+  use_tensorboard: true
+  
+  # Async data loading (advanced)
+  use_async_prefetcher: false  # Enable for maximum GPU utilization (uses CUDA streams)
+  prefetcher_num_prefetch: 2   # Number of batches to prefetch ahead
+  
+  # EMA
+  use_ema: true
+  ema_decay: 0.999
+  
+  # Early Stopping (NEW)
+  early_stopping:
+    enabled: true
+    monitor: "val_loss"        # Metric to monitor (val_loss, train_loss, psnr)
+    mode: "min"               # "min" for loss, "max" for metrics
+    patience: 15              # Epochs without improvement before stopping
+    min_delta: 0.0001         # Minimum change to count as improvement
+    divergence_patience: 5     # Epochs of increasing loss before stopping
+    restore_best_weights: true  # Load best checkpoint when stopped
+    min_epochs: 50            # Never stop before this many epochs
+    plateau_slope_threshold: 1e-6  # Slope threshold for plateau detection
+  
+  # Adaptive Learning Rate (NEW - for Phase 2)
+  adaptive_lr:
+    enabled: false            # Enable in Phase 2
+    scheduler: "plateau"      # "plateau", "cosine", "multistep", "warmup_cosine_plateau"
+    plateau_config:
+      factor: 0.5             # LR reduction factor on plateau
+      patience: 8             # Epochs before reducing LR
+      threshold: 0.0001
+      cooldown: 3             # Epochs after reduction before resuming
+      min_lr: 1e-8
+    warmup_epochs: 5
+  
+  # Stage Automation (NEW - for Phase 3)
+  stage_automation:
+    enabled: false            # Enable to auto-advance stages
+    auto_advance: true        # Automatically advance when criteria met
+    
+    stage1:
+      max_epochs: 100         # Maximum epochs for Stage 1
+      advance_on_convergence: true    # Advance when converged
+      advance_on_plateau: true         # Also advance when plateaued
+      min_epochs_before_advance: 30    # Never advance before this
+      target_metric: "psnr"             # Monitor PSNR (optional)
+      target_threshold: 35.0           # Target PSNR value (optional)
+      
+    stage2:
+      max_epochs: 200         # Maximum epochs for Stage 2
+      min_epochs: 50          # Minimum epochs for Stage 2
+      target_metric: "psnr"
+      target_threshold: 36.0
+  
+  # Stage 1: Knowledge Aggregation (MTKD)
+  stage1:
+    enabled: false
+    epochs: 100
+    
+    # Aggregation Architecture
+    aggregation_type: "simple"           # simple, adaptive, dctswin, multiscale
+    num_blocks: 6
+    embed_dim: 96
+    
+    # Multi-scale settings (when aggregation_type = multiscale)
+    multiscale_enabled: false
+    scale_factors: [1, 2, 4]
+    
+    # Stage 1 Optimization
+    optimizer: "adamw"
+    lr: 0.0002
+    weight_decay: 0.01
+    scheduler: "cosine"
+    warmup_epochs: 10
+    min_lr: 1e-7
+    
+    # Training
+    batch_size: 32
+    gradient_accumulation_steps: 1
+    
+    # OHEM (Online Hard Example Mining)
+    ohem_enabled: false
+    ohem_ratio: 0.7
+    
+    # Teachers
+    auto_download_teachers: true
+    teachers: []                 # List of teacher configs
+    freeze_teachers: true
+    
+    # Loss weights (when use_combined_loss = true)
+    use_combined_loss: false
+    loss_weights:
+      l1: 0.4
+      wavelet: 0.3
+      gradient: 0.2
+      diversity: 0.1
+    wavelet_levels: 3
+    
+    # Anime-specific losses
+    anime:
+      line_art_preservation: false
+      line_art_weight: 1.0
+      color_consistency: false
+      color_weight: 0.5
+      flat_region_preservation: false
+      flat_weight: 0.5
+    
+    # Video/Temporal training
+    temporal_consistency: false
+    temporal_weight: 0.3
+    frame_window: 3
+    
+    # Advanced monitoring
+    log_teacher_disagreement: false
+    log_frequency_loss: false
+    debug_nan: false
+    
+    # Experimental features
+    feature_aggregation: false
+    meta_learning: false
+    contrastive_enabled: false
+
+  # Stage 2: Student Distillation
+  stage2:
+    enabled: false
+    epochs: 200
+    lr: 0.0001
+    scheduler: "cosine"
+    warmup_epochs: 0
+    min_lr: 1e-7
+    use_stage1_checkpoint: false
+    stage1_checkpoint: null
+
+# Data settings
+data:
+  # Dataset selection (list for multiple datasets)
+  datasets:
+    - name: "div2k"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/DIV2K_train_HR"
+      lr_dir: null            # Auto-generate via degradation
+      preload: false          # Load all images to RAM (if dataset fits)
+      max_images: null        # Limit dataset size (for testing)
+      gpu_degradation: false  # Apply degradation on GPU (faster, uses more VRAM)
+  
+  # Preprocessing
+  crop_size: 128              # Training patch size (used when crop_size_mode='manual')
+  scale: 4                    # Must match model.scale
+  augment: true               # Random flip/rotate
+  
+  # === AUTO CROP SIZE (NEW) ===
+  # Automatically detect optimal crop_size from dataset dimensions
+  # Prevents issues where crop_size > image dimensions (causes upscaling)
+  crop_size_mode: "manual"    # "auto" or "manual"
+                             # - "auto": Detect from dataset, uses standard sizes (64-960)
+                             # - "manual": Use the crop_size value specified above
+  auto_crop_max: 960          # Maximum crop_size in auto mode (prevents OOM with 4K images)
+  auto_crop_min: 64           # Minimum crop_size (ensures reasonable training patches)
+  
+  # Example: For 720p images, auto mode will select crop_size=640 or 720
+  # Example: For 1080p images, auto mode will select crop_size=960
+  # Use "manual" mode if you want consistent crop_size across different datasets
+  
+  # === SMART DEGRADATION (NEW) ===
+  # Quality-aware degradation automatically adjusts intensity based on image quality
+  # Clean HD sources (like anime_video_frames) get light degradation
+  # Compressed/web sources get heavy degradation
+  degradation:
+    enabled: true
+    mode: "medium"            # "auto", "light", "medium", "heavy", "anime", "disabled"
+                             # "auto": Analyze dataset quality and select best preset
+                             # "light": Low blur/noise/JPEG - for clean HD sources (Blu-ray, etc.)
+                             # "medium": Standard degradation - for DIV2K-style images
+                             # "heavy": Aggressive degradation - for web/compressed sources
+                             # "anime": Anime-specific artifacts (banding, quantization)
+                             # "disabled": Bicubic downsample only
+    
+    # Auto mode thresholds (when mode="auto")
+    # Images with quality score > hd_threshold get light degradation
+    # Images with quality score > standard_threshold get medium degradation
+    # Others get heavy degradation
+    auto_quality_thresholds:
+      hd_threshold: 0.8           # Quality score 0-1, above this = light degradation
+      standard_threshold: 0.5     # Above this = medium degradation
+    
+    # === PRESET CONFIGURATIONS ===
+    # These are applied based on mode selection above
+    # You can override specific values here if needed
+    
+    # Light preset (clean HD sources)
+    light:
+      blur_prob: 0.3
+      blur_sigma: [0.1, 1.5]
+      noise_prob: 0.2
+      noise_sigma: [0, 15]
+      jpeg_prob: 0.2
+      jpeg_quality: [80, 90, 95, 100]
+      compression_prob: 0.3
+      second_order_prob: 0.1
+
+    # Medium preset (standard training)
+    medium:
+      blur_prob: 0.7
+      blur_sigma: [0.1, 2.5]
+      noise_prob: 0.5
+      noise_sigma: [0, 25]
+      jpeg_prob: 0.5
+      jpeg_quality: [70, 80, 90, 95, 100]
+      compression_prob: 0.5
+      second_order_prob: 0.3
+
+    # Heavy preset (compressed sources)
+    heavy:
+      blur_prob: 0.9
+      blur_sigma: [0.5, 4.0]
+      noise_prob: 0.8
+      noise_sigma: [5, 50]
+      jpeg_prob: 0.7
+      jpeg_quality: [60, 70, 75, 80, 85]
+      compression_prob: 0.7
+      second_order_prob: 0.4
+    
+    # === ADVANCED: Manual Degradation Control ===
+    # Only used when mode is not set (deprecated) or for fine-tuning presets
+    # blur_kernel_size: [7, 9, 11, 13, 15, 17, 19, 21]
+    # blur_sigma: [0.1, 0.2, 1.0, 2.0, 3.0]
+    # noise_sigma: [0, 10, 25, 50]
+    # resize_prob: [0.2, 0.7, 0.1]  # up, down, keep
+    # resize_range: [0.15, 1.5]
+    
+    # Anime-specific degradation (used when mode="anime")
+    anime_degradation: false
+    color_quantization: false
+    banding_simulation: false
+    posterization_levels: [4, 6, 8, 16]
+
+    # === APISR-STYLE ENHANCED DEGRADATION ===
+    # Prediction-oriented compression with shuffled resize
+    # Reference: APISR (CVPR 2024) - Anime Production Inspired Real-World Anime SR
+    degrade_before_crop: false      # Apply degradation on full image before cropping
+    shuffled_resize: false          # Randomize order of degradation operations
+    two_stage_compression: false    # Two-stage compression pipeline
+    compression_stage1:             # Stage 1 (before resize): web-based codecs
+      - jpeg
+      - webp
+    compression_stage2:             # Stage 2 (after resize): video codecs
+      - avif
+      - h264
+      - jpeg
+    compression_prob: 0.7           # Probability of applying compression in stage 1
+
+    # Anime preset with enhanced degradation
+    anime_heavy:
+      blur_prob: 0.8
+      blur_sigma: [0.1, 3.0]
+      noise_prob: 0.6
+      noise_sigma: [0, 30]
+      jpeg_prob: 0.6
+      jpeg_quality: [50, 60, 70, 80, 90]
+      compression_prob: 0.8
+      second_order_prob: 0.4
+  
+  # Dataloader - Optimized for GPU saturation
+  num_workers: 8          # Increased from 4; use null for auto-tuning
+  pin_memory: true        # Required for non_blocking transfers
+  prefetch_factor: 4      # Increased from 2 to hide CPU latency
+  persistent_workers: true # Reduces worker spawn overhead
+  auto_tune_workers: true # Auto-detect optimal num_workers
+
+  # Video extraction settings (optional)
+  video:
+    enabled: true                  # Set to true to use videos
+    video_dir: "data/anime_vid"     # Directory containing video files
+    extract_mode: "pre"             # "pre" = extract all before training, "on_demand" = extract during training
+    extract_every_n_frames: 5      # Extract 1 frame every N frames
+    quality_threshold: 0.7          # Quality filter threshold (0-1)
+    remove_duplicates: false         # Remove duplicate/similar frames
+    min_resolution: 720             # Minimum frame dimension
+    output_dir: "data/anime_video_frames"  # Output for pre-extraction mode
+    cache_size_gb: 10               # Max cache size for on-demand mode
+    
+    # Temporal training settings
+    temporal_training: false        # Enable for video sequence training
+    frame_window: 3                 # Number of consecutive frames
+    scene_change_threshold: 0.3     # Threshold for scene change detection
+
+  # === DATASET SAMPLING CONTROL ===
+  # Control how much of each dataset is used for training
+  sample_ratio: null                # Global ratio (0.0-1.0) applied to all datasets
+                                   # null = use per-dataset ratios below
+  max_images_total: null           # Hard cap on total images across all datasets
+                                   # null = no limit
+
+  # === PREPROCESSING PIPELINE (NEW) ===
+  # Unified preprocessing configuration with 5 modes:
+  # - on_the_fly: CPU-based degradation during training
+  # - precomputed: Load pre-generated LR/HR pairs from disk (fastest)
+  # - gpu_degradation: GPU-accelerated degradation (speed focus)
+  # - hybrid: Precomputed base + runtime augmentation (DEFAULT)
+  # - quality_adaptive: Per-image quality-based degradation selection
+  preprocessing:
+    # MODE SELECTION (default: hybrid)
+    mode: "hybrid"                 # Choose preprocessing mode
+                                  # Recommended: hybrid (best speed/quality balance)
+    
+    # === STORAGE & SAMPLING ===
+    storage:
+      estimate_before_precompute: true   # Run size check before precomputing
+      available_space_gb: 10            # Available disk space (for estimation)
+      crop_size: 128                   # Starting crop size for storage calc
+      format: "png"                    # png | jpeg
+      jpeg_quality: 90                # If using jpeg
+    
+    dataset_sampling:
+      sample_ratio: null              # Global ratio (0.0-1.0), null=all
+      max_images_total: null          # Hard cap, null=no limit
+      per_dataset:                    # Per-dataset overrides
+        anime_video_frames: 0.3        # 30% of this dataset
+        anime_hr_1: 0.5               # 50% of this dataset
+    
+    # === PRECOMPUTED MODE ===
+    precomputed:
+      enabled: true
+      base_dir: "data/precomputed_4x"  # LR/HR pairs stored here
+      cache_in_memory: false           # Load all to RAM (fastest but needs RAM)
+    
+    # === ON_THE_FLY MODE ===
+    on_the_fly:
+      enabled: true
+      degrade_before_crop: true        # APISR-style: degrade full image, then crop
+      shuffled_resize: true            # Randomize order of degradation operations
+      two_stage_compression: true      # Stage1 (before resize), Stage2 (after)
+      compression_stage1:
+        - jpeg
+        - webp
+      compression_stage2:
+        - avif
+        - h264
+        - jpeg
+      quality_adaptive: false
+    
+    # === GPU_DEGRADATION MODE (SPEED FOCUS) ===
+    gpu_degradation:
+      enabled: true
+      modules:
+        blur: true
+        directional_blur: true
+        noise: true
+        quantization: true
+        banding: true
+        ringing: true
+      blur_prob: 0.5
+      noise_prob: 0.4
+      quantization_prob: 0.3
+    
+    # === HYBRID MODE (DEFAULT - RECOMMENDED) ===
+    hybrid:
+      precomputed_base: true
+      base_dir: "data/precomputed_4x"
+      runtime_augmentation:
+        enabled: true
+        blur_prob: 0.3
+        noise_sigma: [0, 15]
+        jpeg_quality: [75, 95]
+        quantization: true
+        quantization_levels: [8, 16]
+    
+    # === QUALITY_ADAPTIVE MODE ===
+    quality_adaptive:
+      enabled: true
+      tier_selection: "auto"          # auto | light | medium | heavy
+      cache_scores: true
+      tier_thresholds:
+        light: 75
+        medium: 45
+        heavy: 0
+      light_degradation: light
+      medium_degradation: medium
+      heavy_degradation: heavy
+    
+    # === LINE ENHANCEMENT (Pseudo-GT) ===
+    line_enhancement:
+      enabled: true
+      sigma1: 1.0
+      sigma2: 16.0
+      alpha: 0.1
+      gamma: 0.5
+
+# Loss settings
+loss:
+  pixel_loss:
+    type: "l1"                # l1, l2, charbonnier
+    weight: 1.0
+  
+  perceptual_loss:
+    enabled: false
+    type: "vgg"               # vgg, resnet
+    layers: ["relu3_3"]
+    weights: [1.0]
+    weight: 0.1
+  
+  adversarial_loss:
+    enabled: false
+    type: "vanilla"           # vanilla, relativistic, hinge
+    weight: 0.1
+  
+  # Distillation losses (MTKD + FAKD)
+  distillation:
+    enabled: false
+    mtkd_weight: 1.0          # Wavelet-based distillation
+    fakd_weight: 0.5          # Feature affinity distillation
+    fakd_layers: [2, 4, 6, 8] # Layers to apply FAKD
+    fakd_layer_weights: [0.1, 0.2, 0.3, 0.4]
+
+# Checkpointing
+checkpoint:
+  save_dir: "checkpoints"
+  keep_last_n: 5             # Keep only N most recent checkpoints
+  keep_best: true             # Always keep best checkpoint
+
+# Paths
+paths:
+  data_root: "data"
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  result_dir: "results"
+  pretrained_dir: "pretrained"  # Teacher models for Stage 1 (EDSR, RCAN, SwinIR)
+
+# Checkpoint Management
+output:
+  # run_name: null           # null=auto (hybrid), or custom string (e.g., "my_exp")
+  # duplicate_handling: auto_increment  # 'auto_increment' (auto suffix _001) or 'ask'
+  # log_dir: null           # override log directory (defaults to logs/{run_name})
+  # results_dir: null        # override results directory (defaults to results/{run_name})
+
+# System
+system:
+  seed: 42
+  cudnn_benchmark: true
+  cudnn_deterministic: false
+
+# Progressive crop defaults (used by neosr_finetuner when
+# finetune.progressive_crop.enabled is true but no `stages` are provided).
+# Per-config overrides take precedence; these are the fallback schedule.
+progressive_crop_defaults:
+  stages:
+    - {crop_size: 128, epochs: 10}
+    - {crop_size: 256, epochs: 30}
+    - {crop_size: 512, epochs: 40}
+  default_crop_size: 128

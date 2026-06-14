@@ -1,0 +1,105 @@
+# Test Config: Stage 1 Fast
+# For testing Stage 1 training with minimal resources
+# 3 epochs, batch_size=2, 2 teachers
+
+base: "../../configs/base.yaml"
+
+model:
+  name: "test_model_a"
+  type: "span"
+  scale: 4
+  channels: 16  # Smaller for testing
+  num_blocks: 4
+  use_lora: false
+
+training:
+  mode: "model_a"
+  batch_size: 2
+  epochs: 3
+  lr: 0.001
+  
+  stage1:
+    enabled: true
+    epochs: 3
+    
+    # Simple aggregation
+    aggregation_type: "simple"
+    num_blocks: 2
+    embed_dim: 32
+    
+    # Minimal teacher config
+    auto_download_teachers: false
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+      - name: "rcan"
+        path: "pretrained/RCAN_x4.pt"
+    freeze_teachers: true
+    
+    # Fast settings
+    optimizer: "adam"
+    scheduler: "step"
+    warmup_epochs: 0
+    
+    # Disabled for speed
+    ohem_enabled: false
+    
+    anime:
+      line_art_preservation: false
+      color_consistency: false
+      flat_region_preservation: false
+    
+    temporal_consistency: false
+
+  stage2:
+    enabled: false
+
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 1
+    wavelet_type: "haar"
+    
+  fakd:
+    enabled: true
+    layers: [2, 4]
+    layer_weights: [0.5, 0.5]
+
+data:
+  datasets:
+    - name: "test_dataset"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/val_hr"
+  
+  crop_size: 64  # Small for speed
+  augment: false
+  
+  num_workers: 2
+  prefetch_factor: 2
+  pin_memory: false
+  
+  degradation:
+    enabled: true
+    mode: "light"
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 0.5
+    fakd_weight: 0.3
+
+checkpoint:
+  save_dir: "tests/temp_checkpoints"
+  keep_last_n: 2
+  save_interval: 1
+
+system:
+  seed: 42
+  cudnn_benchmark: false

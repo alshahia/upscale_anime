@@ -1,0 +1,30 @@
+{
+  "_comment": "Pipeline configuration for anime SR training",
+  "data_dir": "data/anime_hr",
+  "test_lr_dir": "data/test_lr",
+  "test_hr_dir": "data/test_hr",
+  
+  "run_pretrain": false,
+  "run_finetune": true,
+  "run_benchmark": true,
+  "run_export": true,
+  
+  "remove_duplicates": true,
+  "remove_invalid": true,
+  "num_workers": 4,
+  
+  "pretrain_config": "configs/pretrain_selfsupervised.yaml",
+  "pretrain_name": "pretrain_anime",
+  "pretrain_epochs": 100,
+  
+  "finetune_config": "configs/auto_stage_pipeline.yaml",
+  "finetune_name": "finetune_anime",
+  "finetune_epochs": 200,
+  
+  "benchmark_output": "results/benchmark.json",
+  "export_dir": "production_models",
+  "export_formats": "onnx,torchscript,state_dict,quantized",
+  
+  "stop_on_error": true,
+  "results_file": "results/pipeline_results.json"
+}

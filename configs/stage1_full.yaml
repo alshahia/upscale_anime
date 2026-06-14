@@ -1,0 +1,182 @@
+# Stage 1: Full Configuration with All Improvements
+# This config enables all recommended features for maximum quality
+
+base: "base.yaml"
+
+model:
+  name: "model_a_full"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 12
+  use_lora: true
+  lora_rank: 4
+
+# Training configuration
+training:
+  mode: "model_a"
+  
+  # Stage 1: Knowledge Aggregation
+  stage1:
+    enabled: true
+    epochs: 150
+    
+    # Aggregation Architecture
+    aggregation_type: "adaptive"           # simple, adaptive, dctswin, multiscale
+    num_blocks: 6
+    embed_dim: 96
+    
+    # Multi-scale settings (when aggregation_type = multiscale)
+    multiscale_enabled: false
+    scale_factors: [1, 2, 4]
+    
+    # Optimization
+    optimizer: "adamw"
+    lr: 0.0002
+    weight_decay: 0.01
+    scheduler: "cosine"                     # cosine, multistep, constant
+    warmup_epochs: 15
+    min_lr: 1e-7
+    
+    # Training
+    batch_size: 32
+    gradient_accumulation_steps: 2          # Effective batch = 64
+    
+    # OHEM (Online Hard Example Mining)
+    ohem_enabled: true
+    ohem_ratio: 0.7                       # Use hardest 70% of examples
+    
+    # Teacher configuration
+    auto_download_teachers: true
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+        weight: 1.0
+      - name: "rcan"
+        path: "pretrained/RCAN_x4.pt"
+        weight: 1.0
+      - name: "swinir"
+        path: "pretrained/SwinIR_x4.pt"
+        weight: 1.0
+    freeze_teachers: true
+    
+    # Combined loss weights
+    use_combined_loss: true
+    loss_weights:
+      l1: 0.4
+      wavelet: 0.3
+      gradient: 0.2
+      diversity: 0.1
+    wavelet_levels: 3
+    
+    # Anime-specific losses
+    anime:
+      line_art_preservation: true
+      line_art_weight: 1.0
+      color_consistency: true
+      color_weight: 0.5
+      flat_region_preservation: true
+      flat_weight: 0.5
+    
+    # Video/Temporal training
+    temporal_consistency: false            # Enable for video training
+    temporal_weight: 0.3
+    frame_window: 3
+    
+    # Monitoring
+    log_teacher_disagreement: true
+    log_frequency_loss: true
+    debug_nan: true
+    
+    # Feature aggregation (experimental)
+    feature_aggregation: false
+    
+    # Meta-learning (experimental - Tier 3)
+    meta_learning: false
+    meta_lr: 0.01
+    
+    # Contrastive learning (experimental - Tier 3)
+    contrastive_enabled: false
+    contrastive_weight: 0.1
+
+  # Stage 2: Student Distillation
+  stage2:
+    enabled: true
+    epochs: 200
+    lr: 0.0001
+    scheduler: "cosine"
+    warmup_epochs: 10
+    min_lr: 1e-7
+    use_stage1_checkpoint: true
+    stage1_checkpoint: "checkpoints/model_a_stage1_best.pth"
+
+# Distillation configuration
+distillation:
+  enabled: true
+  
+  # MTKD settings
+  mtkd:
+    enabled: true
+    wavelet_levels: 3
+    wavelet_type: "haar"
+    
+  # FAKD settings
+  fakd:
+    enabled: true
+    layers: [2, 4, 6, 8, 10, 12]
+    layer_weights: [0.05, 0.1, 0.15, 0.2, 0.25, 0.25]
+    affinity_type: "spatial"
+
+# Data configuration
+data:
+  datasets:
+    - name: "anime_custom"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/anime_video_frames"
+  
+  crop_size: 128
+  augment: true
+  
+  # Anime-specific degradation
+  degradation:
+    enabled: true
+    blur_kernel_size: [5, 7, 9, 11]
+    blur_sigma: [0.5, 1.0, 2.0, 3.0]
+    noise_sigma: [5, 15, 25]
+    jpeg_quality: [70, 80, 90, 95]
+    jpeg_prob: 0.6
+    
+    # Anime-specific settings
+    anime_degradation: true
+    color_quantization: true
+    banding_simulation: true
+  
+  # Video settings
+  video:
+    temporal_training: false
+    frame_window: 3
+    scene_change_threshold: 0.3
+
+# Loss configuration
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+
+# Checkpointing
+checkpoint:
+  save_dir: "checkpoints"
+  keep_last_n: 5
+  keep_best: true
+
+# Logging
+system:
+  seed: 42
+  cudnn_benchmark: true
+  cudnn_deterministic: false

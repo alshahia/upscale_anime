@@ -1,0 +1,360 @@
+base: base.yaml
+
+# finetune_neosr_span_v5.yaml
+# Corrected configuration based on neosr/SPAN/APISR research
+# Changes from v5:
+#   - LR increased from 5e-5 to 1e-3 (standard for SPAN)
+#   - Added optimizer: adan_sf with schedule_free: true
+#   - Added MS-SSIM, Consistency, and LDL losses
+#   - Fixed wavelet_init from 40 to 80000
+#   - Increased adversarial_weight from 0.001 to 0.3 (standard)
+#   - Fixed phase adversarial weights
+
+# Checkpoint Management
+output:
+   run_name: NEOSR_SPAN_V5_CORRECTED
+   duplicate_handling: auto_increment
+
+data:
+  batch_size: 32
+  crop_size: 128
+  num_workers: 8
+  prefetch_factor: 4
+  
+  # === DATASET SAMPLING CONTROL ===
+  sample_ratio: null
+  max_images_total: null
+
+  datasets:
+    - name: anime_video_frames
+      hr_dir: data/anime_video_frames
+      enabled: true
+      weight: 1.0
+      sample_ratio: 0.3
+    - name: anime_hr_1
+      hr_dir: data/anime_hr_1
+      enabled: true
+      weight: 1.0
+      sample_ratio: 0.5
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true
+      weight: 1.0
+      sample_ratio: 1.0
+
+  # === PREPROCESSING PIPELINE ===
+  preprocessing:
+    mode: "hybrid"
+    
+    storage:
+      estimate_before_precompute: true
+      available_space_gb: 10
+      crop_size: 128
+      format: "png"
+      jpeg_quality: 90
+    
+    dataset_sampling:
+      anime_video_frames: 0.3
+      anime_hr_1: 0.5
+      anime_val: 1.0
+    
+    precomputed:
+      enabled: true
+      base_dir: "data/precomputed_4x"
+      cache_in_memory: true
+    
+    on_the_fly:
+      enabled: true
+      degrade_before_crop: true
+      shuffled_resize: true
+      two_stage_compression: true
+      compression_stage1:
+        - jpeg
+        - webp
+      compression_stage2:
+        - avif
+        - h264
+        - jpeg
+      quality_adaptive: false
+    
+    gpu_degradation:
+      enabled: true
+      modules:
+        blur: true
+        directional_blur: true
+        noise: true
+        quantization: true
+        banding: true
+        ringing: true
+      blur_prob: 0.5
+      noise_prob: 0.4
+      quantization_prob: 0.3
+    
+    hybrid:
+      precomputed_base: true
+      base_dir: "data/precomputed_4x_anime_hr_1"
+      runtime_augmentation:
+        enabled: true
+        blur_prob: 0.3
+        noise_sigma: [0, 15]
+        jpeg_quality: [75, 95]
+        quantization: true
+        quantization_levels: [8, 16]
+    
+    quality_adaptive:
+      enabled: true
+      tier_selection: "auto"
+      cache_scores: true
+      tier_thresholds:
+        light: 75
+        medium: 45
+        heavy: 0
+      light_degradation: light
+      medium_degradation: medium
+      heavy_degradation: heavy
+    
+    line_enhancement:
+      enabled: true
+      sigma1: 1.0
+      sigma2: 16.0
+      alpha: 0.1
+      gamma: 0.5
+
+  # === APISR-STYLE DEGRADATION ===
+  degradation:
+    enabled: false
+    mode: anime_heavy
+    degrade_before_crop: true
+    shuffled_resize: true
+    two_stage_compression: true
+    compression_stage1:
+      - jpeg
+      - webp
+    compression_stage2:
+      - avif
+      - h264
+      - jpeg
+    compression_prob: 0.8
+    blur_prob: 0.8
+    blur_sigma: [0.1, 3.0]
+    noise_prob: 0.6
+    noise_sigma: [0, 30]
+    jpeg_prob: 0.6
+    jpeg_quality: [50, 60, 70, 80, 90]
+    second_order_prob: 0.4
+
+  video:
+    enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_nomosuni_4x.pth
+
+training:
+  mode: finetune
+  batch_size: 32
+  persistent_workers: true
+  use_tensorboard: true
+  
+  finetune:
+    enabled: true
+    epochs: 100
+    batch_size: 32
+    
+    # === OPTIMIZER (FIXED) ===
+    # neosr standard for SPAN: adan_sf with schedule_free
+    optimizer:
+      type: adan_sf
+      lr: 0.001  # FIXED: was 5e-5, standard is 1e-3
+      betas: [0.98, 0.92, 0.99]
+      weight_decay: 0.01
+      schedule_free: true
+    
+    # Discriminator optimizer
+    optim_d:
+      type: adan_sf
+      lr: 0.0001  # Standard: 1e-4
+      betas: [0.98, 0.92, 0.99]
+      weight_decay: 0.01
+      schedule_free: true
+      warmup_steps: 600
+    
+    # === SCHEDULER (ADDED) ===
+    scheduler:
+      type: cosine
+      T_max: 500000  # ~100 epochs at 5000 iter/epoch
+      eta_min: 1e-5
+    
+    warmup_epochs: 5
+    warmup_steps: 1600  # For generator
+    min_lr: 0.0000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_nomosuni_4x.pth
+    freeze_layers: []
+    val_interval: 1
+    save_interval: 5
+    torch_compile: false
+    gradient_checkpointing: false
+    
+    ema:
+      enabled: true
+      decay: 0.999
+    
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 60
+      phase_adversarial_ramp_epochs: 15
+      
+      # === PHASE 1: Structure-focused (no GAN) ===
+      phase1:
+        pixel_weight: 1.0
+        mssim_weight: 1.0          # ADDED: MS-SSIM for structure
+        consistency_weight: 1.0      # ADDED: Color/luma consistency
+        ldl_weight: 1.0             # ADDED: Local detail loss
+        perceptual_weight: 0.15
+        fdl_weight: 0.75             # Standard from neosr
+        adversarial_weight: 0.0      # No GAN in phase 1
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.025
+        wavelet_weight: 0.5           # Wavelet-guided stability
+      
+      # === PHASE 2: Texture-focused (with GAN) ===
+      phase2:
+        pixel_weight: 0.5
+        mssim_weight: 1.0
+        consistency_weight: 1.0
+        ldl_weight: 1.0
+        perceptual_weight: 0.2
+        fdl_weight: 0.75
+        adversarial_weight: 0.3      # FIXED: was 0.001, standard is 0.3
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.1
+        wavelet_weight: 0.5
+
+    progressive_crop:
+      enabled: false
+      default_crop_size: 128
+      stages:
+        - crop_size: 128
+          epochs: 5
+        - crop_size: 256
+          epochs: 5
+        - crop_size: 512
+          epochs: 5
+
+    # === LOSSES (CORRECTED) ===
+    loss:
+      # Pixel loss (Charbonnier - smooth L1)
+      pixel:
+        type: charbonnier
+        weight: 1.0
+        eps: 1e-6
+
+      # ADDED: MS-SSIM loss (structural similarity)
+      mssim:
+        type: mssim_loss
+        weight: 1.0
+        window_size: 11
+        sigma: 1.5
+
+      # ADDED: Consistency loss (color/luma matching)
+      consistency:
+        type: consistency_loss
+        weight: 1.0
+        criterion: chc
+        blur: true
+        cosim: true
+        saturation: 1.0
+        brightness: 1.0
+
+      # ADDED: LDL loss (local detail preservation)
+      ldl:
+        type: ldl_loss
+        weight: 1.0
+        criterion: chc
+        ksize: 7
+
+      # Perceptual (twin: ResNet50 Danbooru + VGG19)
+      perceptual:
+        enabled: true
+        type: twin
+        weight: 0.15
+        warmup_epochs: 10
+        delta: 0.1
+        danbooru_weight: 0.5   # Anime-aware features
+        vgg_weight: 0.5        # Photorealistic features
+        layer_weights:
+          conv1_2: 0.1
+          conv2_2: 0.1
+          conv3_4: 1.0
+          conv4_4: 1.0
+          conv5_4: 1.0
+
+      # FDL (Frequency Distribution Loss with DINOv2)
+      fdl:
+        enabled: true
+        weight: 0.75          # FIXED: was 0.05, standard is 0.75
+        num_proj: 24
+        dino_variant: small
+        compute_every: 4      # Reduce compute overhead
+
+      # Anime-specific losses
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      # Adversarial (Relativistic GAN)
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.3          # FIXED: was 0.001, standard is 0.3
+        start_epoch: 15
+        max_weight: 0.005
+        gradient_penalty: true
+        label_smoothing: true
+        discriminator_lr: 0.0001
+        real_label_val: 1.0
+        fake_label_val: 0.0
+
+      # Frequency loss
+      frequency:
+        enabled: true
+        weight: 0.1
+        block_size: 8
+        high_freq_weight: 1.5
+
+      # Wavelet-guided loss (GAN stability)
+      wavelet_guided:
+        enabled: true
+        weight: 0.5
+        hh_weight: 2.0
+        wavelet_init: 80000   # FIXED: was 40, standard is 80000
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+      - dists
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 15
+      mode: min

@@ -1,0 +1,294 @@
+base: base.yaml
+
+# -------------------------------------------------------------------------
+# RE-TUNING ADVISORY (2026-06-02 V&V pass)
+# -------------------------------------------------------------------------
+# Phase-1 fixes that change loss behavior:
+#   1. FDL gradient flow restored: FDL now contributes gradients to the
+#      generator. Expect the FDL loss to drop faster; you may need to
+#      LOWER `loss.fdl.weight` by 30-50% from the prior 0.05 default.
+#   2. RelativisticGAN D/G split: ESRGAN RA-GAN formulation with
+#      cross-terms. Adversarial training is more aggressive; consider
+#      LOWERING `loss.adversarial.weight` from 0.001 to 0.0005 in Phase 1.
+#   3. AMP + GradScaler wired: training is now numerically stable under
+#      mixed precision. No action required, but expect faster convergence
+#      on RTX 4000 Mobile / similar.
+#
+# Suggested starting tweaks (apply only if Phase 1 loss is unstable):
+#   loss:
+#     fdl:
+#       weight: 0.03         # was 0.05
+#     adversarial:
+#       weight: 0.0005       # was 0.001
+#       max_weight: 0.003    # was 0.005
+#
+# Run `python scripts/profile_loss_breakdown.py` after a few epochs to
+# confirm no loss dominates (>30% of total).
+# -------------------------------------------------------------------------
+
+# Checkpoint Management
+output:
+   run_name: NEOSR_SPAN_V4_HYBRID
+   duplicate_handling: auto_increment
+   log_dir: null
+   results_dir: null
+
+data:
+  batch_size: 32
+  crop_size: 128
+  num_workers: 8
+  prefetch_factor: 4
+  
+  # === DATASET SAMPLING ===
+  # Sample ratios for each dataset (null = use global sample_ratio)
+  sample_ratio: null  # Global ratio (0.0-1.0), null = use per_dataset below
+  
+  datasets:
+    - name: anime_video_frames
+      hr_dir: data/anime_video_frames
+      enabled: true
+      weight: 1.0
+      sample_ratio: 1  # 30% of this dataset
+    - name: anime_hr
+      hr_dir: data/anime_hr
+      enabled: true
+      weight: 1.0
+      sample_ratio: 1  # 50% of this dataset
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true
+      weight: 1.0
+      sample_ratio: 1.0  # Use all validation images
+
+  # === PREPROCESSING PIPELINE (HYBRID MODE - DEFAULT) ===
+  # v5: all modes share the DegradationPipeline class
+  # (src/data/degradation_pipeline.py). Pre-flight checks raise FileNotFoundError
+  # at startup if precomputed/hybrid requires a base_dir that does not exist;
+  # set `precomputed.enabled: false` or `hybrid.precomputed_base: false` to skip.
+  preprocessing:
+    # Mode selection: on_the_fly | precomputed | gpu_degradation | hybrid | quality_adaptive
+    mode: "hybrid"  # DEFAULT - Precompute base + runtime augmentation
+    
+    # Storage settings
+    storage:
+      available_space_gb: 10
+      crop_size: 128
+      format: "png"
+    
+    # Per-dataset sampling (overrides global sample_ratio; values must be float [0,1])
+    dataset_sampling:
+      anime_video_frames: 1.0    # 100% of video frames
+      anime_hr: 1.0              # 100% of anime_hr
+    
+    # Precomputed mode settings
+    precomputed:
+      enabled: true
+      base_dir: "data/precomputed_4x"  # Run scripts/precompute_pairs.py first
+      cache_in_memory: false
+    
+    # Hybrid mode: Precomputed base + runtime augmentation
+    hybrid:
+      precomputed_base: true
+      base_dir: "data/precomputed_4x"
+      runtime_augmentation:
+        enabled: true
+        blur_prob: 0.3
+        noise_sigma: [0, 15]
+        jpeg_quality: [75, 95]
+        quantization: true
+        quantization_levels: [8, 16]
+    
+    # GPU degradation for speed
+    gpu_degradation:
+      enabled: true
+      modules:
+        blur: true
+        directional_blur: true
+        noise: true
+        quantization: true
+        banding: true
+        ringing: true
+      blur_prob: 0.5
+      noise_prob: 0.4
+      quantization_prob: 0.3
+    
+    # Quality adaptive settings
+    quality_adaptive:
+      enabled: true
+      cache_scores: true
+      tier_thresholds:
+        light: 75
+        medium: 45
+        heavy: 0
+    
+    # Line enhancement (XDoG pseudo-GT)
+    line_enhancement:
+      enabled: false  # Set to true if you want pseudo-GT sharpening
+
+  # APISR-STYLE DEGRADATION (for on_the_fly mode)
+  degradation:
+    enabled: false  # Using hybrid mode, so degradation disabled
+    mode: anime_heavy
+    degrade_before_crop: true
+    shuffled_resize: true
+    two_stage_compression: true
+    compression_stage1:
+      - jpeg
+      - webp
+    compression_stage2:
+      - avif
+      - h264
+      - jpeg
+    compression_prob: 0.8
+    blur_prob: 0.8
+    blur_sigma: [0.1, 3.0]
+    noise_prob: 0.6
+    noise_sigma: [0, 30]
+    jpeg_prob: 0.6
+    jpeg_quality: [50, 60, 70, 80, 90]
+    second_order_prob: 0.4
+
+  video:
+    enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_nomosuni_4x.pth
+
+training:
+  mode: finetune
+  batch_size: 32
+  persistent_workers: true
+  use_tensorboard: true
+  finetune:
+    enabled: true
+    epochs: 100
+    batch_size: 32
+    lr: 0.00005
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.0000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_nomosuni_4x.pth
+    freeze_layers: []
+    val_interval: 1
+    save_interval: 2
+    torch_compile: false
+    gradient_checkpointing: false
+
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 60
+      phase_adversarial_ramp_epochs: 15
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.15
+        adversarial_weight: 0.0
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.025
+      phase2:
+        pixel_weight: 0.5
+        perceptual_weight: 0.2
+        adversarial_weight: 0.001
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.1
+
+    progressive_crop:
+      enabled: false
+      default_crop_size: 128
+      stages:
+        - crop_size: 128
+          epochs: 5
+        - crop_size: 256
+          epochs: 5
+        - crop_size: 512
+          epochs: 5
+
+    # -------------------------------------------------------------------------
+    # Loss weights — PRECEDENCE RULE
+    # -------------------------------------------------------------------------
+    # When `two_phase_training.enabled: true` (above), the per-phase
+    # `phase1.<component>_weight` and `phase2.<component>_weight` values
+    # TAKE PRECEDENCE over the `loss.<component>.weight` values below.
+    # The trainer linearly interpolates between phase1 and phase2 weights
+    # during phase 2. The `loss.*.weight` values below act as a FALLBACK
+    # for single-phase training and as the initial guess for phase 1.
+    # If both are set, the two-phase values are used.
+    #
+    # NOTE: `label_smoothing` under `loss.adversarial` is a NO-OP since
+    # v4 uses `RelativisticGANLoss`, which is not compatible with binary
+    # target smoothing. The key is silently ignored for backward compat.
+    # -------------------------------------------------------------------------
+    loss:
+      pixel:
+        type: charbonnier
+        weight: 1.0
+        eps: 1e-6
+
+      perceptual:
+        enabled: true
+        type: twin
+        weight: 0.15
+        warmup_epochs: 10
+        delta: 0.1
+
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.001
+        start_epoch: 15
+        max_weight: 0.005
+        gradient_penalty: true
+        label_smoothing: true  # NO-OP (see precedence rule above)
+        discriminator_lr: 0.0001
+
+      frequency:
+        enabled: true
+        weight: 0.1
+        block_size: 8
+        high_freq_weight: 1.5
+
+      fdl:
+        enabled: true
+        weight: 0.05
+        num_proj: 24
+        dino_variant: small
+        compute_every: 2
+
+      wavelet_guided:
+        enabled: true
+        weight: 0.5
+        hh_weight: 2.0
+        wavelet_init: 40
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 15
+      mode: min

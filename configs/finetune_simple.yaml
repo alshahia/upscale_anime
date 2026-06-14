@@ -1,0 +1,88 @@
+# Simple debug configuration for SPAN checkpoint fine-tuning
+
+model:
+  channels: 48
+  hidden_channels: 96
+  in_channels: 3
+  name: model_simple_spanf
+  num_blocks: 6
+  out_channels: 3
+  scale: 4
+  type: checkpoint_compatible
+
+training:
+  batch_size: 2
+  num_workers: 2
+  pin_memory: true
+  epochs: 5
+  val_interval: 1
+  save_interval: 1
+  
+  # Very conservative learning rate for debugging
+  lr: 1e-7
+  min_lr: 1e-9
+  max_grad_norm: 0.5
+  
+  # Disable gradient accumulation for debugging
+  gradient_accumulation_steps: 1
+  
+  # Disable mixed precision for debugging
+  mixed_precision: false
+  
+  # Disable transfer learning for debugging
+  pretrained_checkpoint: ""
+  
+  # Basic loss configuration
+  losses:
+    pixel:
+      enabled: true
+      type: l1
+      weight: 1.0
+    perceptual:
+      enabled: false
+    feature_distillation:
+      enabled: false
+    adversarial:
+      enabled: false
+
+  # Use Stage 2 only mode
+  stage1:
+    enabled: false
+  stage2:
+    enabled: true
+  mode: stage2_only
+
+optimizer:
+  type: adamw
+  weight_decay: 0.0
+  
+scheduler:
+  type: cosine
+  warmup_epochs: 0
+
+early_stopping:
+  enabled: true
+  patience: 3
+  monitor: val_loss
+
+# Small dataset for debugging
+data:
+  crop_size: 64
+datasets:
+  train:
+    - name: debug_small
+      type: image
+      path: data/debug
+      patch_size: 64
+      scale: 4
+      repeat: 1
+      enabled: true
+      
+  val:
+    - name: debug_small
+      type: image
+      path: data/debug
+      patch_size: 64
+      scale: 4
+      repeat: 1
+      enabled: true

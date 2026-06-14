@@ -1,0 +1,142 @@
+base: base.yaml
+
+data:
+  batch_size: 32
+  crop_size: 128
+  datasets:
+    - name: anime_finetune
+      hr_dir: data/anime_hr
+      enabled: true
+      weight: 1.0
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      weight: 1.0
+
+  degradation:
+    enabled: true
+    mode: medium
+    blur_prob: 0.7
+    blur_sigma: [0.1, 2.5]
+    noise_prob: 0.5
+    noise_sigma: [0, 25]
+    jpeg_prob: 0.5
+    jpeg_quality: [70, 80, 90, 95, 100]
+
+  video:
+    enabled: false
+
+  augmentation:
+    enabled: true
+    random_flip: true
+    random_rotate: 90
+    color_jitter:
+      brightness: 0.1
+      contrast: 0.1
+      saturation: 0.15
+      hue: 0.05
+    noise:
+      enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  num_blocks: 6
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_nomosuni_4x.pth
+
+training:
+  mode: finetune
+  persistent_workers: true
+  use_async_prefetcher: true
+  use_tensorboard: true
+  finetune:
+    enabled: true
+    epochs: 80
+    batch_size: 32
+    lr: 0.00005
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_nomosuni_4x.pth
+    freeze_layers: []
+    val_interval: 5
+    save_interval: 10
+
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 40
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.1
+        adversarial_weight: 0.00001
+      phase2:
+        pixel_weight: 0.6
+        perceptual_weight: 0.12
+        adversarial_weight: 0.0001
+
+    loss:
+      pixel:
+        type: l1
+        weight: 1.0
+
+      perceptual:
+        enabled: true
+        type: dists
+        weight: 0.1
+        warmup_epochs: 10
+
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.00005
+        start_epoch: 20
+        max_weight: 0.0005
+        gradient_penalty: true
+        label_smoothing: true
+        discriminator_lr: 0.000001
+
+      frequency:
+        enabled: true
+        weight: 0.01
+        block_size: 8
+        high_freq_weight: 1.5
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 20
+      mode: min
+
+loss:
+  pixel_loss:
+    weight: 1.0
+    type: l1
+  perceptual:
+    enabled: true
+    type: dists
+    weight: 0.1
+  distillation:
+    enabled: false

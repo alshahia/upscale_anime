@@ -1,0 +1,69 @@
+# Example configuration with early stopping enabled
+# This demonstrates aggressive early stopping settings for fast experimentation
+# For production training, use more conservative settings from base.yaml
+
+# Inherit from base configuration
+defaults:
+  - base
+
+# Override training settings for early stopping demo
+training:
+  # Quick training for testing early stopping
+  epochs: 200
+  batch_size: 16
+  
+  # Early stopping configuration (aggressive for testing)
+  early_stopping:
+    enabled: true
+    monitor: "val_loss"
+    mode: "min"
+    patience: 10              # Stop after 10 epochs without improvement
+    min_delta: 0.0005        # Consider 0.05% improvement significant
+    divergence_patience: 3   # Stop if loss increases for 3 epochs
+    restore_best_weights: true
+    min_epochs: 20           # Never stop before 20 epochs
+    plateau_slope_threshold: 1e-5  # Detect very flat plateaus
+  
+  # Validation frequency (check more often for early stopping)
+  val_interval: 5            # Validate every 5 epochs
+  save_interval: 20          # Save checkpoint every 20 epochs
+
+# Stage 1 configuration with early stopping
+stage1:
+  enabled: true
+  epochs: 100
+  # Early stopping can stop before max epochs
+  optimizer: "adamw"
+  lr: 0.0002
+  scheduler: "cosine"
+  warmup_epochs: 10
+
+# Stage 2 configuration with early stopping  
+stage2:
+  enabled: true
+  epochs: 150
+  use_stage1_checkpoint: true
+  lr: 0.0001
+  scheduler: "cosine"
+
+# Data configuration
+data:
+  datasets:
+    - name: "div2k"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/DIV2K_train_HR"
+      lr_dir: null
+      preload: false
+  
+  crop_size: 128
+  augment: true
+  
+  num_workers: 4
+  pin_memory: true
+
+# Checkpoint configuration
+checkpoint:
+  save_dir: "checkpoints"
+  keep_last_n: 10            # Keep more checkpoints for early stopping restoration
+  keep_best: true

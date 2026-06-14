@@ -1,0 +1,195 @@
+base: base.yaml
+
+# Checkpoint Management
+output:
+   run_name: NEOSR_SPAN_V4_SPEED_OPTIMIZED
+   duplicate_handling: auto_increment
+   log_dir: null
+   results_dir: null
+
+data:
+  batch_size: 32
+  crop_size: 128
+  num_workers: 8
+  prefetch_factor: 4
+  datasets:
+    - name: anime_finetune
+      hr_dir: data/anime_hr
+      enabled: true
+      weight: 1.0
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true
+      weight: 1.0
+
+  # APISR-STYLE ENHANCED DEGRADATION
+  degradation:
+    enabled: true
+    mode: anime_heavy
+    degrade_before_crop: true
+    shuffled_resize: true
+    two_stage_compression: true
+    compression_stage1:
+      - jpeg
+      - webp
+    compression_stage2:
+      - avif
+      - h264
+      - jpeg
+    compression_prob: 0.8
+    blur_prob: 0.8
+    blur_sigma: [0.1, 3.0]
+    noise_prob: 0.6
+    noise_sigma: [0, 30]
+    jpeg_prob: 0.6
+    jpeg_quality: [50, 60, 70, 80, 90]
+    second_order_prob: 0.4
+
+  # LINE ENHANCEMENT (Pseudo-GT)
+  line_enhancement:
+    enabled: true
+    sigma1: 1.0
+    sigma2: 16.0
+    alpha: 0.1
+    gamma: 0.5
+
+  video:
+    enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_nomosuni_4x.pth
+
+training:
+  mode: finetune
+  batch_size: 32
+  persistent_workers: true
+  use_tensorboard: true
+  finetune:
+    enabled: true
+    epochs: 100
+    batch_size: 32
+    lr: 0.00005
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_nomosuni_4x.pth
+    freeze_layers: []
+    val_interval: 5
+    save_interval: 5
+    torch_compile: false  # Disabled - Triton not available on Windows
+    gradient_checkpointing: false  # Disabled for speed (we have VRAM headroom)
+
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 40
+      phase_adversarial_ramp_epochs: 15
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.15
+        adversarial_weight: 0.0
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.025
+      phase2:
+        pixel_weight: 0.5
+        perceptual_weight: 0.2
+        adversarial_weight: 0.001
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.1
+
+    progressive_crop:
+      enabled: false
+      default_crop_size: 128
+      stages:
+        - crop_size: 128
+          epochs: 5
+        - crop_size: 256
+          epochs: 5
+        - crop_size: 512
+          epochs: 5
+
+    # When `two_phase_training.enabled: true`, the per-phase
+    # `phase1.<component>_weight` and `phase2.<component>_weight` values
+    # TAKE PRECEDENCE over the `loss.<component>.weight` values below.
+    # See AGENTS.md "Loss weight precedence" for the full rule.
+    # NOTE: `loss.adversarial.label_smoothing` is a NO-OP since v4 uses
+    # RelativisticGANLoss (silently ignored for backward compat).
+    loss:
+      pixel:
+        type: charbonnier
+        weight: 1.0
+        eps: 1e-6
+
+      # SPEED FIX: Use VGG instead of Twin or DISTS
+      # Twin (VGG19+ResNet50): 202ms, DISTS: 2763ms, VGG: ~50-80ms
+      perceptual:
+        enabled: true
+        type: vgg
+        weight: 0.15
+        warmup_epochs: 10
+        layers: ["relu3_3"]
+
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.001
+        start_epoch: 15
+        max_weight: 0.005
+        gradient_penalty: true
+        label_smoothing: true
+        discriminator_lr: 0.0001
+
+      frequency:
+        enabled: true
+        weight: 0.1
+        block_size: 8
+        high_freq_weight: 1.5
+
+      # SPEED FIX: Increase compute_every from 2 to 4
+      # FDL (DINOv2) takes 112ms, computing every 4 batches saves 75% of FDL time
+      fdl:
+        enabled: true
+        weight: 0.05
+        num_proj: 24
+        dino_variant: small
+        compute_every: 4
+
+      # Wavelet-Guided Loss for GAN stability
+      wavelet_guided:
+        enabled: true
+        weight: 0.5
+        hh_weight: 2.0
+        wavelet_init: 40
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 15
+      mode: min

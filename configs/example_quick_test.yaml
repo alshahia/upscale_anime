@@ -1,0 +1,61 @@
+# Quick test configuration - for rapid iteration
+# Trains for only a few iterations to verify setup
+
+base: "base.yaml"
+
+model:
+  name: "quick_test"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 6  # Fewer blocks for speed
+  use_lora: false  # Disable LoRA for simplicity
+
+training:
+  mode: "model_a"
+  epochs: 3
+  batch_size: 4
+  lr: 0.0001
+  
+  # Stage configs (simplified)
+  stage1:
+    enabled: false  # Skip stage 1 for quick test
+    
+  stage2:
+    enabled: true
+    epochs: 3
+    
+  # Fast validation
+  val_interval: 1
+  save_interval: 1
+  
+  # EMA disabled for quick test
+  use_ema: false
+  
+  # Logging
+  log_interval: 10
+
+data:
+  # Use a tiny subset for testing
+  datasets:
+    - name: "test_data"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/test_hr"
+      max_images: 10  # Only use 10 images
+  
+  crop_size: 64  # Smaller patches
+  batch_size: 4
+  num_workers: 2
+  
+  degradation:
+    enabled: true
+    blur_prob: 0.3
+    noise_prob: 0.2
+    jpeg_prob: 0.3
+
+loss:
+  pixel_loss:
+    weight: 1.0
+  distillation:
+    enabled: false  # Disable distillation for quick test

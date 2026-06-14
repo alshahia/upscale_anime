@@ -1,0 +1,150 @@
+base: base.yaml
+
+data:
+  batch_size: 16  # Reduced for stability
+  crop_size: 128
+  datasets:
+    - name: anime_finetune
+      hr_dir: data/anime_video_frames
+      enabled: true
+      weight: 1.0
+  degradation:
+    enabled: true
+    mode: anime
+  video:
+    enabled: false
+  
+  # Data augmentation for better generalization
+  augmentation:
+    enabled: true
+    random_flip: true
+    random_rotate: 90  # Rotate by 90, 180, 270 degrees
+    color_jitter:
+      brightness: 0.1
+      contrast: 0.1
+      saturation: 0.1
+      hue: 0.05
+    noise:
+      enabled: false  # Enable if training on noisy sources
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  num_blocks: 6
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_nomosuni_4x.pth
+
+training:
+  mode: finetune
+  persistent_workers: false
+  use_async_prefetcher: false
+  use_tensorboard: true
+  finetune:
+    enabled: true
+    epochs: 50
+    batch_size: 16  # Reduced for stability
+    lr: 0.00001
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.000001
+    gradient_accumulation_steps: 2  # Added for stability
+    pretrained_path: pretrained/span_nomosuni_4x.pth
+    freeze_layers: []
+    val_interval: 5
+    save_interval: 10
+    
+    # Two-phase training for better structure vs texture balance
+    # Phase 1 (epochs 1-30): Learn structure with high pixel/perceptual, minimal adversarial
+    # Phase 2 (epochs 31-50): Refine texture with gradual adversarial increase
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 30  # Structure learning phase
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.1  # Higher to learn structure
+        adversarial_weight: 0.00001  # Minimal adversarial
+      phase2:
+        pixel_weight: 0.5  # Reduced as texture refines
+        perceptual_weight: 0.15  # Maintained for structure
+        adversarial_weight: 0.0001  # Increased for texture
+    
+    # Multi-Loss Configuration (Rebalanced for better quality)
+    loss:
+      # Pixel loss (L1) - Primary reconstruction loss
+      # High weight ensures pixel-level accuracy
+      pixel:
+        type: l1
+        weight: 1.0
+      
+      # Perceptual loss - DISTS for texture, Dual for structure
+      # Weight increased from 0.01 to 0.1 for better structure guidance
+      # DISTS (texture): texture/pattern similarity
+      # dual (structure): VGG+ResNet for structural features
+      perceptual:
+        enabled: true
+        type: dists  # Options: dists (texture), dual (structure)
+        weight: 0.1  # Increased from 0.01 for better structure guidance
+        warmup_epochs: 10  # Longer warmup to stabilize
+      
+      # Anime-specific losses
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 0.15  # Increased from 0.1 for sharper lines
+          edge_method: multi_scale  # sobel, laplacian, or multi_scale
+          edge_weight: 3.0  # Increased from 2.0 for stronger edge preservation
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05  # Very conservative
+      
+      # Adversarial loss (GAN) - Phase 2
+      # Weight reduced from 0.0001 to 0.00005 to prevent hallucination
+      # Discriminator LR reduced from 5e-6 to 1e-6 for slower learning
+      adversarial:
+        enabled: true
+        type: relativistic  # Options: vanilla, relativistic, hinge
+        weight: 0.00005  # Reduced from 0.0001 to prevent hallucinations
+        start_epoch: 20  # Delayed start for stability
+        max_weight: 0.0005  # Reduced from 0.001 for gradual texture learning
+        gradient_penalty: true  # WGAN-GP style gradient penalty
+        label_smoothing: true  # Label smoothing for stability
+        discriminator_lr: 0.000001  # Reduced from 5e-6 for stable training
+      
+      # Frequency-aware loss (ESPAN) - Phase 3
+      frequency:
+        enabled: true
+        weight: 0.01  # Conservative
+        block_size: 8  # DCT block size
+        high_freq_weight: 1.5  # Moderate
+    
+    # Monitoring metrics - LPIPS added for perceptual evaluation
+    # LPIPS (Learned Perceptual Image Patch Similarity) correlates with human perception
+    metrics:
+      - psnr
+      - ssim
+      - lpips  # Added: best perceptual metric for SR
+    
+    # Early stopping - Changed to LPIPS (lower is better)
+    # LPIPS correlates better with visual quality than total loss
+    early_stopping:
+      enabled: true
+      metric: lpips  # Changed from 'loss' to 'lpips'
+      patience: 15
+      mode: min
+
+loss:
+  pixel_loss:
+    weight: 1.0
+    type: l1
+  perceptual:
+    enabled: true
+    type: dists
+    weight: 0.1
+  distillation:
+    enabled: false

@@ -1,0 +1,128 @@
+base: base.yaml
+data:
+  batch_size: 8
+  crop_size: 128
+  datasets:
+  - enabled: true
+    hr_dir: data/anime_video_frames
+    name: anime_custom
+    weight: 0.9
+  - enabled: true
+    hr_dir: data/val_hr
+    is_validation: true
+    name: anime_val
+    weight: 0.1
+  video:
+    enabled: true
+    extract_every_n_frames: 5
+    extract_mode: pre
+    frame_window: 3
+    min_resolution: 720
+    output_dir: data/anime_video_frames
+    quality_threshold: 0.7
+    remove_duplicates: true
+    scene_change_threshold: 0.3
+    temporal_training: true
+    video_dir: data/anime_vid
+distillation:
+  enabled: true
+  fakd:
+    affinity_type: spatial
+    enabled: true
+    layer_weights:
+    - 0.05
+    - 0.1
+    - 0.15
+    - 0.2
+    - 0.25
+    - 0.25
+    layers:
+    - 2
+    - 4
+    - 6
+    - 8
+    - 10
+    - 12
+  mtkd:
+    enabled: true
+    wavelet_levels: 3
+    wavelet_type: haar
+loss:
+  color:
+    enabled: true
+    weight: 0.25
+  distillation:
+    enabled: true
+    fakd_weight: 0.5
+    mtkd_weight: 1.0
+  flat_region:
+    enabled: true
+    weight: 0.25
+  line_art:
+    enabled: true
+    weight: 0.5
+  perceptual:
+    alpha: 0.5
+    enabled: true
+    type: dists
+    weight: 0.1
+  pixel_loss:
+    weight: 1.0
+  temporal:
+    enabled: true
+    weight: 0.15
+model:
+  channels: 26
+  lora_alpha: 1.0
+  lora_rank: 4
+  name: model_a_ntire
+  num_blocks: 12
+  scale: 4
+  type: span
+  use_lora: true
+training:
+  gradient_checkpointing: true
+  mode: model_a
+  persistent_workers: false
+  prefetcher_num_prefetch: 2
+  stage1:
+    anime:
+      color_consistency: false
+      color_weight: 0.5
+      flat_region_preservation: false
+      flat_weight: 0.5
+      line_art_preservation: false
+      line_art_weight: 1.0
+    auto_download_teachers: true
+    batch_size: 8
+    enabled: true
+    epochs: 100
+    freeze_teachers: true
+    gradient_accumulation_steps: 8
+    lr: 0.0001
+    min_lr: 1e-7
+    scheduler: cosine
+    teachers:
+    - name: edsr
+      path: pretrained/EDSR_x4.pt
+      weight: 1.0
+    - name: rcan
+      path: pretrained/RCAN_x4.pt
+      weight: 1.0
+    - name: swinir
+      path: pretrained/SwinIR_x4.pt
+      weight: 1.0
+    use_simple_aggregation: true
+    warmup_epochs: 10
+  stage2:
+    batch_size: 8
+    enabled: true
+    epochs: 200
+    gradient_accumulation_steps: 8
+    lr: 0.0001
+    min_lr: 1e-7
+    scheduler: cosine
+    stage1_checkpoint: checkpoints/model_a_stage1_best.pth
+    use_stage1_checkpoint: true
+    warmup_epochs: 5
+  use_async_prefetcher: false

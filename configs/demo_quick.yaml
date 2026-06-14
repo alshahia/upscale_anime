@@ -1,0 +1,63 @@
+base: base.yaml
+
+data:
+  batch_size: 4
+  crop_size: 64
+  datasets:
+    - name: anime_demo
+      hr_dir: data
+      enabled: true
+      weight: 1.0
+  degradation:
+    enabled: true
+    mode: light
+  video:
+    enabled: false
+
+model:
+  type: span
+  name: span_tiny
+  scale: 4
+  channels: 26
+  num_blocks: 4
+
+training:
+  mode: model_a
+  persistent_workers: false
+  use_async_prefetcher: false
+  stage1:
+    enabled: true
+    epochs: 3
+    batch_size: 4
+    lr: 0.001
+    scheduler: cosine
+    warmup_epochs: 0
+    min_lr: 0.0001
+    gradient_accumulation_steps: 1
+    freeze_teachers: false
+    auto_download_teachers: false
+    use_simple_aggregation: true
+    teachers: []
+    anime:
+      line_art_preservation: false
+      flat_region_preservation: false
+      color_consistency: false
+  stage2:
+    enabled: false
+
+distillation:
+  enabled: false
+
+loss:
+  pixel_loss:
+    weight: 1.0
+  perceptual:
+    enabled: false
+  distillation:
+    enabled: false
+  line_art:
+    enabled: false
+  flat_region:
+    enabled: false
+  color:
+    enabled: false

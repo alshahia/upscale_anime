@@ -1,0 +1,37 @@
+# DIV2K dataset configuration
+dataset:
+  name: "div2k"
+  type: "div2k"
+  enabled: true
+  
+  # Paths
+  hr_dir: "data/DIV2K_train_HR"
+  lr_dir: "data/DIV2K_train_LR_bicubic/X4"
+  
+  # If lr_dir is null, generate via degradation
+  use_precomputed_lr: false
+  
+  # File patterns
+  hr_suffix: ""
+  lr_suffix: "x4"
+  ext: "png"
+  
+  # Number of images
+  num_train: 800
+  num_val: 100
+
+# Degradation settings (if generating LR)
+degradation:
+  scale: 4
+  # High-order degradation (RealESRGAN style)
+  first_order:
+    blur_prob: 0.7
+    noise_prob: 0.5
+    resize_prob: 0.3
+    jpeg_prob: 0.5
+  
+  second_order:
+    blur_prob: 0.3
+    noise_prob: 0.3
+    resize_prob: 0.2
+    jpeg_prob: 0.3

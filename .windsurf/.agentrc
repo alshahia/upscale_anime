@@ -1,0 +1,38 @@
+# Windsurf Agent Configuration
+# This file tells Windsurf which agent system to use
+# DO NOT EDIT - Managed by Hybrid Agent System
+
+# Primary system prompt reference
+system_prompt = "HYBRID_AGENT_SYSTEM.md"
+
+# Onboarding guide for new agents
+onboarding_guide = "AGENT_ONBOARDING.md"
+
+# Archived (superseded) workflow files location
+archive_location = "archive/"
+
+# Workflow definitions location
+workflows_location = "workflows/"
+
+# Active phase
+active_phase = "Phase 6 Complete - Ready for Phase 7"
+
+# Required reading sequence for new agents
+required_reading = [
+    "PLANNING.md",
+    "TASK.md",
+    "HYBRID_AGENT_SYSTEM.md"
+]
+
+# Quality gate sequence (must pass in order)
+quality_gate = [
+    "ruff format",
+    "ruff check",
+    "bandit -r src/ -ll",
+    "mypy src/",
+    "pytest --cov-fail-under=80"
+]
+
+# Drift detection
+enable_drift_detection = true
+drift_detection_script = "scripts/drift_detection.py"

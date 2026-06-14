@@ -1,0 +1,170 @@
+base: base.yaml
+
+# Checkpoint Management
+# See base.yaml for default paths and checkpoint options
+output:
+   run_name: NEOSR_SPAN_V3_FINE_TUNE           # Custom run name (null=auto hybrid: timestamp_model_suffix)
+   duplicate_handling: auto_increment  # 'auto_increment' or 'ask'
+   log_dir: null           # Override log directory (defaults to logs/{run_name})
+   results_dir: null       # Override results directory
+
+data:
+  batch_size: 4
+  crop_size: 512
+  datasets:
+    - name: anime_finetune
+      hr_dir: data/anime_hr
+      enabled: true
+      weight: 1.0
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true
+      weight: 1.0
+
+  degradation:
+    enabled: true
+    mode: anime_heavy
+    degrade_before_crop: true
+    shuffled_resize: true
+    two_stage_compression: true
+    compression_stage1:
+      - jpeg
+      - webp
+    compression_stage2:
+      - avif
+      - h264
+      - jpeg
+    compression_prob: 0.8
+    blur_prob: 0.8
+    blur_sigma: [0.1, 3.0]
+    noise_prob: 0.6
+    noise_sigma: [0, 30]
+    jpeg_prob: 0.6
+    jpeg_quality: [50, 60, 70, 80, 90]
+    second_order_prob: 0.4
+
+  video:
+    enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_nomosuni_4x.pth
+
+training:
+  mode: finetune
+  persistent_workers: true
+  use_tensorboard: true
+  finetune:
+    enabled: true
+    epochs: 80
+    batch_size: 4
+    lr: 0.00005
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_nomosuni_4x.pth
+    freeze_layers: []
+    val_interval: 2
+    save_interval: 1
+
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 31
+      phase_adversarial_ramp_epochs: 10  # Adversarial ramp duration after start_epoch
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.1
+        adversarial_weight: 0.0     # 0 until start_epoch, then ramp to this
+        line_art_weight: 1.0       # Constant (structure important from start)
+        flat_weight: 0.05          # Constant
+        frequency_weight: 0.025     # Low in Phase 1
+      phase2:
+        pixel_weight: 0.6
+        perceptual_weight: 0.12
+        adversarial_weight: 0.0001
+        line_art_weight: 1.0       # Constant
+        flat_weight: 0.05          # Constant
+        frequency_weight: 0.075    # 3x increase in Phase 2
+
+    # Progressive Crop Training
+    # Set enabled: false for fixed crop_size (128/256/512)
+    # Set enabled: true for progressive crop (128 -> 256 -> 512)
+    progressive_crop:
+      enabled: false  #change to true for progressive mode
+      default_crop_size: 128  # Used when enabled: false
+      stages:
+        - crop_size: 128
+          epochs: 5   # Phase 1: Fast learning on small patches
+        - crop_size: 256
+          epochs: 5   # Phase 2: Medium patches for structure
+        - crop_size: 512
+          epochs: 5   # Phase 3: Large patches for fine details
+
+    # When `two_phase_training.enabled: true`, the per-phase
+    # `phase1.<component>_weight` and `phase2.<component>_weight` values
+    # TAKE PRECEDENCE over the `loss.<component>.weight` values below.
+    # See AGENTS.md "Loss weight precedence" for the full rule.
+    # NOTE: `loss.adversarial.label_smoothing` is a NO-OP since v4 uses
+    # RelativisticGANLoss (silently ignored for backward compat).
+    loss:
+      # OPTIMIZATION v3: Charbonnier loss (robust L1 variant)
+      pixel:
+        type: charbonnier
+        weight: 1.0
+        eps: 1e-6
+
+      perceptual:
+        enabled: true
+        type: dists
+        weight: 0.1
+        warmup_epochs: 10
+
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.00005
+        start_epoch: 20
+        max_weight: 0.0005
+        gradient_penalty: true
+        label_smoothing: true
+        # OPTIMIZATION v3: Increased discriminator LR (5x)
+        discriminator_lr: 0.000005
+
+      # OPTIMIZATION v3: Increased frequency loss weight (5x)
+      frequency:
+        enabled: true
+        weight: 0.05
+        block_size: 8
+        high_freq_weight: 1.5
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 20
+      mode: min
+

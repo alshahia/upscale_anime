@@ -1,0 +1,156 @@
+checkpoint:
+  keep_best: true
+  keep_last_n: 50
+  save_dir: checkpoints
+  save_interval: 1
+data:
+  augment: true
+  auto_crop_max: 960
+  auto_crop_min: 64
+  crop_size: 128
+  crop_size_mode: auto
+  datasets:
+  # NOTE: Update these paths to match your local data directory
+  # Can be overridden via CLI: --data.datasets.0.hr_dir 'path/to/your/data'
+  - crop_size_mode: auto
+    enabled: true
+    hr_dir: data/anime_hr
+    lr_dir: null
+    name: anime_hr  #hr = high resolution
+    preload: false
+    weight: 0.9
+  - crop_size_mode: auto
+    enabled: true
+    hr_dir: data/val_hr
+    is_validation: true
+    lr_dir: null
+    name: anime_val
+    preload: false
+    weight: 0.1
+  #- crop_size_mode: auto
+  #  enabled: true
+  #  hr_dir: data/anime_video_frames
+  #  is_validation: true
+  #  lr_dir: null
+  #  name: anime_video_frames  # images from video frames
+  #  preload: false
+  #  weight: 0.5
+  degradation:
+    auto_quality_thresholds:
+      hd_threshold: 0.8
+      standard_threshold: 0.5
+    enabled: true
+    mode: auto
+  num_workers: 4
+  pin_memory: true
+  sampling_mode: size_proportional
+  use_separate_loaders: false
+defaults:
+- base
+loss:
+  perceptual:
+    alpha: 0.5
+    enabled: true
+    type: dists
+    weight: 0.1
+model:
+  channels: 26
+  name: model_a_ntire
+  scale: 4
+  type: span
+paths:
+  checkpoint_dir: checkpoints
+  log_dir: logs
+training:
+  adaptive_lr:
+    enabled: true
+    plateau_config:
+      cooldown: 3
+      factor: 0.5
+      min_lr: 1e-8
+      patience: 8
+      threshold: 0.0001
+    scheduler: warmup_cosine_plateau
+    warmup_cosine_plateau_config:
+      cooldown: 3
+      max_reductions: 3
+      min_lr: 1e-7
+      plateau_patience: 8
+      reduction_factor: 0.5
+      total_epochs: 100
+      warmup_epochs: 10
+    warmup_epochs: 10
+  batch_size: 1
+  early_stopping:
+    divergence_patience: 5
+    enabled: true
+    min_delta: 0.0001
+    min_epochs: 20
+    mode: min
+    monitor: val_loss
+    patience: 15
+    plateau_slope_threshold: 1e-6
+    restore_best_weights: true
+  epochs: 500
+  gradient_accumulation_steps: 1
+  mixed_precision: true
+  mode: auto_stage
+  stage1:
+    aggregation_type: simple
+    auto_download_teachers: true
+    distillation_weight: 0.5
+    embed_dim: 96
+    enabled: true
+    epochs: 5
+    lr: 0.0002
+    min_lr: 1e-7
+    num_blocks: 6
+    optimizer: adamw
+    perceptual_weight: 0.1
+    pixel_weight: 1.0
+    scheduler: cosine
+    teachers:
+    - name: edsr
+      path: pretrained/EDSR_x4.pt
+      weight: 1.0
+    - name: rcan
+      path: pretrained/RCAN_x4.pt
+      weight: 1.0
+    - name: swinir
+      path: pretrained/SwinIR_x4.pt
+      weight: 1.0
+    warmup_epochs: 10
+    weight_decay: 0.01
+  stage2:
+    distillation_weight: 0.5
+    enabled: true
+    epochs: 5
+    lr: 0.0001
+    optimizer: adamw
+    perceptual_weight: 0.1
+    pixel_weight: 1.0
+    scheduler: plateau
+    use_stage1_checkpoint: true
+    warmup_epochs: 5
+    weight_decay: 0.01
+  stage_automation:
+    auto_advance: true
+    checkpoint_propagation:
+      keep_intermediate: true
+      load_for_stage2: best
+      save_stage1_best: true
+    enabled: true
+    stage1:
+      advance_on_convergence: true
+      advance_on_plateau: true
+      enabled: true
+      max_epochs: 100
+      min_epochs_before_advance: 30
+      target_metric: psnr
+      target_threshold: 35.0
+    stage2:
+      enabled: true
+      max_epochs: 200
+      min_epochs: 50
+      target_metric: psnr
+      target_threshold: 36.0

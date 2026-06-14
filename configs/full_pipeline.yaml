@@ -1,0 +1,66 @@
+# Full pipeline: A → B → Ensemble
+base: "base.yaml"
+
+# This config runs the complete progressive ensemble distillation pipeline
+
+training:
+  mode: "full"
+  
+  # Stage 1: Model A
+  model_a_epochs: 100
+  
+  # Stage 2: Model B
+  model_b_epochs: 150
+  
+  # Stage 3: Ensemble
+  ensemble_epochs: 100
+  
+  # Learning rates
+  lr: 0.0001
+  
+  # Validation
+  val_interval: 10
+  save_interval: 25
+
+# Model A configuration
+model_a:
+  name: "model_a_full"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 12
+  use_lora: true
+
+# Model B configuration
+model_b:
+  name: "model_b_full"
+  type: "mamba_pan"
+  scale: 4
+  channels: 32
+  num_blocks: 8
+  mamba_d_state: 16
+
+# Tiny Student configuration
+student:
+  scale: 4
+  channels: 16
+  num_blocks: 3
+
+data:
+  datasets:
+    - name: "anime_train"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/anime_hr"
+  
+  crop_size: 128
+  batch_size: 8
+  num_workers: 4
+
+loss:
+  pixel_loss:
+    weight: 1.0
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5

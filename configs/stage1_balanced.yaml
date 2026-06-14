@@ -1,0 +1,141 @@
+# Stage 1: Balanced Configuration (Tiers 1 + 2)
+# Recommended configuration with good quality/speed tradeoff
+
+base: "base.yaml"
+
+model:
+  name: "model_a_balanced"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 12
+  use_lora: true
+  lora_rank: 4
+
+training:
+  mode: "model_a"
+  
+  stage1:
+    enabled: true
+    epochs: 100
+    
+    # Use adaptive aggregation (better than simple, faster than multiscale)
+    aggregation_type: "adaptive"
+    num_blocks: 5
+    embed_dim: 80
+    
+    # Good optimization settings
+    optimizer: "adamw"
+    lr: 0.00015
+    weight_decay: 0.01
+    scheduler: "cosine"
+    warmup_epochs: 10
+    min_lr: 1e-7
+    
+    # Moderate batch with accumulation
+    batch_size: 16
+    gradient_accumulation_steps: 2        # Effective batch = 32
+    
+    # Enable OHEM
+    ohem_enabled: true
+    ohem_ratio: 0.7
+    
+    # Teachers
+    auto_download_teachers: true
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+        weight: 1.0
+      - name: "rcan"
+        path: "pretrained/RCAN_x4.pt"
+        weight: 1.0
+      - name: "swinir"
+        path: "pretrained/SwinIR_x4.pt"
+        weight: 1.0
+    freeze_teachers: true
+    
+    # Combined loss (L1 + Wavelet + Gradient)
+    use_combined_loss: true
+    loss_weights:
+      l1: 0.45
+      wavelet: 0.30
+      gradient: 0.20
+      diversity: 0.05                      # Reduced for speed
+    wavelet_levels: 3
+    
+    # Disable anime losses (enable if training on anime)
+    anime:
+      line_art_preservation: false
+      color_consistency: false
+      flat_region_preservation: false
+    
+    # Disable temporal (enable for video)
+    temporal_consistency: false
+    
+    # Enable monitoring
+    log_teacher_disagreement: true
+    log_frequency_loss: true
+    debug_nan: false                     # Disable for speed
+
+  stage2:
+    enabled: true
+    epochs: 150
+    lr: 0.0001
+    scheduler: "cosine"
+    warmup_epochs: 5
+    min_lr: 1e-7
+    use_stage1_checkpoint: true
+    stage1_checkpoint: "checkpoints/model_a_stage1_best.pth"
+
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 3
+    wavelet_type: "haar"
+    
+  fakd:
+    enabled: true
+    layers: [4, 8, 12]                   # Reduced for speed
+    layer_weights: [0.2, 0.4, 0.4]
+    affinity_type: "spatial"
+
+data:
+  datasets:
+    - name: "anime_custom"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/anime_video_frames"
+  
+  crop_size: 128
+  augment: true
+  
+  # Standard degradation
+  degradation:
+    enabled: true
+    blur_kernel_size: [5, 9, 13]
+    blur_sigma: [0.5, 1.0, 2.0]
+    noise_sigma: [5, 15, 25]
+    jpeg_quality: [70, 85, 95]
+    jpeg_prob: 0.5
+    anime_degradation: false              # Disable for general training
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+
+checkpoint:
+  save_dir: "checkpoints"
+  keep_last_n: 5
+  keep_best: true
+
+system:
+  seed: 42
+  cudnn_benchmark: true

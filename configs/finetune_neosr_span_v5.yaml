@@ -1,0 +1,326 @@
+base: base.yaml
+
+# finetune_neosr_span_v5.yaml
+# Full-featured configuration showcasing ALL preprocessing modes
+# Use this as a reference for all available options
+
+# Checkpoint Management
+output:
+   run_name: NEOSR_SPAN_V5_FULL
+   duplicate_handling: auto_increment
+
+data:
+  batch_size: 32
+  crop_size: 128
+  num_workers: 8
+  prefetch_factor: 4
+  
+  # === DATASET SAMPLING CONTROL ===
+  # Global sampling: use X% of all datasets (null = use per_dataset ratios)
+  sample_ratio: null  # Example: 0.5 for 50% of all data
+  
+  # Hard cap on total images (null = no limit)
+  max_images_total: null  # Example: 5000
+  
+  datasets:
+    - name: anime_video_frames
+      hr_dir: data/anime_video_frames
+      enabled: true
+      weight: 1.0
+      sample_ratio: 0.3  # 30% of this dataset
+    - name: anime_hr_1
+      hr_dir: data/anime_hr_1
+      enabled: true
+      weight: 1.0
+      sample_ratio: 0.5  # 50% of this dataset
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true  # Validation datasets
+      weight: 1.0
+      sample_ratio: 1.0
+
+  # === PREPROCESSING PIPELINE ===
+  # ========================================================================
+  # MODE OPTIONS:
+  #   on_the_fly    - CPU-based degradation during training
+  #   precomputed   - Load pre-generated LR/HR pairs from disk (fastest)
+  #   gpu_degradation - GPU-accelerated degradation (speed focus)
+  #   hybrid        - Precomputed base + runtime augmentation (DEFAULT)
+  #   quality_adaptive - Per-image quality-based degradation selection
+  # ========================================================================
+  preprocessing:
+    # MODE SELECTION
+    mode: "hybrid"  # Options: on_the_fly | precomputed | gpu_degradation | hybrid | quality_adaptive
+                    # DEFAULT: hybrid (best speed/quality balance)
+    
+    # === STORAGE SETTINGS ===
+    storage:
+      # Run storage estimation before precomputing
+      estimate_before_precompute: true
+      # Available disk space (for estimation check)
+      available_space_gb: 10
+      # Crop size for storage estimation
+      crop_size: 128
+      # Output format for precomputed pairs
+      format: "png"  # png | jpeg
+      jpeg_quality: 90
+    
+    # === DATASET SAMPLING (overrides data.sample_ratio) ===
+    dataset_sampling:
+      # Per-dataset sample ratios
+      anime_video_frames: 0.3   # 30% of video frames
+      anime_hr_1: 0.5         # 50% of anime HR images
+      anime_val: 1.0          # 100% of validation (usually small)
+    
+    # === PRECOMPUTED MODE ===
+    # Fastest option - load pre-generated pairs from disk
+    precomputed:
+      enabled: true
+      # Directory containing precomputed LR/HR pairs
+      # Run: python scripts/precompute_pairs.py --all_datasets --crop_size 128
+      base_dir: "data/precomputed_4x"
+      # Load all pairs into RAM (fastest but needs ~10GB RAM)
+      cache_in_memory: true
+    
+    # === ON_THE_FLY MODE ===
+    # CPU-based degradation during training (no precomputation needed)
+    on_the_fly:
+      enabled: true
+      # Apply degradation on full image BEFORE cropping (APISR style)
+      degrade_before_crop: true
+      # Randomize order of degradation operations
+      shuffled_resize: true
+      # Two-stage compression (before and after resize)
+      two_stage_compression: true
+      # Stage 1 compression types (applied before resize)
+      compression_stage1:
+        - jpeg
+        - webp
+      # Stage 2 compression types (applied after resize)
+      compression_stage2:
+        - avif
+        - h264
+        - jpeg
+      # Use per-image quality analysis to select degradation
+      quality_adaptive: false
+    
+    # === GPU_DEGRADATION MODE (SPEED FOCUS) ===
+    # GPU-accelerated degradation using anime-specific modules
+    # Fastest for real-time degradation without precomputation
+    gpu_degradation:
+      enabled: true
+      # Which degradation modules to use
+      modules:
+        blur: true              # Gaussian blur (anime-optimized)
+        directional_blur: true  # Motion/interlacing simulation
+        noise: true            # Gaussian noise
+        quantization: true     # 8-bit color banding
+        banding: true          # Gradient banding artifacts
+        ringing: true          # Edge ghosting artifacts
+      # Probabilities for each module
+      blur_prob: 0.5
+      noise_prob: 0.4
+      quantization_prob: 0.3
+    
+    # === HYBRID MODE (DEFAULT - RECOMMENDED) ===
+    # Combines precomputed base + runtime GPU augmentation
+    # Best balance of speed and quality
+    hybrid:
+      # Use precomputed base images
+      precomputed_base: true
+      base_dir: "data/precomputed_4x_anime_hr_1"  # Update this for your dataset
+      # Runtime augmentation applied to precomputed base
+      runtime_augmentation:
+        enabled: true
+        blur_prob: 0.3        # Probability of applying blur
+        noise_sigma: [0, 15]  # Range for Gaussian noise sigma
+        jpeg_quality: [75, 95]  # Range for JPEG quality
+        quantization: true    # Apply color quantization
+        quantization_levels: [8, 16]  # Quantization levels
+    
+    # === QUALITY_ADAPTIVE MODE ===
+    # Per-image quality analysis selects appropriate degradation
+    # Best for diverse quality sources
+    quality_adaptive:
+      enabled: true
+      # Tier selection: auto (based on quality score) or fixed (light/medium/heavy)
+      tier_selection: "auto"
+      # Cache quality scores for reproducibility
+      cache_scores: true
+      # Quality score thresholds (0-100 scale)
+      tier_thresholds:
+        light: 75    # Above 75 = light degradation
+        medium: 45   # 45-75 = medium degradation
+        heavy: 0     # Below 45 = heavy degradation
+      # Degradation presets for each tier
+      light_degradation: light
+      medium_degradation: medium
+      heavy_degradation: heavy
+    
+    # === LINE ENHANCEMENT (XDoG Pseudo-GT) ===
+    # Sharpens hand-drawn lines in anime for better edge preservation
+    line_enhancement:
+      enabled: true  # Set to true for pseudo-GT sharpening
+      sigma1: 1.0     # Fine detail sigma
+      sigma2: 16.0    # Coarse structure sigma
+      alpha: 0.1      # Blend factor
+      gamma: 0.5      # Contrast adjustment
+
+  # === APISR-STYLE DEGRADATION (fallback for non-hybrid modes) ===
+  degradation:
+    enabled: false  # Using hybrid mode, degradation disabled
+    mode: anime_heavy
+    degrade_before_crop: true
+    shuffled_resize: true
+    two_stage_compression: true
+    compression_stage1:
+      - jpeg
+      - webp
+    compression_stage2:
+      - avif
+      - h264
+      - jpeg
+    compression_prob: 0.8
+    blur_prob: 0.8
+    blur_sigma: [0.1, 3.0]
+    noise_prob: 0.6
+    noise_sigma: [0, 30]
+    jpeg_prob: 0.6
+    jpeg_quality: [50, 60, 70, 80, 90]
+    second_order_prob: 0.4
+
+  video:
+    enabled: false
+
+model:
+  type: neosr_span
+  name: span_4x_anime
+  feature_channels: 48
+  upscale: 4
+  bias: true
+  norm: false
+  pretrained_path: pretrained/span_nomosuni_4x.pth
+
+training:
+  mode: finetune
+  batch_size: 32
+  persistent_workers: true
+  use_tensorboard: true
+  finetune:
+    enabled: true
+    epochs: 100
+    batch_size: 32
+    lr: 0.00005
+    scheduler: cosine
+    warmup_epochs: 5
+    min_lr: 0.0000001
+    gradient_accumulation_steps: 2
+    pretrained_path: pretrained/span_nomosuni_4x.pth
+    freeze_layers: []
+    val_interval: 1
+    save_interval: 5
+    torch_compile: false
+    gradient_checkpointing: false
+
+    two_phase_training:
+      enabled: true
+      phase1_epochs: 60
+      phase_adversarial_ramp_epochs: 15
+      phase1:
+        pixel_weight: 1.0
+        perceptual_weight: 0.15
+        adversarial_weight: 0.0
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.025
+      phase2:
+        pixel_weight: 0.5
+        perceptual_weight: 0.2
+        adversarial_weight: 0.001
+        line_art_weight: 1.0
+        flat_weight: 0.05
+        frequency_weight: 0.1
+
+    progressive_crop:
+      enabled: false
+      default_crop_size: 128
+      stages:
+        - crop_size: 128
+          epochs: 5
+        - crop_size: 256
+          epochs: 5
+        - crop_size: 512
+          epochs: 5
+
+    # When `two_phase_training.enabled: true`, the per-phase
+    # `phase1.<component>_weight` and `phase2.<component>_weight` values
+    # TAKE PRECEDENCE over the `loss.<component>.weight` values below.
+    # See AGENTS.md "Loss weight precedence" for the full rule.
+    # NOTE: `loss.adversarial.label_smoothing` is a NO-OP since v4 uses
+    # RelativisticGANLoss (silently ignored for backward compat).
+    loss:
+      pixel:
+        type: charbonnier
+        weight: 1.0
+        eps: 1e-6
+
+      perceptual:
+        enabled: true
+        type: twin
+        weight: 0.15
+        warmup_epochs: 10
+        delta: 0.1
+
+      anime:
+        line_art_preservation:
+          enabled: true
+          weight: 1.0
+          edge_method: multi_scale
+          edge_weight: 3.0
+        color_consistency:
+          enabled: false
+          weight: 0.25
+        flat_region_preservation:
+          enabled: true
+          weight: 0.05
+
+      adversarial:
+        enabled: true
+        type: relativistic
+        weight: 0.001
+        start_epoch: 15
+        max_weight: 0.005
+        gradient_penalty: true
+        label_smoothing: true
+        discriminator_lr: 0.0001
+
+      frequency:
+        enabled: true
+        weight: 0.1
+        block_size: 8
+        high_freq_weight: 1.5
+
+      fdl:
+        enabled: true
+        weight: 0.05
+        num_proj: 24
+        dino_variant: small
+        compute_every: 2
+
+      wavelet_guided:
+        enabled: true
+        weight: 0.5
+        hh_weight: 2.0
+        wavelet_init: 40
+
+    metrics:
+      - psnr
+      - ssim
+      - lpips
+
+    early_stopping:
+      enabled: true
+      metric: lpips
+      patience: 15
+      mode: min

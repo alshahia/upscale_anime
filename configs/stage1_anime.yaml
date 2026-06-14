@@ -1,0 +1,167 @@
+# Stage 1: Anime-Optimized Configuration
+# Optimized for anime video frames with line-art preservation
+
+base: "base.yaml"
+
+model:
+  name: "model_a_anime"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 12
+  use_lora: true
+  lora_rank: 4
+
+training:
+  mode: "model_a"
+  
+  stage1:
+    enabled: true
+    epochs: 120
+    
+    # Use simple aggregation (more stable for anime)
+    aggregation_type: "simple"
+    num_blocks: 6
+    embed_dim: 96
+    
+    # Optimization
+    optimizer: "adamw"
+    lr: 0.00015
+    weight_decay: 0.01
+    scheduler: "cosine"
+    warmup_epochs: 10
+    min_lr: 1e-7
+    
+    # Training
+    batch_size: 16
+    gradient_accumulation_steps: 4        # Effective batch = 64
+    
+    # OHEM
+    ohem_enabled: true
+    ohem_ratio: 0.6
+    
+    # Teachers
+    auto_download_teachers: true
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+        weight: 1.0
+      - name: "rcan"
+        path: "pretrained/RCAN_x4.pt"
+        weight: 1.0
+      - name: "swinir"
+        path: "pretrained/SwinIR_x4.pt"
+        weight: 1.0
+    freeze_teachers: true
+    
+    # Loss weights optimized for anime
+    use_combined_loss: true
+    loss_weights:
+      l1: 0.35
+      wavelet: 0.25
+      gradient: 0.20
+      diversity: 0.10
+    wavelet_levels: 3
+    
+    # Anime-specific losses (all enabled)
+    anime:
+      line_art_preservation: true
+      line_art_weight: 1.2
+      color_consistency: true
+      color_weight: 0.8
+      flat_region_preservation: true
+      flat_weight: 0.6
+    
+    # Video temporal consistency (enable for video frames)
+    temporal_consistency: false           # Set to true for video sequences
+    temporal_weight: 0.3
+    frame_window: 3
+    
+    # Monitoring
+    log_teacher_disagreement: true
+    debug_nan: true
+
+  stage2:
+    enabled: true
+    epochs: 150
+    lr: 0.0001
+    scheduler: "cosine"
+    warmup_epochs: 5
+    min_lr: 1e-7
+    use_stage1_checkpoint: true
+    stage1_checkpoint: "checkpoints/model_a_stage1_best.pth"
+
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 3
+    wavelet_type: "haar"
+    
+  fakd:
+    enabled: true
+    layers: [2, 4, 6, 8, 10, 12]
+    layer_weights: [0.05, 0.1, 0.15, 0.2, 0.25, 0.25]
+    affinity_type: "spatial"
+
+data:
+  datasets:
+    - name: "anime_video_frames"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/anime_video_frames"
+      preload: false        # Set to true if dataset fits in RAM (speeds up training)
+      max_images: null      # Limit dataset size for testing
+  
+  crop_size: 128
+  augment: true
+  
+  # DataLoader optimization (critical with gradient accumulation)
+  num_workers: 8          # Need more workers with accum=4 (4x data throughput needed)
+  prefetch_factor: 4      # Hide CPU latency
+  pin_memory: true
+  persistent_workers: true
+  auto_tune_workers: true
+  
+  # Stronger degradation for anime (common compression artifacts)
+  degradation:
+    enabled: true
+    # Smaller blur to preserve sharp lines
+    blur_kernel_size: [3, 5, 7, 9]
+    blur_sigma: [0.3, 0.8, 1.5, 2.5]
+    # Moderate noise
+    noise_sigma: [3, 10, 20]
+    # JPEG compression (common in anime distribution)
+    jpeg_quality: [60, 75, 85, 95]
+    jpeg_prob: 0.7
+    
+    # Anime-specific degradations
+    anime_degradation: true
+    color_quantization: true              # 8-bit color banding
+    banding_simulation: true              # Gradient banding
+    posterization_levels: [4, 6, 8]       # Posterization effects
+  
+  video:
+    temporal_training: false
+    frame_window: 3
+    scene_change_threshold: 0.3
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+
+checkpoint:
+  save_dir: "checkpoints"
+  keep_last_n: 5
+  keep_best: true
+
+system:
+  seed: 42
+  cudnn_benchmark: true

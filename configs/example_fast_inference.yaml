@@ -1,0 +1,51 @@
+# Fast inference configuration
+# Optimized for speed over quality
+
+base: "base.yaml"
+
+model:
+  name: "fast_sr"
+  type: "span"
+  scale: 4
+  channels: 20  # Smaller than standard
+  num_blocks: 8  # Fewer blocks
+  use_lora: false  # No LoRA overhead
+
+training:
+  mode: "model_a"
+  epochs: 200
+  batch_size: 16  # Larger batch for speed
+  lr: 0.0002
+  
+  stage1:
+    enabled: false
+    
+  stage2:
+    enabled: true
+    epochs: 200
+    
+  # Fast scheduler
+  scheduler: "cosine"
+  T_max: 200
+
+data:
+  datasets:
+    - name: "mixed"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/mixed"
+  
+  crop_size: 96  # Smaller patches for speed
+  batch_size: 16
+  num_workers: 4
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  distillation:
+    enabled: false
+
+# Inference optimizations
+system:
+  cudnn_benchmark: true  # Optimize for fixed input sizes

@@ -1,0 +1,56 @@
+# Anime-only training configuration
+# Optimized for anime content without needing DIV2K
+
+base: "base.yaml"
+
+model:
+  name: "anime_sr"
+  type: "span"
+  scale: 4
+  channels: 32  # Slightly larger for anime details
+  num_blocks: 12
+  use_lora: true
+  lora_rank: 4
+
+training:
+  mode: "model_a"
+  epochs: 500
+  batch_size: 8
+  lr: 0.0001
+  
+  stage1:
+    enabled: false  # Skip teacher distillation, train from scratch
+    
+  stage2:
+    enabled: true
+    epochs: 500
+
+data:
+  datasets:
+    - name: "anime_bluray"
+      weight: 0.6
+      enabled: true
+      hr_dir: "data/anime_bluray"
+    
+    - name: "anime_web"
+      weight: 0.4
+      enabled: true
+      hr_dir: "data/anime_web"
+  
+  crop_size: 128
+  augment: true
+  
+  degradation:
+    enabled: true
+    # Stronger degradation for anime content
+    blur_kernel_size: [5, 7, 9, 11]
+    blur_sigma: [0.5, 1.0, 2.0, 3.0]
+    noise_sigma: [5, 15, 25]
+    jpeg_quality: [70, 80, 90, 95]
+
+loss:
+  pixel_loss:
+    type: "charbonnier"  # Better for anime
+    weight: 1.0
+  distillation:
+    enabled: false

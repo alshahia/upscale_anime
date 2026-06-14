@@ -1,0 +1,69 @@
+# Training both models in parallel (alternating batches)
+base: "base.yaml"
+
+# This config trains both Model A and Model B simultaneously
+# by alternating batches between them
+
+training:
+  mode: "both_parallel"
+  
+  # Model A settings
+  model_a_epochs: 100
+  
+  # Model B settings
+  model_b_epochs: 100
+  
+  # Shared settings
+  batch_size: 4  # Lower for parallel training
+  lr: 0.0001
+  
+  # Don't use EMA in parallel mode (memory)
+  use_ema: false
+  
+  # Validation
+  val_interval: 10
+  save_interval: 25
+
+model_a:
+  name: "model_a_parallel"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 12
+  use_lora: true
+  lora_rank: 4
+
+model_b:
+  name: "model_b_parallel"
+  type: "mamba_pan"
+  scale: 4
+  channels: 32
+  num_blocks: 8
+  mamba_d_state: 16
+  mamba_d_conv: 4
+  mamba_expand: 2
+  use_direction_fusion: true
+
+data:
+  datasets:
+    - name: "anime_train"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/anime_hr"
+  
+  crop_size: 128
+  batch_size: 4
+  num_workers: 2  # Reduced for parallel training
+  
+  degradation:
+    enabled: true
+
+loss:
+  pixel_loss:
+    weight: 1.0
+  
+  # Enable distillation for both models
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5

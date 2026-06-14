@@ -1,0 +1,125 @@
+base: base.yaml
+
+# Model settings
+model:
+  name: "span"                # Model architecture for pre-training
+
+# Self-supervised pre-training configuration for anime super-resolution
+training:
+  mode: auto_stage
+  epochs: 100
+  batch_size: 32
+  lr: 1e-4
+  min_lr: 1e-7
+  
+  optimizer: adamw
+  weight_decay: 0.01
+  warmup_epochs: 10
+  
+  # Stage 1: Self-supervised pre-training (no teachers needed initially)
+  stage1:
+    enabled: true
+    self_supervised:
+      enabled: true
+      method: masked_prediction
+      mask_ratio: 0.3
+      mask_patch_size: 16
+    
+  # Heavy augmentation for pre-training
+  augmentation:
+    enabled: true
+    random_crop: true
+    horizontal_flip: true
+    vertical_flip: false
+    rotation: 15
+    color_jitter: 0.2
+    random_resize: true
+    resize_range: [0.5, 2.0]
+    mixup: false
+    cutmix: false
+  
+  # Use EMA for pre-training stability
+  use_ema: true
+  ema_decay: 0.999
+  
+  # Mixed precision
+  mixed_precision: true
+  
+  # No early stopping for pre-training - let it run
+  early_stopping:
+    enabled: false
+
+data:
+  datasets:
+    - name: anime_pretrain
+      hr_dir: data/anime_hr
+      lr_dir: null
+      enabled: true
+      weight: 1.0
+      crop_size_mode: auto
+    - name: anime_video_pretrain
+      hr_dir: data/anime_video_frames
+      lr_dir: null
+      enabled: true
+      weight: 0.5
+      crop_size_mode: auto
+  
+  crop_size: 96
+  auto_crop_min: 64
+  auto_crop_max: 192
+  num_workers: 8
+  pin_memory: true
+  augment: true
+  
+  # Degradation for creating synthetic LR
+  degradation:
+    enabled: true
+    mode: smart
+    blur_prob: 0.5
+    noise_prob: 0.4
+    jpeg_prob: 0.3
+    
+    # Auto quality thresholds
+    auto_quality_thresholds:
+      hd_threshold: 0.8
+      standard_threshold: 0.5
+
+model:
+  type: span
+  channels: 32  # Wider model for pre-training
+  scale: 4
+  
+  # SPAN specific
+  span:
+    num_blocks: 12
+    feature_dim: 32
+
+# No perceptual loss during pre-training (no HR reference needed for masked prediction)
+loss:
+  pixel:
+    enabled: true
+    type: l1
+    weight: 1.0
+  
+  perceptual:
+    enabled: false
+  
+  # Self-supervised reconstruction loss
+  self_supervised:
+    enabled: true
+    weight: 1.0
+    
+    # Masked prediction settings
+    masked_prediction:
+      weight: 1.0
+      normalize_targets: true
+
+checkpoint:
+  save_dir: checkpoints/pretrain_anime
+  save_interval: 10
+  keep_best: true
+  keep_last_n: 5
+
+paths:
+  checkpoint_dir: checkpoints/pretrain_anime
+  log_dir: logs/pretrain_anime

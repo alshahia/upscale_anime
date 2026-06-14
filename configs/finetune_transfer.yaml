@@ -1,0 +1,215 @@
+defaults:
+  - base
+
+# Transfer learning fine-tuning configuration
+training:
+  mode: auto_stage
+  
+  # Use pre-trained weights from self-supervised phase
+  pretrained_checkpoint: checkpoints/pretrain_anime/best_model.pth
+  
+  # Fine-tuning hyperparameters
+  epochs: 200
+  batch_size: 16
+  lr: 1e-5  # Very low LR for fine-tuning
+  min_lr: 1e-8
+  
+  # Freeze strategy for transfer learning
+  freeze_strategy:
+    enabled: true
+    freeze_layers:
+      - type: blocks
+        count: 4  # Freeze first 4 blocks
+    unfreeze_schedule:
+      - epoch: 20
+        unfreeze_blocks: 1
+        lr_multiplier: 0.5
+      - epoch: 40
+        unfreeze_blocks: 1
+        lr_multiplier: 0.4
+      - epoch: 60
+        unfreeze_blocks: 1
+        lr_multiplier: 0.3
+      - epoch: 80
+        unfreeze_all: true
+        lr_multiplier: 0.2
+  
+  optimizer: adamw
+  weight_decay: 0.001  # Lower for fine-tuning
+  warmup_epochs: 5
+  
+  # Gradient accumulation for larger effective batch
+  gradient_accumulation_steps: 2
+  
+  # Mixed precision
+  mixed_precision: true
+  
+  # EMA
+  use_ema: true
+  ema_decay: 0.999
+  
+  # Stage 1: Knowledge aggregation with teachers + pre-trained
+  stage1:
+    enabled: true
+    epochs: 50
+    lr: 1e-5
+    min_lr: 1e-8
+    optimizer: adamw
+    weight_decay: 0.001
+    warmup_epochs: 5
+    scheduler: cosine
+    
+    # Use pre-trained model as additional teacher
+    use_pretrained_teacher: true
+    pretrained_teacher_checkpoint: checkpoints/pretrain_anime/best_model.pth
+    pretrained_teacher_weight: 0.4
+    
+    # Other teachers
+    teachers:
+      - name: edsr
+        weight: 0.2
+      - name: rcan
+        weight: 0.2
+      - name: swinir
+        weight: 0.2
+    
+    # Knowledge distillation weights
+    distillation_weight: 0.6
+    perceptual_weight: 0.2
+    pixel_weight: 1.0
+    feature_distillation_weight: 0.1
+    
+    aggregation_type: simple
+    auto_download_teachers: true
+  
+  # Stage 2: Student refinement
+  stage2:
+    enabled: true
+    epochs: 100
+    lr: 5e-6
+    min_lr: 1e-8
+    optimizer: adamw
+    weight_decay: 0.001
+    warmup_epochs: 3
+    scheduler: plateau
+    
+    distillation_weight: 0.4
+    perceptual_weight: 0.3
+    pixel_weight: 1.0
+    use_stage1_checkpoint: true
+  
+  # Stage automation
+  stage_automation:
+    enabled: true
+    auto_advance: true
+    stage1:
+      enabled: true
+      min_epochs_before_advance: 30
+      max_epochs: 60
+      target_metric: psnr
+      target_threshold: 35.0
+      advance_on_convergence: true
+      advance_on_plateau: true
+    stage2:
+      enabled: true
+      min_epochs: 50
+      max_epochs: 150
+      target_metric: psnr
+      target_threshold: 36.0
+  
+  # Progressive crop size training
+  progressive_crop:
+    enabled: true
+    sizes: [64, 96, 128, 160]
+    epochs_per_size: 25
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 30
+    min_epochs: 50
+    min_delta: 0.0001
+    mode: min
+    monitor: val_loss
+    restore_best_weights: true
+
+data:
+  datasets:
+    - name: anime_train
+      hr_dir: data/anime_hr
+      lr_dir: null
+      enabled: true
+      weight: 0.7
+      crop_size_mode: auto
+    - name: anime_video
+      hr_dir: data/anime_video_frames
+      lr_dir: null
+      enabled: true
+      weight: 0.3
+      crop_size_mode: auto
+    - name: anime_val
+      hr_dir: data/anime_val
+      is_validation: true
+      enabled: true
+      weight: 0.0
+      crop_size_mode: auto
+  
+  crop_size: 128
+  auto_crop_min: 64
+  auto_crop_max: 192
+  num_workers: 8
+  pin_memory: true
+  augment: true
+  sampling_mode: size_proportional
+  
+  # Advanced degradation for fine-tuning
+  degradation:
+    enabled: true
+    mode: smart
+    blur_prob: 0.6
+    noise_prob: 0.4
+    jpeg_prob: 0.4
+    auto_quality_thresholds:
+      hd_threshold: 0.8
+      standard_threshold: 0.5
+
+model:
+  type: span
+  channels: 32
+  scale: 4
+  
+  span:
+    num_blocks: 12
+    feature_dim: 32
+
+loss:
+  pixel:
+    enabled: true
+    type: l1
+    weight: 1.0
+  
+  perceptual:
+    enabled: true
+    type: dists
+    weight: 0.2
+  
+  # Feature distillation from teachers
+  feature_distillation:
+    enabled: true
+    layers: [2, 4, 6, 8]
+    weight: 0.1
+  
+  # Self-supervised consistency loss
+  consistency:
+    enabled: true
+    weight: 0.05
+
+checkpoint:
+  save_dir: checkpoints/finetune_anime
+  save_interval: 10
+  keep_best: true
+  keep_last_n: 10
+
+paths:
+  checkpoint_dir: checkpoints/finetune_anime
+  log_dir: logs/finetune_anime

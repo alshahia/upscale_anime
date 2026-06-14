@@ -1,0 +1,139 @@
+# Stage 1: Fast Configuration (Critical Fixes Only)
+# Quick training with essential improvements only
+# ~0.5 dB gain with minimal overhead
+
+base: "base.yaml"
+
+model:
+  name: "model_a_fast"
+  type: "span"
+  scale: 4
+  channels: 26
+  num_blocks: 12
+  use_lora: true
+  lora_rank: 4
+
+training:
+  mode: "model_a"
+  
+  stage1:
+    enabled: true
+    epochs: 80
+    
+    # Simple aggregation (fastest, most stable)
+    aggregation_type: "simple"
+    num_blocks: 4
+    embed_dim: 64
+    
+    # Standard optimization
+    optimizer: "adam"
+    lr: 0.0001
+    weight_decay: 0.0
+    scheduler: "cosine"
+    warmup_epochs: 5
+    min_lr: 1e-6
+    
+    # Standard batch size
+    batch_size: 32
+    gradient_accumulation_steps: 1
+    
+    # Disable OHEM (speed)
+    ohem_enabled: false
+    
+    # Teachers
+    auto_download_teachers: true
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+      - name: "rcan"
+        path: "pretrained/RCAN_x4.pt"
+      - name: "swinir"
+        path: "pretrained/SwinIR_x4.pt"
+    freeze_teachers: true
+    
+    # Simple L1 + Wavelet only
+    use_combined_loss: false
+    
+    # Disable anime-specific losses (speed)
+    anime:
+      line_art_preservation: false
+      color_consistency: false
+      flat_region_preservation: false
+    
+    # Disable temporal
+    temporal_consistency: false
+    
+    # Basic monitoring
+    log_teacher_disagreement: false
+    debug_nan: false
+
+  stage2:
+    enabled: true
+    epochs: 100
+    lr: 0.0001
+    scheduler: "cosine"
+    warmup_epochs: 0
+    min_lr: 1e-6
+    use_stage1_checkpoint: true
+
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 2                      # Reduced for speed
+    wavelet_type: "haar"
+    
+  fakd:
+    enabled: true
+    layers: [4, 8, 12]                     # Fewer layers
+    layer_weights: [0.2, 0.4, 0.4]
+    affinity_type: "spatial"
+
+data:
+  datasets:
+    - name: "anime_custom"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/anime_video_frames"
+      preload: false        # Set to true if dataset fits in RAM
+      max_images: null      # Limit dataset size for testing
+  
+  crop_size: 128
+  augment: true
+  
+  # DataLoader optimization
+  num_workers: 8          # 4 workers per GPU
+  prefetch_factor: 4      # Hide CPU latency
+  pin_memory: true
+  persistent_workers: true
+  auto_tune_workers: true
+  
+  # Simple degradation
+  degradation:
+    enabled: true
+    blur_kernel_size: [5, 9, 13]
+    blur_sigma: [0.5, 1.0, 2.0]
+    noise_sigma: [5, 15, 25]
+    jpeg_quality: [70, 85, 95]
+    jpeg_prob: 0.5
+    anime_degradation: false
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+
+checkpoint:
+  save_dir: "checkpoints"
+  keep_last_n: 3
+  keep_best: true
+
+system:
+  seed: 42
+  cudnn_benchmark: true

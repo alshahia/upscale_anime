@@ -1,0 +1,78 @@
+# Test Config: Stage 2 Fast
+# For testing Stage 2 training (student distillation)
+# 3 epochs, batch_size=2
+
+base: "../../configs/base.yaml"
+
+model:
+  name: "test_model_a_stage2"
+  type: "span"
+  scale: 4
+  channels: 16
+  num_blocks: 4
+  use_lora: false
+
+training:
+  mode: "model_a"
+  batch_size: 2
+  epochs: 3
+  lr: 0.0005
+  
+  stage1:
+    enabled: false
+
+  stage2:
+    enabled: true
+    epochs: 3
+    lr: 0.0005
+    optimizer: "adam"
+    scheduler: "step"
+    use_stage1_checkpoint: false  # Skip for testing
+    warmup_epochs: 0
+
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 1
+    
+  fakd:
+    enabled: true
+    layers: [2, 4]
+
+data:
+  datasets:
+    - name: "test_dataset"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/val_hr"
+  
+  crop_size: 64
+  augment: false
+  num_workers: 2
+  
+  degradation:
+    enabled: true
+    mode: "light"
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  perceptual:
+    enabled: false  # Skip for speed
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 0.5
+    fakd_weight: 0.3
+
+checkpoint:
+  save_dir: "tests/temp_checkpoints"
+  keep_last_n: 2
+  save_interval: 1
+
+system:
+  seed: 42

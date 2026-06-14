@@ -1,0 +1,122 @@
+# Test Config: Auto Stage
+# For testing automated Stage 1→2 transition
+# 3+3 epochs total
+
+base: "../../configs/base.yaml"
+
+model:
+  name: "test_auto_stage"
+  type: "span"
+  scale: 4
+  channels: 16
+  num_blocks: 4
+
+training:
+  mode: "auto_stage"
+  batch_size: 2
+  epochs: 6
+  lr: 0.001
+  
+  early_stopping:
+    enabled: true
+    patience: 2
+    min_epochs: 2
+    min_delta: 0.001
+  
+  adaptive_lr:
+    enabled: false  # Simplify for testing
+  
+  stage1:
+    enabled: true
+    epochs: 3
+    
+    aggregation_type: "simple"
+    num_blocks: 2
+    embed_dim: 32
+    
+    auto_download_teachers: false
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+    freeze_teachers: true
+    
+    optimizer: "adam"
+    scheduler: "step"
+    lr: 0.001
+
+  stage2:
+    enabled: true
+    epochs: 3
+    lr: 0.0005
+    optimizer: "adam"
+    scheduler: "step"
+    use_stage1_checkpoint: true
+
+  stage_automation:
+    enabled: true
+    auto_advance: true
+    min_epochs_before_advance: 2
+    
+    stage1:
+      enabled: true
+      max_epochs: 3
+      min_epochs_before_advance: 2
+      advance_on_convergence: true
+      target_metric: "loss"
+      target_threshold: 0.1
+    
+    stage2:
+      enabled: true
+      max_epochs: 3
+      min_epochs: 2
+      target_metric: "loss"
+      target_threshold: 0.08
+
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 1
+    
+  fakd:
+    enabled: true
+    layers: [2]
+
+data:
+  datasets:
+    - name: "test_train"
+      weight: 0.9
+      enabled: true
+      hr_dir: "data/val_hr"
+    - name: "test_val"
+      weight: 0.1
+      enabled: true
+      hr_dir: "data/val_hr"
+      is_validation: true
+  
+  crop_size: 64
+  augment: false
+  num_workers: 2
+  
+  degradation:
+    enabled: true
+    mode: "light"
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 0.5
+    fakd_weight: 0.3
+
+checkpoint:
+  save_dir: "tests/temp_checkpoints"
+  keep_last_n: 3
+  save_interval: 1
+
+system:
+  seed: 42

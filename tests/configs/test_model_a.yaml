@@ -1,0 +1,85 @@
+# Test Config: Model A Only
+# For testing Model A (SPAN) training in isolation
+
+base: "../../configs/base.yaml"
+
+model:
+  name: "test_model_a_only"
+  type: "span"
+  scale: 4
+  channels: 16
+  num_blocks: 4
+  use_lora: false
+
+training:
+  mode: "model_a"
+  batch_size: 2
+  epochs: 3
+  lr: 0.001
+  
+  stage1:
+    enabled: true
+    epochs: 3
+    aggregation_type: "simple"
+    num_blocks: 2
+    embed_dim: 32
+    
+    teachers:
+      - name: "edsr"
+        path: "pretrained/EDSR_x4.pt"
+    freeze_teachers: true
+    
+    optimizer: "adam"
+    scheduler: "step"
+    warmup_epochs: 0
+    
+    anime:
+      line_art_preservation: false
+      color_consistency: false
+
+  stage2:
+    enabled: false  # Skip Stage 2 for isolated Model A test
+
+distillation:
+  enabled: true
+  
+  mtkd:
+    enabled: true
+    wavelet_levels: 1
+    
+  fakd:
+    enabled: true
+    layers: [2]
+
+data:
+  datasets:
+    - name: "test_dataset"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/val_hr"
+  
+  crop_size: 64
+  augment: false
+  num_workers: 2
+  
+  degradation:
+    enabled: true
+    mode: "light"
+
+loss:
+  pixel_loss:
+    type: "l1"
+    weight: 1.0
+  
+  distillation:
+    enabled: true
+    mtkd_weight: 0.5
+    fakd_weight: 0.3
+
+checkpoint:
+  save_dir: "tests/temp_checkpoints/model_a"
+  keep_last_n: 2
+  save_interval: 1
+
+system:
+  seed: 42

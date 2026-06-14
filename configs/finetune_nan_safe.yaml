@@ -1,0 +1,128 @@
+# NaN-safe training configuration for SPAN super-resolution
+# Optimized to prevent NaN gradients and ensure stable training
+
+# Dataset configuration
+data:
+  crop_size: 64
+  batch_size: 2  # Reduced batch size for stability
+  
+# Model configuration  
+model:
+  name: model_nan_safe_spanf
+  type: checkpoint_compatible
+  scale: 4
+  channels: 48
+  hidden_channels: 96
+  in_channels: 3
+  out_channels: 3
+  num_blocks: 6
+
+# Training configuration
+training:
+  # Basic settings
+  mode: auto_stage  # Use valid training mode
+  epochs: 50
+  device: cuda
+  batch_size: 2  # Explicit batch size for validation
+  
+  # Optimizer settings (NaN-safe)
+  optimizer: adamw
+  lr: 5e-7  # Very low learning rate
+  weight_decay: 1e-4
+  betas: [0.9, 0.999]
+  eps: 1e-8  # Prevent division by zero
+  
+  # Learning rate scheduler
+  scheduler: cosine
+  min_lr: 1e-9
+  
+  # Gradient settings
+  gradient_accumulation_steps: 1  # No accumulation to prevent instability
+  max_grad_norm: 0.5  # Strong gradient clipping
+  
+  # Mixed precision (DISABLED to prevent NaN)
+  mixed_precision: false
+  
+  # Stage 1 settings (NaN-safe)
+  stage1:
+    enabled: true
+    epochs: 25  # Shorter Stage 1
+    lr: 5e-7
+    min_lr: 1e-9
+    optimizer: adamw
+    weight_decay: 1e-4
+    warmup_epochs: 5
+    scheduler: cosine
+    aggregation_type: simple
+    auto_download_teachers: true  # Enable teachers
+    distillation_weight: 0.0  # Disable distillation
+    perceptual_weight: 0.01  # Very low perceptual weight
+    pixel_weight: 1.0
+    teachers:
+      - name: swinir
+        weight: 1.0
+    
+  # Stage 2 settings (NaN-safe)
+  stage2:
+    enabled: true
+    epochs: 25  # Shorter Stage 2
+    lr: 5e-7
+    min_lr: 1e-9
+    optimizer: adamw
+    weight_decay: 1e-4
+    warmup_epochs: 3
+    scheduler: cosine
+    distillation_weight: 0.0  # Disable distillation
+    perceptual_weight: 0.01  # Very low perceptual weight
+    pixel_weight: 1.0
+    use_stage1_checkpoint: true
+  
+  
+# Loss configuration
+losses:
+  l1:
+    weight: 0.5
+  perceptual:
+    weight: 0.01
+    layers: ['relu3_3']
+  total_variation:
+    weight: 0.001
+
+# Dataset configuration  
+data:
+  crop_size: 64
+  auto_crop_min: 48
+  auto_crop_max: 128
+  num_workers: 8
+  pin_memory: true
+  augment: true
+  sampling_mode: size_proportional
+  datasets:
+    - crop_size_mode: auto
+      enabled: true
+      hr_dir: data/val_hr
+      lr_dir: null
+      name: anime_train
+      weight: 1
+    
+# Validation configuration
+#validation:
+#  enabled: true
+#  freq: 5
+#  dataset: anime_faces
+#  crop_size: 64
+#  scale: 4
+
+# Checkpointing
+checkpointing:
+  save_freq: 5
+  save_best: true
+  save_last: true
+  monitor: loss
+  mode: min
+
+# Logging
+logging:
+  freq: 10
+  tensorboard: true
+  wandb: false
