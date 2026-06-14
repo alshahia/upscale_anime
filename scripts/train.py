@@ -65,7 +65,19 @@ def parse_args():
     parser.add_argument('--num-workers', type=int,
                       help='Number of dataloader workers')
     parser.add_argument('--batch-size', type=int,
-                      help='Override batch size')
+                      help='Override batch size (sets training.batch_size, '
+                           'data.batch_size, and training.finetune.batch_size)')
+    parser.add_argument('--crop-size', type=int,
+                      help='Override crop size (sets data.crop_size and '
+                           'data.preprocessing.storage.crop_size)')
+    parser.add_argument('--grad-accum', type=int,
+                      help='Override gradient accumulation steps '
+                           '(sets training.finetune.gradient_accumulation_steps)')
+    parser.add_argument('--no-fdl', action='store_true',
+                      help='Disable FDL (DINOv2) loss; sets loss.fdl.enabled=false')
+    parser.add_argument('--no-wavelet', action='store_true',
+                      help='Disable wavelet-guided loss; sets '
+                           'loss.wavelet_guided.enabled=false')
     parser.add_argument('--epochs', type=int,
                       help='Override number of epochs')
     parser.add_argument('--lr', type=float,
@@ -270,12 +282,63 @@ def main():
     # Set training mode from CLI if provided
     if args.mode:
         config.set('training.mode', args.mode)
-    
+
+    def _log_override(key: str, old: object, new: object) -> None:
+        """Print a [CLI override] line. Paths verified to match the trainer
+        (see src/training/neosr_finetuner.py)."""
+        print(f"[CLI override] {key}: {old} -> {new}")
+
     # Handle batch_size override - set in both training and data sections
     if args.batch_size is not None:
+        old_tbs = config.get('training.batch_size')
+        old_dbs = config.get('data.batch_size')
+        _log_override('training.batch_size', old_tbs, args.batch_size)
+        _log_override('data.batch_size', old_dbs, args.batch_size)
         config.set('training.batch_size', args.batch_size)
         config.set('data.batch_size', args.batch_size)
-    
+        # Also override finetune.batch_size so the trainer picks it up
+        # (see NeosrSPANFinetuner self.finetune_cfg.get('batch_size', 4))
+        old_fbs = config.get('training.finetune.batch_size')
+        if old_fbs is not None:
+            _log_override('training.finetune.batch_size', old_fbs, args.batch_size)
+            config.set('training.finetune.batch_size', args.batch_size)
+
+    # Handle crop_size override - data.crop_size and preprocessing.storage.crop_size
+    if args.crop_size is not None:
+        old_dcs = config.get('data.crop_size')
+        _log_override('data.crop_size', old_dcs, args.crop_size)
+        config.set('data.crop_size', args.crop_size)
+        # Mirror to preprocessing.storage.crop_size (used by PreprocessingManager)
+        old_pcs = config.get('data.preprocessing.storage.crop_size')
+        if old_pcs is not None:
+            _log_override(
+                'data.preprocessing.storage.crop_size', old_pcs, args.crop_size,
+            )
+            config.set('data.preprocessing.storage.crop_size', args.crop_size)
+
+    # Handle gradient accumulation override
+    if args.grad_accum is not None:
+        old_ga = config.get('training.finetune.gradient_accumulation_steps')
+        _log_override(
+            'training.finetune.gradient_accumulation_steps',
+            old_ga, args.grad_accum,
+        )
+        config.set('training.finetune.gradient_accumulation_steps', args.grad_accum)
+
+    # Handle --no-fdl: disable FDL (DINOv2) loss
+    if args.no_fdl:
+        old_fdl = config.get('training.finetune.loss.fdl.enabled')
+        _log_override('training.finetune.loss.fdl.enabled', old_fdl, False)
+        config.set('training.finetune.loss.fdl.enabled', False)
+
+    # Handle --no-wavelet: disable wavelet-guided loss
+    if args.no_wavelet:
+        old_wg = config.get('training.finetune.loss.wavelet_guided.enabled')
+        _log_override(
+            'training.finetune.loss.wavelet_guided.enabled', old_wg, False,
+        )
+        config.set('training.finetune.loss.wavelet_guided.enabled', False)
+
     # For finetune mode, use finetune-specific batch_size if available
     # This must happen BEFORE validation so the correct batch_size is used
     mode = config.get('training.mode', 'model_a')

@@ -1,0 +1,62 @@
+base: finetune_neosr_span_v7_anime.yaml
+
+# -------------------------------------------------------------------------
+# V7 — FAST (perf-tuned) PRESET (2026-06-14)
+# -------------------------------------------------------------------------
+# Same v7 backbone (SPAN-Tiny + Conv3XC, EMA, two-stage degradation,
+# XDoG/USM pseudo-GT, two-phase schedule, NR-IQA logging), but with three
+# loss-stack changes that target the dominant per-iter cost on 8GB GPUs:
+#
+#   1. FDL (DINOv2) disabled                  - saves ~28% of loss time
+#   2. Perceptual type 'twin' -> 'vgg'        - saves ~50% of perceptual time
+#   3. Wavelet-guided loss disabled           - saves ~3% of loss time
+#
+# Plus a VRAM-friendly batch size (8 instead of 128) so the run fits on
+# 8GB cards without OOM, and num_workers=4 to match the smaller batch.
+#
+# Expected: 3-5x speedup vs the full v7 config (rough: 10.89s/iter ->
+# 2-3s/iter on RTX 4000 Mobile at crop=64). Trade-off: ~5-10% perceptual
+# quality loss on the no-reference IQA scores (CLIPIQA, MANIQA, NIQE)
+# because DINOv2's structural prior and the ResNet50 perceptual twin are
+# both strong contributors to perceived sharpness on anime line art.
+#
+# Recommended use cases:
+#   * Fast iteration while developing loss components or debugging
+#   * Quick "does the pipeline run end-to-end?" sanity checks
+#   * 80-epoch final runs are NOT recommended with this preset; use the
+#     full v7 config for the production finetune
+#
+# CLI equivalent of this preset (no separate config needed):
+#   python scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml \
+#     --batch-size 8 --no-fdl --no-wavelet
+# (the --crop-size 64 and num_workers 4 fall out of the config defaults
+# if you also pass them on the CLI.)
+#
+# Recommended command (fast iteration):
+#   python scripts/train.py --config configs/finetune_neosr_span_v7_anime_fast.yaml --epochs 80
+# -------------------------------------------------------------------------
+
+output:
+  run_name: NEOSR_SPAN_V7_ANIME_FAST
+  duplicate_handling: auto_increment
+
+data:
+  batch_size: 8
+  crop_size: 64
+  num_workers: 4
+  prefetch_factor: 2
+
+training:
+  batch_size: 8
+  finetune:
+    batch_size: 8
+    gradient_accumulation_steps: 1
+    loss:
+      perceptual:
+        type: vgg
+        weight: 0.3
+        warmup_epochs: 10
+      fdl:
+        enabled: false
+      wavelet_guided:
+        enabled: false

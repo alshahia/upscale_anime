@@ -508,6 +508,14 @@ class NeosrSPANFinetuner:
         self.fdl_weight = fdl_cfg.get('weight', 0.05)
         self.fdl_num_proj = fdl_cfg.get('num_proj', 24)
         self.fdl_compute_every = fdl_cfg.get('compute_every', 1)
+        # Conditional FDL: skip the DINOv2 forward pass for the first
+        # `fdl_warmup_steps` global steps of training. DINOv2 is most useful
+        # after the model has learned basic pixel-level structure, so we
+        # avoid paying the ~28% loss-time cost during the warmup window.
+        # Defaults to off (warmup_steps=0) so existing configs are unaffected.
+        conditional_cfg = fdl_cfg.get('conditional') or {}
+        self.fdl_conditional_enabled = conditional_cfg.get('enabled', False)
+        self.fdl_warmup_steps = int(conditional_cfg.get('warmup_steps', 0))
         self.fdl_loss = None
         self._fdl_last_value = 0.0
 
@@ -947,8 +955,21 @@ class NeosrSPANFinetuner:
                 total_loss = total_loss + weights.get('frequency', self.frequency_weight) * freq_loss
 
         # FDL loss (DINOv2) - MUST run in FP32
-        # compute_every > 1 skips computation on some batches for speed
-        if self.use_fdl and self.fdl_loss is not None:
+        # compute_every > 1 skips computation on some batches for speed.
+        # If loss.fdl.conditional.enabled is true, FDL is also skipped for the
+        # first fdl_warmup_steps global steps of training (DINOv2 is most
+        # useful once the model has learned basic pixel-level structure).
+        # Use getattr so stub-built trainers (NeosrSPANFinetuner.__new__)
+        # in unit tests keep working; real trainers set these in __init__.
+        fdl_in_warmup = (
+            getattr(self, 'fdl_conditional_enabled', False)
+            and getattr(self, 'global_step', 0) < getattr(self, 'fdl_warmup_steps', 0)
+        )
+        if (
+            self.use_fdl
+            and self.fdl_loss is not None
+            and not fdl_in_warmup
+        ):
             if batch_idx % self.fdl_compute_every == 0:
                 with torch.amp.autocast('cuda', enabled=False):
                     fdl_loss = self.fdl_loss(sr.float(), hr.float())
@@ -970,6 +991,16 @@ class NeosrSPANFinetuner:
                     batch_idx, self.fdl_compute_every, self._fdl_last_value,
                 )
                 loss_dict['fdl_cached'] = self._fdl_last_value
+        elif fdl_in_warmup:
+            # Conditional-FDL warmup window: skip the expensive DINOv2 forward
+            # entirely. Mark the cache only (no loss contribution, no NaN log
+            # spam) and stay aligned with the compute_every skip path.
+            logger.debug(
+                "FDL warmup skip global_step=%d (< %d)",
+                getattr(self, 'global_step', 0),
+                getattr(self, 'fdl_warmup_steps', 0),
+            )
+            loss_dict['fdl_cached'] = self._fdl_last_value
 
         # Wavelet-Guided Loss - MUST run in FP32
         if self.use_wavelet_guided and self.wavelet_guided_loss is not None:

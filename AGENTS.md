@@ -517,6 +517,52 @@ Training was bottlenecked by loss computation (51% of batch time), not data load
 | Frequency | 10 | 2.6% | Keep (fast) |
 | Others | <5 | <2% | Keep |
 
+## Training Performance
+
+For long v7 runs on 8GB GPUs the loss stack (twin VGG+ResNet perceptual + FDL/DINOv2 + wavelet-guided + discriminator) can dominate per-iter time. Three perf levers are available without touching v7 core code.
+
+### CLI perf flags (added 2026-06-14)
+
+```bash
+python scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml \
+  --batch-size 8 --crop-size 64 --grad-accum 1 \
+  --no-fdl --no-wavelet
+```
+
+| Flag | Effect | Config path overridden |
+|---|---|---|
+| `--batch-size N` | sets `training.batch_size`, `data.batch_size`, `training.finetune.batch_size` | trainer: `self.finetune_cfg.get('batch_size', 4)` |
+| `--crop-size N` | sets `data.crop_size`, `data.preprocessing.storage.crop_size` | `BaseDataset` (data) + `storage_estimator` |
+| `--grad-accum N` | sets `training.finetune.gradient_accumulation_steps` | trainer: `self.gradient_accumulation` |
+| `--no-fdl` | sets `training.finetune.loss.fdl.enabled=false` (skip DINOv2 forward) | trainer: `self.use_fdl` |
+| `--no-wavelet` | sets `training.finetune.loss.wavelet_guided.enabled=false` | trainer: `self.use_wavelet_guided` |
+
+Each override prints a `[CLI override] key: old -> new` line. The paths were verified against `src/training/neosr_finetuner.py` to avoid silent-fallback bugs. The original v7 config is not modified.
+
+### Fast preset: `configs/finetune_neosr_span_v7_anime_fast.yaml`
+
+Inherits the full v7 config but disables the three dominant loss components (FDL, ResNet50 perceptual twin, wavelet-guided), drops batch to 8 to fit on 8GB, and reduces `num_workers` to 4. **Expected: 3-5x speedup** (rough: 10.89s/iter -> 2-3s/iter on RTX 4000 Mobile at crop=64) at the cost of **~5-10% perceptual quality loss** on NR-IQA scores (CLIPIQA, MANIQA, NIQE). The full v7 config is still recommended for the final 80-epoch run.
+
+```bash
+# Recommended fast-iteration command
+python scripts/train.py --config configs/finetune_neosr_span_v7_anime_fast.yaml --epochs 80
+```
+
+### Conditional FDL warmup (`loss.fdl.conditional`)
+
+Opt-in via config; default off (no behavior change):
+
+```yaml
+loss:
+  fdl:
+    enabled: true
+    conditional:
+      enabled: true
+      warmup_steps: 100   # skip DINOv2 forward for the first 100 global steps
+```
+
+The DINOv2 forward pass is skipped entirely while `global_step < warmup_steps`; the FDL contribution to `total_loss` is zero during that window. Use this to defer the ~28% perceptual-time cost until the model has learned basic pixel-level structure.
+
 ## Pre-Completion Checklist
 
 Before marking a multi-step task as complete:

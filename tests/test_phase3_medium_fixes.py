@@ -27,6 +27,7 @@ def _build_trainer():
     trainer = NeosrSPANFinetuner.__new__(NeosrSPANFinetuner)
     trainer.current_epoch = 0
     trainer.batch_idx = 0
+    trainer.global_step = 0
     trainer.use_perceptual = False
     trainer.perceptual_loss = None
     trainer.use_line_art = False
@@ -42,6 +43,10 @@ def _build_trainer():
     trainer._fdl_last_value = 0.0
     trainer.fdl_weight = 0.05
     trainer.fdl_compute_every = 1
+    # Conditional FDL (set by __init__ when loss.fdl.conditional is present).
+    # Default off — existing FDL-on path is unaffected.
+    trainer.fdl_conditional_enabled = False
+    trainer.fdl_warmup_steps = 0
     trainer.use_wavelet_guided = False
     trainer.wavelet_guided_loss = None
     trainer.wavelet_guided_weight = 1.0
@@ -124,6 +129,97 @@ class TestFDLSkippedBatch:
         # 'fdl_cached' should be in loss_dict for logging visibility.
         assert 'fdl_cached' in loss_dict
         assert loss_dict['fdl_cached'] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# 3.4b: Conditional FDL warmup skips the DINOv2 forward pass for the
+# first fdl_warmup_steps global steps. Defaults to disabled, so existing
+# FDL behavior is preserved.
+# ---------------------------------------------------------------------------
+
+class TestFDLConditionalWarmup:
+    def test_conditional_disabled_is_noop(self):
+        """Default (no loss.fdl.conditional block) must not change behavior."""
+        trainer = _build_trainer()
+        trainer.use_fdl = True
+        trainer.fdl_conditional_enabled = False  # default
+        trainer.fdl_warmup_steps = 0             # default
+        trainer.fdl_compute_every = 1
+        trainer.fdl_loss = MagicMock(
+            return_value=torch.tensor(0.3, requires_grad=True),
+        )
+        trainer._fdl_last_value = 0.0
+
+        sr = torch.randn(1, 3, 8, 8, requires_grad=True)
+        hr = torch.randn(1, 3, 8, 8)
+        weights = {'pixel': 1.0, 'perceptual': 0.0, 'line_art': 0.0,
+                   'flat': 0.0, 'frequency': 0.0, 'adversarial': 0.0}
+        with patch.object(trainer, '_get_phase_weights', return_value=weights):
+            with patch('torch.amp.autocast'):
+                loss_dict = trainer._compute_total_loss(sr, hr, batch_idx=0)
+
+        # FDL ran (called) and contributed to total_loss
+        assert trainer.fdl_loss.called, "fdl_loss should be called when conditional is off"
+        assert 'fdl' in loss_dict
+        assert 'fdl_cached' not in loss_dict
+
+    def test_conditional_warmup_skips_fdl_forward(self):
+        """When global_step < warmup_steps and conditional is enabled, FDL is skipped."""
+        trainer = _build_trainer()
+        trainer.use_fdl = True
+        trainer.fdl_conditional_enabled = True
+        trainer.fdl_warmup_steps = 100
+        trainer.global_step = 42  # well within warmup
+        trainer.fdl_compute_every = 1
+        trainer.fdl_loss = MagicMock(
+            return_value=torch.tensor(0.3, requires_grad=True),
+        )
+        trainer._fdl_last_value = 1.5  # pretend prior batch cached this
+
+        sr = torch.randn(1, 3, 8, 8, requires_grad=True)
+        hr = torch.randn(1, 3, 8, 8)
+        weights = {'pixel': 1.0, 'perceptual': 0.0, 'line_art': 0.0,
+                   'flat': 0.0, 'frequency': 0.0, 'adversarial': 0.0}
+        with patch.object(trainer, '_get_phase_weights', return_value=weights):
+            with patch('torch.amp.autocast'):
+                loss_dict = trainer._compute_total_loss(sr, hr, batch_idx=0)
+
+        # DINOv2 forward was NOT called (this is the whole point of the gate)
+        assert not trainer.fdl_loss.called, (
+            "fdl_loss forward must be skipped during warmup window"
+        )
+        # 'fdl' key absent, 'fdl_cached' present (for logging visibility)
+        assert 'fdl' not in loss_dict
+        assert 'fdl_cached' in loss_dict
+        assert loss_dict['fdl_cached'] == 1.5
+        # total_loss is exactly the pixel loss (no FDL contribution)
+        pixel_loss = trainer.pixel_loss(sr, hr)
+        assert torch.allclose(loss_dict['total'], pixel_loss, atol=1e-5)
+
+    def test_conditional_warmup_expires(self):
+        """After global_step >= warmup_steps, FDL runs normally again."""
+        trainer = _build_trainer()
+        trainer.use_fdl = True
+        trainer.fdl_conditional_enabled = True
+        trainer.fdl_warmup_steps = 50
+        trainer.global_step = 50  # exactly at the threshold
+        trainer.fdl_compute_every = 1
+        trainer.fdl_loss = MagicMock(
+            return_value=torch.tensor(0.3, requires_grad=True),
+        )
+        trainer._fdl_last_value = 0.0
+
+        sr = torch.randn(1, 3, 8, 8, requires_grad=True)
+        hr = torch.randn(1, 3, 8, 8)
+        weights = {'pixel': 1.0, 'perceptual': 0.0, 'line_art': 0.0,
+                   'flat': 0.0, 'frequency': 0.0, 'adversarial': 0.0}
+        with patch.object(trainer, '_get_phase_weights', return_value=weights):
+            with patch('torch.amp.autocast'):
+                loss_dict = trainer._compute_total_loss(sr, hr, batch_idx=0)
+
+        # Warmup is over: FDL ran and contributed.
+        assert trainer.fdl_loss.called
+        assert 'fdl' in loss_dict
 
 
 # ---------------------------------------------------------------------------
