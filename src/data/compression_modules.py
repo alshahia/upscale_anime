@@ -6,6 +6,7 @@ Reference: APISR (CVPR 2024) - Anime Production Inspired Real-World Anime Super-
 https://github.com/Kiteretsu77/APISR
 """
 import io
+import logging
 import os
 import random
 import tempfile
@@ -13,6 +14,61 @@ import cv2
 import numpy as np
 from typing import Optional, Tuple, List
 from PIL import Image
+
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Backend detection (module-level, run once on import)
+# ---------------------------------------------------------------------------
+
+_AV_AVAILABLE = False
+try:
+    import av  # noqa: F401
+    try:
+        av.logging.set_level(av.logging.FATAL)
+        av.logging.set_libav_level(av.logging.FATAL)
+    except Exception as e:  # logging setup is best-effort
+        logger.debug("av logging level setup failed: %s", e)
+    _AV_AVAILABLE = True
+except Exception as e:
+    logger.debug("av (PyAV) import failed: %s", e)
+    av = None  # type: ignore[assignment]
+
+_PILLOW_HEIF_AVAILABLE = False
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    _PILLOW_HEIF_AVAILABLE = True
+except Exception as e:
+    logger.debug("pillow_heif import failed: %s", e)
+    pillow_heif = None  # type: ignore[assignment]
+
+_IMAGEIO_FFMPEG_AVAILABLE = False
+try:
+    import imageio_ffmpeg  # noqa: F401
+    _IMAGEIO_FFMPEG_AVAILABLE = True
+except Exception as e:
+    logger.debug("imageio_ffmpeg import failed: %s", e)
+    imageio_ffmpeg = None  # type: ignore[assignment]
+
+
+_CODEC_MAP = {
+    'h264': 'libx264',
+    'h265': 'libx265',
+    'mpeg4': 'mpeg4',
+    'mpeg2': 'mpeg2video',
+}
+
+
+def _fallback_jpeg(img: np.ndarray, lo: int = 60, hi: int = 85) -> np.ndarray:
+    """Last-resort JPEG fallback. Same path used by all codecs when their
+    primary backend is unavailable."""
+    quality = random.randint(lo, hi)
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+    _, encimg = cv2.imencode('.jpg', img, encode_param)
+    return cv2.imdecode(encimg, 1)
 
 
 class WebPCompression:
@@ -24,8 +80,12 @@ class WebPCompression:
     def __init__(self, quality_range: Tuple[int, int] = (30, 95)):
         self.quality_range = quality_range
         self._buffer = io.BytesIO()
+        self._logged_backend = False
 
     def __call__(self, img: np.ndarray) -> np.ndarray:
+        if not self._logged_backend:
+            logger.info("[WebPCompression] backend=pillow (in-process)")
+            self._logged_backend = True
         quality = random.randint(self.quality_range[0], self.quality_range[1])
         pil_img = Image.fromarray(img)
         self._buffer.seek(0)
@@ -39,26 +99,32 @@ class WebPCompression:
 class AVIFCompression:
     """
     AVIF compression simulating modern codec artifacts.
-    Uses pillow_heif if available, falls back to JPEG simulation.
+    Uses pillow_heif (in-process) when available; falls back to JPEG.
     """
 
     def __init__(self, quality_range: Tuple[int, int] = (30, 90)):
         self.quality_range = quality_range
-        self._available = self._check_availability()
+        self._available = _PILLOW_HEIF_AVAILABLE
         self._buffer = io.BytesIO()
-
-    @staticmethod
-    def _check_availability() -> bool:
-        try:
-            import pillow_heif
-            pillow_heif.register_avif_opener()
-            return True
-        except Exception:
-            return False
+        self._logged_backend = False
+        if self._available:
+            logger.info(
+                "[AVIFCompression] backend=pillow_heif v%s (in-process)",
+                getattr(pillow_heif, "__version__", "unknown"),
+            )
+        else:
+            logger.warning(
+                "[AVIFCompression] pillow_heif not available; falling back to JPEG."
+            )
 
     def __call__(self, img: np.ndarray) -> np.ndarray:
         if not self._available:
-            return self._fallback_jpeg(img)
+            if not self._logged_backend:
+                logger.info("[AVIFCompression] backend=jpeg_fallback")
+                self._logged_backend = True
+            return _fallback_jpeg(
+                img, self.quality_range[0], self.quality_range[1]
+            )
 
         quality = random.randint(self.quality_range[0], self.quality_range[1])
         pil_img = Image.fromarray(img)
@@ -69,21 +135,24 @@ class AVIFCompression:
             self._buffer.seek(0)
             compressed = Image.open(self._buffer)
             return np.array(compressed.convert('RGB'))
-        except Exception:
-            return self._fallback_jpeg(img)
-
-    def _fallback_jpeg(self, img: np.ndarray) -> np.ndarray:
-        quality = random.randint(self.quality_range[0], self.quality_range[1])
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        _, encimg = cv2.imencode('.jpg', img, encode_param)
-        return cv2.imdecode(encimg, 1)
+        except Exception as e:
+            logger.warning(
+                "[AVIFCompression] pillow_heif encode failed (%s); using JPEG fallback.",
+                e,
+            )
+            return _fallback_jpeg(
+                img, self.quality_range[0], self.quality_range[1]
+            )
 
 
 class PyAVVideoCompression:
     """
-    Single-frame video codec compression using PyAV (av library).
-    Much faster than imageio-ffmpeg as it uses the av library directly
-    without spawning subprocesses.
+    Single-frame video codec compression (H.264/H.265/MPEG) using PyAV.
+
+    PyAV binds libav* in-process -- no subprocess spawn. This is the
+    primary path for v7's `compression_stage2: [avif, h264, h265, jpeg]`
+    codec list. If `import av` fails at module load time, the class
+    transparently falls back to JPEG.
 
     Reference: APISR uses single-frame video compression to synthesize
     artifacts equivalent to multi-frame video compression.
@@ -96,84 +165,94 @@ class PyAVVideoCompression:
     ):
         self.codec = codec
         self.crf_range = crf_range
-        self._available = self._check_availability()
-        self._buffer = io.BytesIO()
-
-    @staticmethod
-    def _check_availability() -> bool:
-        try:
-            import av
-            return True
-        except Exception:
-            return False
+        self._available = _AV_AVAILABLE
+        self._logged_backend = False
+        if self._available:
+            codec_name = _CODEC_MAP.get(codec, 'libx264')
+            logger.info(
+                "[PyAVVideoCompression] backend=av v%s codec=%s (in-process)",
+                getattr(av, "__version__", "unknown"),
+                codec_name,
+            )
+        else:
+            logger.warning(
+                "[PyAVVideoCompression] av (PyAV) not available; falling back to JPEG."
+            )
 
     def __call__(self, img: np.ndarray) -> np.ndarray:
         if not self._available:
-            return self._fallback_jpeg(img)
+            if not self._logged_backend:
+                logger.info("[PyAVVideoCompression] backend=jpeg_fallback")
+                self._logged_backend = True
+            return _fallback_jpeg(img)
 
         crf = random.randint(self.crf_range[0], self.crf_range[1])
         return self._compress_single_frame(img, self.codec, crf)
 
-    def _compress_single_frame(self, img: np.ndarray, codec: str, crf: int) -> np.ndarray:
-        import av
-
+    def _compress_single_frame(
+        self, img: np.ndarray, codec: str, crf: int
+    ) -> np.ndarray:
         h, w = img.shape[:2]
-        codec_map = {
-            'h264': 'libx264',
-            'h265': 'libx265',
-            'mpeg4': 'mpeg4',
-            'mpeg2': 'mpeg2video',
-        }
-        codec_name = codec_map.get(codec, 'libx264')
+        codec_name = _CODEC_MAP.get(codec, 'libx264')
 
-        self._buffer.seek(0)
-        self._buffer.truncate(0)
-
+        # Use a fresh in-memory buffer per call to avoid container state
+        # pollution between frames. (av.open on a BytesIO requires rewind
+        # for reading, but we always close+reopen for the decode side.)
+        enc_buf = io.BytesIO()
         try:
-            container = av.open(self._buffer, mode='w', format='mp4')
+            container = av.open(enc_buf, mode='w', format='mp4')
             stream = container.add_stream(codec_name, rate=1)
             stream.width = w
             stream.height = h
             stream.pix_fmt = 'yuv420p'
 
             if codec_name in ('libx264', 'libx265'):
-                stream.options = {
-                    'crf': str(crf),
-                    'preset': 'fast',
-                }
+                opts = {'crf': str(crf), 'preset': 'ultrafast'}
+                # libx265 prints ~20 lines of build info to stderr on the
+                # first encode unless explicitly told to be quiet. This
+                # is purely cosmetic but it floods the trainer logs.
+                if codec_name == 'libx265':
+                    opts['x265-params'] = 'log-level=error'
+                stream.options = opts
             else:
                 stream.options = {'qscale': str(crf)}
 
             frame = av.VideoFrame.from_ndarray(img, format='rgb24')
             for packet in stream.encode(frame):
                 container.mux(packet)
-
             for packet in stream.encode():
                 container.mux(packet)
-
             container.close()
 
-            self._buffer.seek(0)
-            input_container = av.open(self._buffer)
-            for frame in input_container.decode(video=0):
-                result = frame.to_ndarray(format='rgb24')
-                input_container.close()
-                return result
-        except Exception:
-            return self._fallback_jpeg(img)
-
-    def _fallback_jpeg(self, img: np.ndarray) -> np.ndarray:
-        quality = random.randint(60, 85)
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        _, encimg = cv2.imencode('.jpg', img, encode_param)
-        return cv2.imdecode(encimg, 1)
+            enc_buf.seek(0)
+            input_container = av.open(enc_buf)
+            decoded = None
+            for f in input_container.decode(video=0):
+                decoded = f.to_ndarray(format='rgb24')
+                break
+            input_container.close()
+            if decoded is None:
+                logger.warning(
+                    "[PyAVVideoCompression] decoder produced no frames; using JPEG fallback."
+                )
+                return _fallback_jpeg(img)
+            return decoded
+        except Exception as e:
+            logger.warning(
+                "[PyAVVideoCompression] encode/decode failed (%s); using JPEG fallback.",
+                e,
+            )
+            return _fallback_jpeg(img)
 
 
 class VideoCodecCompression:
     """
     Single-frame video codec compression (H.264/H.265/MPEG).
-    Uses PyAV if available (fast), falls back to imageio-ffmpeg,
-    then to JPEG simulation.
+
+    Facade over PyAVVideoCompression (in-process, primary) and an
+    `imageio_ffmpeg` subprocess fallback (used only when PyAV is not
+    installed). The ffmpeg path is the legacy implementation and is
+    exercised only on systems missing the `av` package.
 
     Reference: APISR uses single-frame video compression to synthesize
     artifacts equivalent to multi-frame video compression.
@@ -188,36 +267,41 @@ class VideoCodecCompression:
         self.crf_range = crf_range
         self._pyav = PyAVVideoCompression(codec=codec, crf_range=crf_range)
         self._use_pyav = self._pyav._available
-        self._ffmpeg_available = self._check_ffmpeg_availability()
-
-    @staticmethod
-    def _check_ffmpeg_availability() -> bool:
-        try:
-            import imageio_ffmpeg
-            return True
-        except Exception:
-            return False
+        self._ffmpeg_available = _IMAGEIO_FFMPEG_AVAILABLE
+        self._logged_backend = False
+        if not self._use_pyav and self._ffmpeg_available:
+            logger.info(
+                "[VideoCodecCompression] backend=imageio_ffmpeg (subprocess) codec=%s",
+                codec,
+            )
+        elif not self._use_pyav and not self._ffmpeg_available:
+            logger.warning(
+                "[VideoCodecCompression] no backend (PyAV and imageio_ffmpeg both missing); "
+                "using JPEG fallback for codec=%s.",
+                codec,
+            )
 
     def __call__(self, img: np.ndarray) -> np.ndarray:
         if self._use_pyav:
             return self._pyav(img)
-        elif self._ffmpeg_available:
+        if self._ffmpeg_available:
+            if not self._logged_backend:
+                logger.info(
+                    "[VideoCodecCompression] backend=imageio_ffmpeg (subprocess)"
+                )
+                self._logged_backend = True
             return self._compress_ffmpeg(img)
-        return self._fallback_jpeg(img)
+        if not self._logged_backend:
+            logger.info("[VideoCodecCompression] backend=jpeg_fallback")
+            self._logged_backend = True
+        return _fallback_jpeg(img)
 
     def _compress_ffmpeg(self, img: np.ndarray) -> np.ndarray:
         import gc
         import time
-        import imageio_ffmpeg
 
         h, w = img.shape[:2]
-        codec_map = {
-            'h264': 'libx264',
-            'h265': 'libx265',
-            'mpeg4': 'mpeg4',
-            'mpeg2': 'mpeg2video',
-        }
-        codec_name = codec_map.get(self.codec, 'libx264')
+        codec_name = _CODEC_MAP.get(self.codec, 'libx264')
         crf = random.randint(self.crf_range[0], self.crf_range[1])
 
         with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
@@ -256,8 +340,12 @@ class VideoCodecCompression:
                     break
             finally:
                 read_gen.close()
-        except Exception:
-            result = self._fallback_jpeg(img)
+        except Exception as e:
+            logger.warning(
+                "[VideoCodecCompression] ffmpeg subprocess failed (%s); using JPEG fallback.",
+                e,
+            )
+            result = _fallback_jpeg(img)
         finally:
             if os.path.exists(tmp_path):
                 for attempt in range(5):
@@ -267,16 +355,8 @@ class VideoCodecCompression:
                     except PermissionError:
                         gc.collect()
                         time.sleep(0.1)
-                else:
-                    pass
 
-        return result if result is not None else self._fallback_jpeg(img)
-
-    def _fallback_jpeg(self, img: np.ndarray) -> np.ndarray:
-        quality = random.randint(60, 85)
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        _, encimg = cv2.imencode('.jpg', img, encode_param)
-        return cv2.imdecode(encimg, 1)
+        return result if result is not None else _fallback_jpeg(img)
 
 
 class CompressionPipeline:
@@ -305,6 +385,7 @@ class CompressionPipeline:
         self.quality_ranges = quality_ranges or [(60, 95)] * len(compression_types)
 
         self.compressors = self._build_compressors()
+        self._log_backends()
 
     def _build_compressors(self) -> dict:
         compressors = {}
@@ -319,6 +400,18 @@ class CompressionPipeline:
                 crf_range = self._map_to_crf(qrange)
                 compressors[ctype] = VideoCodecCompression(codec=ctype, crf_range=crf_range)
         return compressors
+
+    def _log_backends(self) -> None:
+        """Log the detected backend stack at init time so the trainer log
+        has a single, grep-able summary of which in-process codecs are
+        in use (vs the ffmpeg subprocess fallback)."""
+        logger.info(
+            "[CompressionPipeline] codecs=%s | backends: av=%s pillow_heif=%s imageio_ffmpeg=%s",
+            list(self.compressors.keys()),
+            _AV_AVAILABLE,
+            _PILLOW_HEIF_AVAILABLE,
+            _IMAGEIO_FFMPEG_AVAILABLE,
+        )
 
     def _map_to_crf(self, qrange: Tuple[int, int]) -> Tuple[int, int]:
         """Map JPEG-style quality range to CRF range for video codecs."""

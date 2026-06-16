@@ -14,6 +14,11 @@ imageio~=2.31.0
 imageio-ffmpeg~=0.4.8
 scikit-image~=0.22.0
 
+# In-process video codecs (v7 codec pipeline; see
+# src/data/compression_modules.py + AGENTS.md "Codec backends")
+av~=17.0
+pillow-heif~=1.4
+
 # Wavelet transforms for MTKD
 PyWavelets~=1.4.0
 

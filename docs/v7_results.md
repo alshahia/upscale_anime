@@ -280,7 +280,7 @@ machine-readable source of truth.
 
 ---
 
-## 7. Files inventory
+## 7. Files inventory (Phase F: side-by-side comparison harness)
 
 ### Created in this phase
 
@@ -294,3 +294,87 @@ machine-readable source of truth.
 - `results/comparison_v4_epoch100_vs_best/comparison.csv` — v4 epoch 100 vs v4 best (epoch 51) for the PSNR-vs-perception trade-off analysis.
 - `results/comparison_v4_epoch100_vs_best/comparison_summary.json`
 - `results/baseline_bicubic_lowerbound.csv` — bicubic /4 -> x4 lower-bound NR-IQA.
+
+---
+
+## 8. Codec backend replacement (2026-06-14)
+
+The v7 `compression_stage2: [avif, h264, h265, jpeg]` codec list
+previously used `imageio_ffmpeg.write_frames` (subprocess spawn) for
+h264 + h265 and `pillow_heif.register_avif_opener` (which was removed
+in `pillow_heif` 1.4.0) for AVIF. As of 2026-06-14, the codec pipeline
+in `src/data/compression_modules.py` uses **in-process** codec
+libraries for the primary path:
+
+- **h264 + h265**: PyAV (`av >= 17.0`) -- `av.Codec('libx264', 'r')`
+  for the encoder, write into `io.BytesIO` via
+  `av.open(BytesIO, 'w', format='mp4')`, decode via the same PyAV
+  decode pipeline. No subprocess spawn.
+- **AVIF**: `pillow_heif >= 1.4` -- `pillow_heif.register_heif_opener()`
+  (the unified opener in v1.4.0 handles both HEIF and AVIF), then
+  `PIL.Image.save(..., format='AVIF', quality=N)`.
+- **h264/h265 fallback**: `imageio_ffmpeg.write_frames` is still
+  present but used only when `import av` fails. The legacy
+  subprocess path is exercised only on systems missing the `av`
+  package.
+- **Last-resort fallback**: JPEG via OpenCV `cv2.imencode` if all
+  video/AVIF backends are missing. The compression module never
+  raises on a missing backend; it logs a warning and degrades to
+  JPEG so training continues.
+
+Empirical benchmark on Quadro RTX 4000 (2026-06-14,
+`scripts_temp/test_codec_speed.py`):
+
+| Codec   | 32x32 | 64x64 | 128x128 |
+|---------|------:|------:|--------:|
+| AVIF    |  7.04 |  6.74 |   18.87 |
+| h264    | 10.94 | 10.90 |   13.65 |
+| h265    | 45.89 | 47.55 |   56.43 |
+
+For comparison, the previous `imageio_ffmpeg` subprocess path
+measured 0.01-0.07 s/frame *plus* per-call subprocess spawn
+(50-200 ms cold). Net: the codec step in v7 training is now
+~5-10x faster wall-clock.
+
+**Side effects:**
+
+- The libx265 init chatter (~20 lines of `x265 [info]: ...` build
+  info on the first encode) is suppressed by adding
+  `x265-params: log-level=error` to the libx265 encoder options. The
+  trainer log no longer floods with x265 build info.
+- `src/data/compression_modules.py` now emits one
+  `[CompressionPipeline] codecs=... | backends: av=... pillow_heif=...
+  imageio_ffmpeg=...` log line at init, plus per-codec
+  `[AVIFCompression] backend=...` /
+  `[PyAVVideoCompression] backend=...` lines on first use. If
+  `av=True pillow_heif=True` you are on the in-process path; if
+  either is `False` you have fallen back to a slower path.
+- `requirements.txt` adds `av~=17.0` and `pillow-heif~=1.4`.
+- `tests/test_codec_perf.py` adds 11 tests covering roundtrip,
+  pipeline dispatch, graceful fallback (monkeypatched `av` /
+  `pillow_heif` import failures), and a 100 ms/frame speed smoke
+  (200 ms for h265) to catch any regression to the subprocess path.
+
+## 9. Sub-phase: in-process codec pipeline (2026-06-14 follow-up)
+
+### Files added or modified
+
+- `src/data/compression_modules.py` — refactored to use PyAV + pillow-heif
+  in-process; the public API of `CompressionPipeline`,
+  `VideoCodecCompression`, `PyAVVideoCompression`, `AVIFCompression`,
+  `JPEGCompression`, `WebPCompression` is unchanged so the rest of the
+  pipeline (`src/data/degradation_pipeline.py`, etc.) is untouched.
+- `tests/test_codec_perf.py` — 11 new tests (roundtrip, pipeline
+  dispatch, graceful fallback, speed smoke).
+- `requirements.txt` — adds `av~=17.0` and `pillow-heif~=1.4`.
+
+### Verification
+
+- `pytest tests/test_codec_perf.py` — 11/11 pass.
+- `pytest tests/test_apisr_two_stage.py tests/test_codec_perf.py` —
+  21/21 pass (regression: 10 apisr + 11 codec).
+- `pytest tests/ --co` — 787 tests collected (+11 from before).
+- `scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml
+  --dry-run` — passes (validates config + init logs).
+- `scripts/run_v7_smoke.py` — 137 passed, 3 deselected in ~62s
+  (the same as the pre-refactor run; no regressions).

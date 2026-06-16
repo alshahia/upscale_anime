@@ -521,6 +521,68 @@ Training was bottlenecked by loss computation (51% of batch time), not data load
 
 For long v7 runs on 8GB GPUs the loss stack (twin VGG+ResNet perceptual + FDL/DINOv2 + wavelet-guided + discriminator) can dominate per-iter time. Three perf levers are available without touching v7 core code.
 
+### Codec backends (v7 prediction-oriented compression)
+
+The v7 config uses `compression_stage2: [avif, h264, h265, jpeg]` to
+synthesize real-world compression artifacts. The previous
+implementation spawned an `ffmpeg` subprocess for every video-codec
+frame; that path is spawn-bound and slow on Windows. v7 now uses
+**in-process** codec libraries as the primary path:
+
+| Codec | Backend | Speed (RTX 4000, 64x64) | Source |
+|---|---|---:|---|
+| JPEG | OpenCV `cv2.imencode` (in-process) | <1 ms | always available |
+| WebP | PIL `.save(format='WEBP')` (in-process) | ~5 ms | always available |
+| AVIF  | `pillow_heif.register_heif_opener()` + PIL `.save(format='AVIF')` (in-process) | ~7-19 ms | `avif >= 1.4` |
+| h264  | PyAV `av.Codec('libx264', 'r')` + `av.open(BytesIO, 'w', format='mp4')` (in-process) | ~9-14 ms | `av >= 17.0` |
+| h265  | PyAV `av.Codec('libx265', 'r')` (in-process; HEVC intra is intrinsically slow) | ~46-56 ms | `av >= 17.0` |
+| h264/h265 fallback | `imageio_ffmpeg.write_frames` (subprocess) | 10-100 ms | `imageio-ffmpeg` |
+
+**Backend priority order** (set in `src/data/compression_modules.py`):
+
+1. PyAV (`av` package) for h264 + h265 -- in-process, no spawn.
+2. pillow-heif (`pillow_heif` package) for AVIF -- in-process.
+3. `imageio_ffmpeg` subprocess -- only used if both PyAV and pillow-heif
+   are unavailable. This is the legacy path; it works but is slower and
+   produces extra tempfile I/O.
+4. JPEG fallback -- last resort. The compression module never raises
+   on a missing backend; it logs a warning and degrades to JPEG so
+   training continues.
+
+At `CompressionPipeline.__init__` the trainer log gets one
+`[CompressionPipeline] codecs=... | backends: av=... pillow_heif=...
+imageio_ffmpeg=...` line that greps as the single source of truth
+for "which in-process codec is in use right now". Each codec class
+also emits a one-time `[AVIFCompression] backend=...` /
+`[PyAVVideoCompression] backend=...` line on first use.
+
+**If you see codec step taking >100 ms/frame**, the codec has fallen
+back to the ffmpeg subprocess path -- check the `[Compression] backend=...`
+line. Common causes:
+
+- `av` or `pillow_heif` not installed. The init log line will show
+  `av=False` or `pillow_heif=False`.
+- The `av` package was installed but `libx264` / `libx265` is missing
+  in the bundled libav build. Check with
+  `python -c "import av; print('libx264' in av.codecs_available)"`.
+- A custom build of libav that lacks H.264/H.265. The trainer
+  will still train (JPEG fallback) but the prediction-oriented
+  compression will be weaker.
+
+Empirical benchmark on Quadro RTX 4000 (this session, 2026-06-14,
+`scripts_temp/test_codec_speed.py`):
+
+| Codec   | 32x32 | 64x64 | 128x128 |
+|---------|------:|------:|--------:|
+| AVIF    |  7.04 |  6.74 |   18.87 |
+| h264    | 10.94 | 10.90 |   13.65 |
+| h265    | 45.89 | 47.55 |   56.43 |
+
+For comparison, the previous `imageio_ffmpeg` subprocess path
+measured 0.01-0.07 s/frame *plus* per-call subprocess spawn
+(50-200 ms cold). Net: the codec step in v7 training is now
+~5-10x faster wall-clock.
+
 ### Profiling data (Quadro RTX 4000, batch=4, crop=64, full v7 loss stack)
 
 Profiled with `python scripts/profile_gpu.py --config configs/finetune_neosr_span_v7_anime.yaml --batches 3 --device cuda`:
