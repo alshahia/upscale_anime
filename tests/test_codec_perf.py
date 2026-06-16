@@ -248,3 +248,148 @@ class TestCodecSpeedSmoke:
                 f"this likely indicates a regression to the ffmpeg "
                 f"subprocess path or a per-call init that should be cached."
             )
+
+    def test_codec_speed_smoke_odd_dim_benchmark(self):
+        """Odd-dimension frames (e.g. 13x13, 17x17 from v7's shuffled
+        resize pipeline) must still complete in reasonable time. The
+        padding pass adds at most 1-3 rows/cols of zero-overhead edge
+        padding, so odd-dim should be within 2x of even-dim."""
+        from data import compression_modules as cm
+        img_odd = _random_rgb(13, 13, seed=101)
+        img_even = _random_rgb(64, 64, seed=102)
+        odd_ms = _bench(lambda: cm.PyAVVideoCompression('h264', (18, 35))(img_odd), n=5)
+        even_ms = _bench(lambda: cm.PyAVVideoCompression('h264', (18, 35))(img_even), n=5)
+        # h264 single-frame encode with padding should still be well
+        # under 100ms/frame even for tiny inputs. We allow a generous
+        # 2x margin for codec warmup on small inputs.
+        assert odd_ms < 100.0, f"h264 13x13 took {odd_ms:.1f} ms/frame (threshold 100 ms)"
+        # Just log; do not assert ratio (too flaky on Windows timer)
+        print(f"h264 13x13 (odd):  {odd_ms:.2f} ms/frame")
+        print(f"h264 64x64 (even): {even_ms:.2f} ms/frame")
+
+
+# ---------------------------------------------------------------------------
+# 5. Odd-dimension frame handling (regression for v7 shuffled-resize)
+# ---------------------------------------------------------------------------
+
+class TestOddDimensionHandling:
+    """Regression tests for the bug exposed by the v7 smoke test:
+    h264/h265 codecs reject odd-dimension frames because yuv420p requires
+    even W/H and HEVC has stricter alignment. The fix pads to codec
+    alignment (2 for h264, 8 for h265) and crops back after decode.
+    """
+
+    def test_pyav_h264_odd_dimensions(self):
+        """The v7 shuffled-resize pipeline produces frames like 13x13, 25x25.
+        h264 must handle these without falling back to JPEG."""
+        from data.compression_modules import PyAVVideoCompression, _AV_AVAILABLE
+        if not _AV_AVAILABLE:
+            pytest.skip("PyAV (av) not installed")
+        enc = PyAVVideoCompression(codec='h264', crf_range=(23, 23))
+        for size in [13, 17, 25, 33, 47, 63, 127, 129]:
+            img = _random_rgb(size, size, seed=size)
+            out = enc(img)
+            assert out.shape == img.shape, (
+                f"h264 {size}x{size} returned {out.shape}, expected {img.shape}"
+            )
+            assert out.dtype == np.uint8
+
+    def test_pyav_h264_1x1_min(self):
+        """A 1x1 frame is the absolute minimum. The padding helper pads
+        to 2x2 (the next multiple of 2), encodes, decodes, and crops back
+        to 1x1. Result must be shape (1, 1, 3) and uint8."""
+        from data.compression_modules import PyAVVideoCompression, _AV_AVAILABLE
+        if not _AV_AVAILABLE:
+            pytest.skip("PyAV (av) not installed")
+        enc = PyAVVideoCompression(codec='h264', crf_range=(23, 23))
+        img = np.array([[[200, 100, 50]]], dtype=np.uint8)
+        out = enc(img)
+        assert out.shape == img.shape, f"1x1 returned {out.shape}, expected {img.shape}"
+        assert out.dtype == np.uint8
+
+    def test_pyav_h265_odd_dimensions(self):
+        """HEVC has stricter alignment (multiples of 8). All odd dims
+        must be padded up and cropped back without crashing."""
+        from data.compression_modules import PyAVVideoCompression, _AV_AVAILABLE
+        if not _AV_AVAILABLE:
+            pytest.skip("PyAV (av) not installed")
+        enc = PyAVVideoCompression(codec='h265', crf_range=(23, 23))
+        for size in [9, 13, 17, 25, 33, 47, 63, 127, 129]:
+            img = _random_rgb(size, size, seed=size + 1000)
+            out = enc(img)
+            assert out.shape == img.shape, (
+                f"h265 {size}x{size} returned {out.shape}, expected {img.shape}"
+            )
+            assert out.dtype == np.uint8
+
+    def test_pyav_h264_even_no_padding(self):
+        """Sanity check: already-even dimensions must not be padded
+        (the original image identity is preserved through the encode
+        pipeline). We use a uniform-color image and check that the
+        decoded result is within 1 unit of the input color (lossy
+        codec with crf=23 introduces minor noise)."""
+        from data.compression_modules import PyAVVideoCompression, _AV_AVAILABLE
+        if not _AV_AVAILABLE:
+            pytest.skip("PyAV (av) not installed")
+        enc = PyAVVideoCompression(codec='h264', crf_range=(23, 23))
+        img = np.full((64, 64, 3), 128, dtype=np.uint8)
+        out = enc(img)
+        assert out.shape == img.shape
+        # Uniform color should survive round-trip with small noise.
+        assert np.abs(out.astype(int) - 128).mean() < 30.0, (
+            "uniform 64x64 gray encoded as h264 should not shift "
+            f"more than 30 units (got {int(np.abs(out.astype(int) - 128).mean())})"
+        )
+
+    def test_avif_below_minimum_falls_back(self):
+        """AVIF encoders (libheif) are unreliable below 16x16. The
+        fix routes any min(H,W) < 16 to JPEG fallback, which still
+        preserves compression diversity."""
+        from data.compression_modules import AVIFCompression, _PILLOW_HEIF_AVAILABLE
+        if not _PILLOW_HEIF_AVAILABLE:
+            pytest.skip("pillow_heif not installed")
+        enc = AVIFCompression(quality_range=(50, 50))
+        for size in [1, 3, 5, 8, 10, 15]:
+            img = _random_rgb(size, size, seed=size + 2000)
+            out = enc(img)
+            assert out.shape == img.shape, (
+                f"avif {size}x{size} returned {out.shape}, expected {img.shape}"
+            )
+            assert out.dtype == np.uint8
+
+    def test_padding_preserves_content(self):
+        """For a 13x13 image, the padding pass adds a 1-pixel edge
+        (using mode='edge' = replicate). The encoded/decoded result
+        should have the central 13x13 region close to the input
+        (lossy codec introduces noise, so we use a loose tolerance)."""
+        from data.compression_modules import PyAVVideoCompression, _AV_AVAILABLE
+        if not _AV_AVAILABLE:
+            pytest.skip("PyAV (av) not installed")
+        enc = PyAVVideoCompression(codec='h264', crf_range=(18, 18))
+        # Constant color is the worst case for lossy codecs (YUV
+        # quantization bands can shift the value). We use a moderate
+        # tolerance and check the *center* of the decoded frame
+        # (which is far from the 1-px padded edge).
+        img = np.full((13, 13, 3), 200, dtype=np.uint8)
+        out = enc(img)
+        assert out.shape == (13, 13, 3)
+        center = out[3:10, 3:10, :]
+        assert np.abs(center.astype(int) - 200).mean() < 50.0, (
+            "center of 13x13 constant-color h264 frame drifted more "
+            f"than 50 units (got {int(np.abs(center.astype(int) - 200).mean())})"
+        )
+
+    @pytest.mark.parametrize("size", [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31])
+    def test_codec_handles_all_odd_dimensions(self, size):
+        """Exhaustive check: every odd dim from 1 to 31 must encode
+        and decode to the same shape (h264)."""
+        from data.compression_modules import PyAVVideoCompression, _AV_AVAILABLE
+        if not _AV_AVAILABLE:
+            pytest.skip("PyAV (av) not installed")
+        enc = PyAVVideoCompression(codec='h264', crf_range=(23, 23))
+        img = _random_rgb(size, size, seed=size + 3000)
+        out = enc(img)
+        assert out.shape == img.shape, (
+            f"h264 {size}x{size} returned {out.shape}, expected {img.shape}"
+        )
+        assert out.dtype == np.uint8

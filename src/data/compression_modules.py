@@ -71,6 +71,33 @@ def _fallback_jpeg(img: np.ndarray, lo: int = 60, hi: int = 85) -> np.ndarray:
     return cv2.imdecode(encimg, 1)
 
 
+def _pad_to_codec_alignment(
+    img: np.ndarray, codec_alignment: int = 2
+) -> Tuple[np.ndarray, int, int]:
+    """Pad an image to the next multiple of `codec_alignment` on both axes.
+
+    Used to make odd-dimension frames compatible with yuv420p codecs
+    (which require even W/H) and HEVC (which prefers multiples of 8).
+    Returns: (padded_img, pad_h, pad_w) where pad_h and pad_w are
+    the number of rows/cols added (0 if already aligned).
+    Edge padding is used so the codec does not see a sharp black border
+    that would compress unrealistically."""
+    h, w = img.shape[:2]
+    pad_h = (codec_alignment - h % codec_alignment) % codec_alignment
+    pad_w = (codec_alignment - w % codec_alignment) % codec_alignment
+    if pad_h == 0 and pad_w == 0:
+        return img, 0, 0
+    if img.ndim == 3:
+        padded = np.pad(
+            img, ((0, pad_h), (0, pad_w), (0, 0)), mode='edge'
+        )
+    else:
+        padded = np.pad(
+            img, ((0, pad_h), (0, pad_w)), mode='edge'
+        )
+    return padded, pad_h, pad_w
+
+
 class WebPCompression:
     """
     WebP compression simulating web/streaming artifacts.
@@ -121,6 +148,17 @@ class AVIFCompression:
         if not self._available:
             if not self._logged_backend:
                 logger.info("[AVIFCompression] backend=jpeg_fallback")
+                self._logged_backend = True
+            return _fallback_jpeg(
+                img, self.quality_range[0], self.quality_range[1]
+            )
+
+        # AVIF encoders (libheif) are unreliable on very small images.
+        # Below ~16px the encoder produces garbage or refuses. JPEG
+        # fallback preserves compression diversity for these cases.
+        if min(img.shape[:2]) < 16:
+            if not self._logged_backend:
+                logger.info("[AVIFCompression] backend=jpeg_fallback (min size)")
                 self._logged_backend = True
             return _fallback_jpeg(
                 img, self.quality_range[0], self.quality_range[1]
@@ -192,8 +230,17 @@ class PyAVVideoCompression:
     def _compress_single_frame(
         self, img: np.ndarray, codec: str, crf: int
     ) -> np.ndarray:
-        h, w = img.shape[:2]
+        orig_h, orig_w = img.shape[:2]
         codec_name = _CODEC_MAP.get(codec, 'libx264')
+
+        # Pad to the codec's preferred alignment. yuv420p chroma subsampling
+        # requires even W/H; HEVC additionally prefers multiples of 8.
+        # We try alignment=2 first (covers h264) and fall through to 8
+        # for h265 if needed. Edge padding avoids introducing a sharp
+        # black border that would compress unrealistically.
+        alignment = 8 if codec_name == 'libx265' else 2
+        padded, pad_h, pad_w = _pad_to_codec_alignment(img, alignment)
+        h, w = padded.shape[:2]
 
         # Use a fresh in-memory buffer per call to avoid container state
         # pollution between frames. (av.open on a BytesIO requires rewind
@@ -217,7 +264,7 @@ class PyAVVideoCompression:
             else:
                 stream.options = {'qscale': str(crf)}
 
-            frame = av.VideoFrame.from_ndarray(img, format='rgb24')
+            frame = av.VideoFrame.from_ndarray(padded, format='rgb24')
             for packet in stream.encode(frame):
                 container.mux(packet)
             for packet in stream.encode():
@@ -236,6 +283,9 @@ class PyAVVideoCompression:
                     "[PyAVVideoCompression] decoder produced no frames; using JPEG fallback."
                 )
                 return _fallback_jpeg(img)
+            # Crop back to the original size.
+            if pad_h > 0 or pad_w > 0:
+                decoded = decoded[:orig_h, :orig_w, :]
             return decoded
         except Exception as e:
             logger.warning(
