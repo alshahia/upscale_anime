@@ -17,7 +17,7 @@ output:
   results_dir: null
 
 data:
-  batch_size: 128
+  batch_size: 4
   crop_size: 64
   num_workers: 8
   prefetch_factor: 4
@@ -150,7 +150,7 @@ model:
 
 training:
   mode: finetune
-  batch_size: 128
+  batch_size: 4
   persistent_workers: true
   use_tensorboard: true
   # Phase D-EMA: explicit (base.yaml already enables, but make it visible
@@ -160,12 +160,12 @@ training:
   finetune:
     enabled: true
     epochs: 80
-    batch_size: 128
+    batch_size: 4
     lr: 0.00005
     scheduler: cosine
     warmup_epochs: 5
     min_lr: 0.0000001
-    gradient_accumulation_steps: 2
+    gradient_accumulation_steps: 4
     pretrained_path: pretrained/span_pix_pretrain_4x.pth
     freeze_layers: []
     val_interval: 1
