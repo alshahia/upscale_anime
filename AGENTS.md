@@ -521,6 +521,28 @@ Training was bottlenecked by loss computation (51% of batch time), not data load
 
 For long v7 runs on 8GB GPUs the loss stack (twin VGG+ResNet perceptual + FDL/DINOv2 + wavelet-guided + discriminator) can dominate per-iter time. Three perf levers are available without touching v7 core code.
 
+### Profiling data (Quadro RTX 4000, batch=4, crop=64, full v7 loss stack)
+
+Profiled with `python scripts/profile_gpu.py --config configs/finetune_neosr_span_v7_anime.yaml --batches 3 --device cuda`:
+
+| Phase               | Avg (ms) | % of Total |
+|---------------------|---------:|-----------:|
+| Data Loading        |      0.3 |       0.2% |
+| Forward Pass        |     32.3 |      14.3% |
+| Loss Computation    |    102.7 |      45.6% |
+| Backward Pass       |     81.8 |      36.4% |
+| Optimizer Step      |      7.9 |       3.5% |
+| **Total per batch** |  **225.0** |  **100%** |
+
+So at the **v7 config defaults (batch=4)** the trainer runs at **~225ms/iter**, or **~0.5s/iter with gradient accumulation overhead**. An 80-epoch run on RTX 4000 Mobile = ~10-15 hours. The 2-epoch smoke = ~3-5 minutes.
+
+The previous 10.89s/iter that triggered the perf investigation was caused by `data.batch_size: 128` in the smoke config: the DataLoader loaded 128 images per batch but `training.finetune.batch_size: 4` only fed 4 to the GPU. The other 124 images per step were wasted dataloader + x265 codec work. This was fixed in commit `0867e4c` by setting `batch_size: 4` consistently across all three config paths (`data.batch_size`, `training.batch_size`, `training.finetune.batch_size`).
+
+If you see iter times >1s/iter after this fix, check:
+1. `git diff HEAD~1 configs/finetune_neosr_span_v7_anime.yaml` -- make sure `data.batch_size` is 4 not 128
+2. `git diff HEAD~1 configs/finetune_neosr_span_v7_anime_smoke.yaml` -- same check
+3. Run `python scripts/profile_loss_breakdown.py --config configs/finetune_neosr_span_v7_anime.yaml --batches 3 --device cuda` to see per-loss-component timing
+
 ### CLI perf flags (added 2026-06-14)
 
 ```bash
