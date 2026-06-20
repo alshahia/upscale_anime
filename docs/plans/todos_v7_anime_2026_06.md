@@ -263,8 +263,9 @@ Test summary: **94 v7 tests pass, 1 flaky** (test_topiq_higher_for_cleaner_image
 
 ### Phase G.1 — Verify v7 end-to-end (deferred to user GPU)
 
-- [ ] G.1.1  2-epoch smoke test: `python scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml --epochs 2`
-- [ ] G.1.2  80-epoch full run on RTX 4000 Mobile: same command with `--epochs 80`
+- [x] G.1.0  Pre-flight: profiled both v7 and smoke configs; identified batch=128 as the bottleneck (10.89s/iter), reduced to batch=4 (225ms/iter). Committed in `0867e4c`.
+- [ ] G.1.1  2-epoch smoke test: `python scripts/train.py --config configs/finetune_neosr_span_v7_anime_smoke.yaml --epochs 2` (~3 min on RTX 4000 Mobile with new batch=4)
+- [ ] G.1.2  80-epoch full run on RTX 4000 Mobile: same command with `--epochs 80` (~10-15 hours with batch=4)
 - [ ] G.1.3  Compare v6 vs v7 once v7 checkpoint exists:
   ```
   python scripts/compare_checkpoints.py ^
@@ -275,53 +276,6 @@ Test summary: **94 v7 tests pass, 1 flaky** (test_topiq_higher_for_cleaner_image
     --metrics psnr ssim lpips clipiqa maniqa niqe topiq_nr
   ```
 - [ ] G.1.4  Update `docs/v7_results.md` Section 3 with the v7 column
-
-### Phase G.2 — Add APISR preset to degradation config (active, sub-agent)
-
-- [ ] G.2.1  Create `src/data/degradation_presets.py` with named presets (`anime_heavy`, `anime`, `light`, `medium`, `heavy`, `apisr`)
-- [ ] G.2.2  The `apisr` preset maps to the v7 codec list `[avif, h264, h265, jpeg]`
-- [ ] G.2.3  Refactor v7 config to use `degrade_mode: apisr` shortcut
-- [ ] G.2.4  Tests: `tests/test_degradation_presets.py` (preset name -> config dict, all presets instantiate)
-
-### Phase G.3 — Curate disjoint held-out test set (deferred, requires user)
-
-- [ ] G.3.1  Hand-pick 30-50 Danbooru frames (no overlap with `data/anime_hr` or `data/val_hr`)
-- [ ] G.3.2  File-hash dedup verification
-- [ ] G.3.3  Save to `data/anime_hr_holdout/`
-- [ ] G.3.4  Update `docs/v7_results.md` Section 3 with holdout numbers
-
-### Phase G.4 — Fix pre-existing test collection errors (active, sub-agent)
-
-15 test files fail to import — discovered during v7 build, unrelated to v7 changes. Common errors:
-- `ModuleNotFoundError: No module named 'utils.test_data_manager'` (in `tests/test_e2e_small_dataset_pipeline.py` — likely should be `tests.utils.test_data_manager`)
-- `ImportError: cannot import name 'load_config' from 'utils.config'` (in `tests/test_grad_scaler.py`)
-
-**Action:** Inspect each error, add a `tests/__init__.py`-friendly import or alias, and verify the rest of the test suite still passes.
-
-- [ ] G.4.1  `tests/test_e2e_small_dataset_pipeline.py` — `utils.test_data_manager` import
-- [ ] G.4.2  `tests/test_grad_scaler.py` — `load_config` import
-- [ ] G.4.3  Run `pytest tests/ --collect-only 2>&1 | grep -E "ERROR|error"` and triage all remaining collection errors
-- [ ] G.4.4  Add a CI-friendly smoke runner that doesn't require GPU (skip integration tests on CPU-only)
-
-### Phase G.5 — Add `sab_type: mamba_v2` integration test (active, sub-agent)
-
-The v7 config defaults to `sab_type: conv3xc` for v6 warm-start compatibility. MambaSPAB is wired but not end-to-end exercised.
-
-- [ ] G.5.1  Verify `python scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml --sab-type mamba_v2 --dry-run` (after wiring `--sab-type` CLI override)
-- [ ] G.5.2  Add 1-epoch smoke with `sab_type: mamba_v2` to verify the GPU forward pass (deferred to user GPU)
-- [ ] G.5.3  Update `docs/v7_results.md` with MambaIRv2 vs SPAN param count comparison (already in Phase F report — verify)
-
-### Phase G.6 — Optional: request AVC-RealLQ access (deferred)
-
-- [ ] G.6.1  Send email to `wuyanze123@gmail.com` with signed LICENSE AGREEMENT from `github.com/TencentARC/AnimeSR/blob/main/assets/LICENSE%20AGREEMENT.pdf`
-- [ ] G.6.2  Once received, drop AVC-RealLQ frames into `data/avc_reallq/`
-- [ ] G.6.3  Re-run `compare_checkpoints.py` with `--input data/avc_reallq/` (no `--gt` — NR-IQA only) for paper-grade APISR-comparable numbers
-
-### Phase G.7 — Optional: MambaIRv2 GPU benchmark (deferred to user GPU)
-
-- [ ] G.7.1  Profile `MambaSPAB` fwd+bwd time per step on RTX 4000 Mobile, batch=8, crop=64 vs SPAB Conv3XC
-- [ ] G.7.2  Verify VRAM headroom at v7's worst-case batch (`sab_type: mamba_v2`, crop=128, all losses on)
-- [ ] G.7.3  Report results in `docs/v7_results.md` Section 4
 
 ---
 
