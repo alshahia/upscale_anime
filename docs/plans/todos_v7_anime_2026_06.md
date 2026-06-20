@@ -252,10 +252,10 @@ Sub-agent: run baselines and write v7_results.md.
 | Phase D (EMA + NR-IQA) | 22 | 22 | 0 | 0 |
 | Phase E (MambaIRv2) | 16 | 16 | 0 | 0 |
 | Phase F (eval) | 11 | 11 | 0 | 0 |
-| Phase G (post-build follow-ons) | 18 | 0 | 0 | 0 |
-| **Total** | **118** | **100** | **0** | **0** |
+| Phase G (post-build follow-ons) | 18 | 5 | 0 | 0 |
+| **Total** | **118** | **105** | **0** | **0** |
 
-Test summary: **94 v7 tests pass, 1 flaky** (test_topiq_higher_for_cleaner_image — non-deterministic when run after other pyiqa tests; passes in isolation). **87/87 regression tests pass on prior V&V Phases 1-5.**
+Test summary: **191 v7 + Phase G + codec tests pass** (1 flaky, 0 failures). **87/87 regression tests pass on prior V&V Phases 1-5.**
 
 ---
 
