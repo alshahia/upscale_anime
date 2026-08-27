@@ -165,7 +165,16 @@ training:
     scheduler: cosine
     warmup_epochs: 5
     min_lr: 0.0000001
-    gradient_accumulation_steps: 64
+    # gradient_accumulation_steps: 64
+    # Set 2026-08-27: removed effective-batch=4096 over-accumulation. With
+    # batch_size=64 and ~1000 batches/epoch, grad_accum=64 produced only
+    # ~15 optimizer steps/epoch and silently skipped the only step in
+    # small-data smoke configs (63 batches/epoch -> 0 steps). Default
+    # value of 1 (no accumulation) is correct for 4x anime SR; effective
+    # batch is controlled by batch_size directly. See
+    # docs/v7_finetune_root_cause.md for the controlled-experiment
+    # evidence (ckpt delta_norm: 0.0 with grad_accum=64 vs 2.4e-3 with
+    # grad_accum=1 on the same smoke_tiny config).
     pretrained_path: pretrained/span_pix_pretrain_4x.pth
     freeze_layers: []
     val_interval: 1
