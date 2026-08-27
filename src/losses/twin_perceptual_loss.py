@@ -241,11 +241,56 @@ class TwinPerceptualLoss(nn.Module):
 
         return loss / max(loss_count, 1)
 
+    def _extract_vgg_features(self, x: torch.Tensor) -> list:
+        """Run VGG trunk and return list of intermediate features at each requested layer."""
+        feats = []
+        prev = x
+        for layer_name in self.vgg_layers:
+            if layer_name not in self.vgg_extractor:
+                continue
+            prev = self.vgg_extractor[layer_name](prev)
+            feats.append(prev)
+        return feats
+
+    def _extract_resnet_features(self, x: torch.Tensor) -> dict:
+        """Run ResNet trunk and return dict of features at each requested layer."""
+        out = {}
+        prev = self.resnet_extractor['conv1'](x)
+        for layer_name in ['layer1', 'layer2', 'layer3', 'layer4']:
+            if layer_name not in self.resnet_extractor:
+                continue
+            prev = self.resnet_extractor[layer_name](prev)
+            if layer_name in self.resnet_layers:
+                out[layer_name] = prev
+        return out
+
+    def _compare_features(self, pred_list: list, target_list: list) -> torch.Tensor:
+        """Compute mean L1 across matched feature pairs."""
+        loss = 0.0
+        for p, t in zip(pred_list, target_list):
+            loss = loss + self._compute_feature_loss(p, t)
+        return loss / max(len(pred_list), 1)
+
+    def _compare_resnet_features(self, pred_dict: dict, target_dict: dict) -> torch.Tensor:
+        """Compute mean L1 across ResNet layer feature pairs."""
+        loss = 0.0
+        count = 0
+        for layer_name in self.resnet_layers:
+            if layer_name not in pred_dict or layer_name not in target_dict:
+                continue
+            loss = loss + self._compute_feature_loss(pred_dict[layer_name], target_dict[layer_name])
+            count += 1
+        return loss / max(count, 1)
+
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
         Compute balanced twin perceptual loss.
 
         L_per = L_ResNet + delta * L_VGG
+
+        Both VGG and ResNet backbones are frozen (requires_grad=False). The
+        target-side features are constant w.r.t. the generator, so we run
+        them under torch.no_grad() to skip building an autograd graph.
 
         Args:
             pred: Predicted SR image [B, 3, H, W] in [0, 1]
@@ -257,8 +302,15 @@ class TwinPerceptualLoss(nn.Module):
         pred_norm = self.normalize_input(pred)
         target_norm = self.normalize_input(target)
 
-        resnet_loss = self.compute_resnet_loss(pred_norm, target_norm)
-        vgg_loss = self.compute_vgg_loss(pred_norm, target_norm)
+        with torch.no_grad():
+            target_vgg = self._extract_vgg_features(target_norm)
+            target_resnet = self._extract_resnet_features(target_norm)
+
+        pred_vgg = self._extract_vgg_features(pred_norm)
+        pred_resnet = self._extract_resnet_features(pred_norm)
+
+        vgg_loss = self._compare_features(pred_vgg, target_vgg)
+        resnet_loss = self._compare_resnet_features(pred_resnet, target_resnet)
 
         total_loss = self.danbooru_weight * resnet_loss + self.vgg_weight * vgg_loss
 

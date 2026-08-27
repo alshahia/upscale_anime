@@ -5,6 +5,7 @@ Based on ESPAN (CVPRW 2025): Expanded SPAN for Efficient Super-Resolution
 Uses DCT (Discrete Cosine Transform) to separate frequency components and
 applies higher weights to high-frequency regions (edges, textures).
 """
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,9 +48,32 @@ class FrequencyAwareLoss(nn.Module):
         self.mid_freq_weight = mid_freq_weight
         self.low_freq_weight = low_freq_weight
         self.use_high_pass_filter = use_high_pass_filter
-        
+
         # Pre-compute frequency weight mask for DCT coefficients
         self._create_frequency_weight_mask(block_size)
+
+        # Phase 3: pre-compute DCT basis matrix as a registered buffer.
+        # Previously rebuilt on every forward via 64 torch.cos() kernel launches.
+        self.register_buffer('dct_basis', self._build_dct_basis(block_size))
+
+    @staticmethod
+    def _build_dct_basis(block_size: int) -> torch.Tensor:
+        """Build the DCT-II basis matrix of shape [block_size, block_size].
+
+        Built once on CPU using math.cos (cheap) and registered as a buffer
+        so the trainer's .to(device) call moves it alongside model weights.
+        """
+        n = block_size
+        basis = torch.zeros(n, n, dtype=torch.float32)
+        for k in range(n):
+            for i in range(n):
+                val = math.cos(math.pi * (2 * i + 1) * k / (2 * n))
+                if k == 0:
+                    val /= math.sqrt(n)
+                else:
+                    val *= math.sqrt(2.0 / n)
+                basis[k, i] = val
+        return basis
     
     def _create_frequency_weight_mask(self, block_size: int):
         """
@@ -82,40 +106,35 @@ class FrequencyAwareLoss(nn.Module):
     def _dct_2d_block(self, x: torch.Tensor) -> torch.Tensor:
         """
         Apply 2D DCT to 8x8 blocks using matrix multiplication.
-        
+
+        Phase 3: the DCT basis matrix is now a registered buffer (built once
+        in __init__) instead of being rebuilt via 64 separate torch.cos()
+        kernel launches per forward call.
+
         Args:
             x: Input tensor [B, C, H, W] where H,W are multiples of block_size
-        
+
         Returns:
             DCT coefficients [B, C, H, W]
         """
         B, C, H, W = x.shape
         bs = self.block_size
-        
+
         # Reshape into blocks: [B, C, H/bs, bs, W/bs, bs]
         x = x.view(B, C, H // bs, bs, W // bs, bs)
         x = x.permute(0, 1, 2, 4, 3, 5)  # [B, C, n_h, n_w, bs, bs]
-        
-        # Pre-compute DCT basis matrix
-        n = bs
-        dct_basis = torch.zeros(n, n, device=x.device, dtype=x.dtype)
-        for k in range(n):
-            for i in range(n):
-                val = torch.cos(torch.tensor(torch.pi * (2 * i + 1) * k / (2 * n)))
-                if k == 0:
-                    val *= 1.0 / torch.sqrt(torch.tensor(float(n)))
-                else:
-                    val *= torch.sqrt(torch.tensor(2.0 / n))
-                dct_basis[k, i] = val
-        
+
+        # Use pre-computed DCT basis (registered buffer, device/dtype-aware via .to)
+        dct_basis = self.dct_basis.to(device=x.device, dtype=x.dtype)
+
         # Apply DCT: basis @ x @ basis^T
         x = torch.matmul(dct_basis, x)
         x = torch.matmul(x, dct_basis.t())
-        
+
         # Reshape back: [B, C, H, W]
         x = x.permute(0, 1, 2, 4, 3, 5)
         x = x.reshape(B, C, H, W)
-        
+
         return x
     
     def forward(self, sr: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
@@ -151,8 +170,10 @@ class FrequencyAwareLoss(nn.Module):
         dct_error = self._dct_2d_block(error)
         
         # Create weight mask for the full spatial dimensions
-        # Tile the block_size weight mask to match H_padded x W_padded
-        weight_mask = self.weight_mask.to(dct_error.device)
+        # Tile the block_size weight mask to match H_padded x W_padded.
+        # weight_mask is a registered buffer, already moved by .to(device) in
+        # the trainer setup — no per-call .to() needed.
+        weight_mask = self.weight_mask
         n_h = H_padded // bs
         n_w = W_padded // bs
         

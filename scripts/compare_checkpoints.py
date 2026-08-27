@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from models.span import create_neosr_span, create_span_model
 from utils.config import Config
+from inference.tta import tta_forward as _tta_forward
 from utils.metrics import (
     PYIQA_DIRECTION,
     calculate_clipiqa,
@@ -239,6 +240,21 @@ def run_inference(
     return sr
 
 
+def run_inference_tta(
+    model: torch.nn.Module,
+    lr_tensor: torch.Tensor,
+    device: torch.device,
+) -> torch.Tensor:
+    """Run model inference with 8x D4 test-time augmentation ensemble.
+
+    Delegates to `inference.tta.tta_forward`, which averages 8 D4-augmented
+    predictions. The 8x compute cost is acceptable here because this harness
+    is for off-line comparison (not real-time inference).
+    """
+    lr_tensor = lr_tensor.to(device)
+    return _tta_forward(lambda x: run_inference(model, x, device), lr_tensor)
+
+
 def compute_metrics(
     sr_tensor: torch.Tensor,
     metrics: List[str],
@@ -394,7 +410,14 @@ def main():
         '--save-sr', action='store_true',
         help='Save SR outputs as PNGs into <output>/<label>/ (off by default to save disk).',
     )
+    parser.add_argument(
+        '--tta', action='store_true',
+        help='Enable 8x D4 test-time augmentation ensemble (8x inference cost).',
+    )
     args = parser.parse_args()
+
+    if args.tta:
+        print("[TTA] Enabled: 8x D4 flip/rot ensemble (8x inference cost)")
 
     logging.basicConfig(
         level=logging.INFO,
@@ -496,7 +519,10 @@ def main():
         rows[img_path.name] = {}
         for name, (model, label) in models.items():
             try:
-                sr_tensor = run_inference(model, lr_tensor, device)
+                if args.tta:
+                    sr_tensor = run_inference_tta(model, lr_tensor, device)
+                else:
+                    sr_tensor = run_inference(model, lr_tensor, device)
                 sr_for_metrics = postprocess_to_tensor(sr_tensor)
                 metrics_for_ckpt = compute_metrics(
                     sr_for_metrics, args.metrics, gt_tensor=gt_tensor,

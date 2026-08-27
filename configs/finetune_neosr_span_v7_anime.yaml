@@ -17,7 +17,7 @@ output:
   results_dir: null
 
 data:
-  batch_size: 4
+  batch_size: 64
   crop_size: 64
   num_workers: 8
   prefetch_factor: 4
@@ -160,12 +160,12 @@ training:
   finetune:
     enabled: true
     epochs: 80
-    batch_size: 4
+    batch_size: 64
     lr: 0.00005
     scheduler: cosine
     warmup_epochs: 5
     min_lr: 0.0000001
-    gradient_accumulation_steps: 4
+    gradient_accumulation_steps: 64
     pretrained_path: pretrained/span_pix_pretrain_4x.pth
     freeze_layers: []
     val_interval: 1

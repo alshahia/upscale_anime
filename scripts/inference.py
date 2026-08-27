@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from models.span import create_span_model, create_neosr_span
 from utils.config import Config
+from inference.tta import tta_forward as _tta_forward
 
 
 def load_model(checkpoint_path: str, config_path: str = None, device: str = 'cuda', model_type: str = 'span'):
@@ -150,9 +151,14 @@ def main():
                        help='Ground truth image for metrics computation')
     parser.add_argument('--metrics', action='store_true',
                        help='Compute quality metrics (requires --gt for full-ref metrics)')
-    
+    parser.add_argument('--tta', action='store_true',
+                       help='Enable 8x D4 test-time augmentation ensemble (8x inference cost)')
+
     args = parser.parse_args()
-    
+
+    if args.tta:
+        print("[TTA] Enabled: 8x D4 flip/rot ensemble (8x inference cost)")
+
     # Validate inputs
     if not Path(args.checkpoint).exists():
         print(f"Error: Checkpoint not found: {args.checkpoint}")
@@ -183,14 +189,17 @@ def main():
                       if f.suffix.lower() in image_extensions]
         
         print(f"Found {len(image_files)} images to process")
-        
+
         for img_path in tqdm(image_files, desc="Processing"):
             try:
                 # Load
                 lr = preprocess_image(str(img_path), args.scale)
-                
-                # Inference
-                sr = inference(model, lr, device, args.fp16)
+
+                # Inference (optionally TTA-averaged)
+                if args.tta:
+                    sr = _tta_forward(lambda x: inference(model, x, device, args.fp16), lr)
+                else:
+                    sr = inference(model, lr, device, args.fp16)
                 
                 # Save
                 output_img = postprocess_image(sr)
@@ -209,11 +218,14 @@ def main():
         
         # Load
         lr = preprocess_image(str(input_path), args.scale)
-        
+
         # Inference
         import time
         start = time.time()
-        sr = inference(model, lr, device, args.fp16)
+        if args.tta:
+            sr = _tta_forward(lambda x: inference(model, x, device, args.fp16), lr)
+        else:
+            sr = inference(model, lr, device, args.fp16)
         elapsed = time.time() - start
         
         # Save

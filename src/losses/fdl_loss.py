@@ -106,8 +106,13 @@ class FDLLoss(nn.Module):
         pred_norm = self.normalize_input(pred)
         target_norm = self.normalize_input(target)
 
+        # DINOv2 backbone is frozen (requires_grad=False on all params) and the
+        # target-side features are constant w.r.t. the generator. Skip the
+        # autograd graph on the target forward to halve FDL memory + compute.
+        with torch.no_grad():
+            target_feat = self.extract_features(target_norm)
+
         pred_feat = self.extract_features(pred_norm)
-        target_feat = self.extract_features(target_norm)
 
         loss = self.sliced_wasserstein_distance(pred_feat, target_feat, self.num_proj)
 

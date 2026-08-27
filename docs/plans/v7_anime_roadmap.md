@@ -288,6 +288,21 @@ After v7 was committed, 4 follow-on work items were identified. See `docs/plans/
 - Gated dataset (Tencent ARC Lab); send email to `wuyanze123@gmail.com` with signed LICENSE AGREEMENT
 - See `docs/research/NR_IQA_SPEC.md` for the procedure
 
+### Phase G.6 — V8+ survey completed (2026-06-20)
+- [x] G.6.1  Survey of 2024-2026 anime SR literature + practitioner models: `docs/survey_2026/`
+- [x] G.6.2  45 candidates enumerated with effort/risk/expected gain
+- [x] G.6.3  Top 5 deep-dives: TTA, MambaIRv2, souping, VQD-SR, Patch-NCE
+- [x] G.6.4  Master comparison matrix vs v7 self-baseline
+- [x] G.6.5  Tier 1/2/3 ranked recommendations with code snippets
+- [x] G.6.6  AGENTS.md updated with "V8+ Survey" section + projected MANIQA path
+- [ ] G.6.7  User to pick Tier 1 items to ship this weekend (TTA, souping, 3-phase, D-EMA)
+- [ ] G.6.8  User to set up WSL2 Ubuntu for MambaIRv2 smoke test
+- [ ] G.6.9  Curate `data/anime_hr_holdout/` (Phase G.3) for v8 evaluation
+- [ ] G.6.10  Optional: VQD-SR anime codebook (needs AVC-RealLQ per G.5)
+- [ ] G.6.11  Optional: DAT2 / HAT-Lite / RealPLKSR backbone swap (Tier 3)
+
+The MANIQA gap (0.422 -> 0.48) is the priority. Tier 1 + Tier 2 close it with margin (projected 0.532).
+
 ---
 
 ## 10. Branch + Git State

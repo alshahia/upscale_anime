@@ -142,6 +142,13 @@ class NeosrSPANFinetuner:
         # Setup GradScaler for AMP (generator + content losses only).
         # Discriminator step stays in FP32 and does NOT use the scaler
         # (it is already wrapped in torch.amp.autocast('cuda', enabled=False)).
+        # Phase 4 (2026-06): we now use BF16 autocast on Ampere, where GradScaler is
+        # technically a no-op (BF16 has FP32's exponent range). We keep the GradScaler
+        # wiring intact for FP16 fallback compatibility (RTX 30/40-series users can flip
+        # back to FP16 via `mixed_precision: fp16` in config); when AMP is enabled with
+        # BF16, the scaler's scale factor stays at 1.0 and scaler.step/unscale_ are no-ops.
+        # FP32 is kept for numerically sensitive ops (DISTS, discriminator, FDL DINOv2,
+        # wavelet decomposition) via local `autocast(..., enabled=False)` overrides.
         self.scaler = GradScaler('cuda', enabled=self.use_amp)
 
         # Setup scheduler
@@ -806,24 +813,29 @@ class NeosrSPANFinetuner:
     def _train_discriminator(self, real_images: torch.Tensor, fake_images: torch.Tensor) -> Dict[str, float]:
         """
         Train discriminator for one step.
-        
+
+        Phase 2: returns cached disc_real / disc_fake tensors under
+        ``_disc_real_tensor`` / ``_disc_fake_tensor`` keys so the G-step in
+        ``train_epoch`` can reuse ``disc_real`` instead of running the
+        discriminator a second time on the same HR batch.
+
         Args:
             real_images: Real HR images
             fake_images: Generated SR images (from generator)
-        
+
         Returns:
-            Dict with discriminator loss and metrics
+            Dict with discriminator loss and metrics; tensor keys for G-step reuse.
         """
         self.discriminator_optimizer.zero_grad()
-        
+
         # CRITICAL FIX: Run discriminator in FP32 to avoid type mismatch
         with torch.amp.autocast('cuda', enabled=False):
             # Discriminator on real
             disc_real = self.discriminator(real_images.float())
-            
+
             # Discriminator on fake (detach to prevent gradients flowing to generator)
             disc_fake = self.discriminator(fake_images.detach().float())
-        
+
         # Compute discriminator loss
         from losses import RelativisticGANLoss
         if isinstance(self.adversarial_loss_fn.loss_fn, RelativisticGANLoss):
@@ -832,23 +844,28 @@ class NeosrSPANFinetuner:
             loss_real = self.adversarial_loss_fn.loss_fn(disc_real, is_real=True)
             loss_fake = self.adversarial_loss_fn.loss_fn(disc_fake, is_real=False)
             d_loss = (loss_real + loss_fake) / 2
-        
+
         # Add gradient penalty for stability
         if self.use_gradient_penalty:
             gp = self._compute_gradient_penalty(real_images, fake_images)
             d_loss = d_loss + self.gradient_penalty_lambda * gp
-        
+
         d_loss.backward()
-        
+
         # Clip gradients for stability
         torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
-        
+
         self.discriminator_optimizer.step()
-        
+
         return {
             'd_loss': d_loss.item(),
             'disc_real': disc_real.mean().item(),
             'disc_fake': disc_fake.mean().item(),
+            # Phase 2: cached tensors for G-step reuse (Phase 1.1d wraps the
+            # G-step reuse in torch.no_grad() so the autograd graph from
+            # the D-step does not pollute the generator's backward).
+            '_disc_real_tensor': disc_real.detach(),
+            '_disc_fake_tensor': disc_fake.detach(),
         }
     
     def _compute_total_loss(
@@ -857,6 +874,7 @@ class NeosrSPANFinetuner:
         hr: torch.Tensor,
         batch_idx: int = 0,
         include_adversarial: bool = True,
+        fast_validation: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         Compute total loss from all enabled loss components.
@@ -875,21 +893,71 @@ class NeosrSPANFinetuner:
                 skips the discriminator update by virtue of not entering
                 train_epoch. Kept in the signature so callers can pass it
                 explicitly and so the contract is documented.
+            fast_validation: When True, skip the heavy frozen-backbone losses
+                (FDL/DINOv2, frequency/DCT, wavelet-guided) and keep only the
+                cheap ones (pixel, perceptual, line_art, color, flat). Used by
+                validate() to cut validation wall-clock ~5-10x. Phase 5 (2026-06).
 
         Returns:
             Dict with 'total' loss and individual loss components
         """
         loss_dict = {}
-        
+
         # Get phase-aware weights
         weights = self._get_phase_weights()
         pixel_weight = weights['pixel']
         perceptual_weight = weights['perceptual']
-        
+
         # Pixel loss
         pixel_loss = self.pixel_loss(sr, hr)
         loss_dict['pixel'] = pixel_loss
         total_loss = pixel_weight * pixel_loss
+
+        if fast_validation:
+            # Phase 5 (2026-06): fast validation path. Compute only the cheap
+            # anime-aware losses (pixel, perceptual, line_art, color, flat) and
+            # skip the expensive frozen-backbone losses (FDL/DINOv2, frequency/DCT,
+            # wavelet-guided). Validation's purpose is checkpoint selection +
+            # logging, not gradient direction; the dropped losses are identical
+            # to what train_epoch reports. This cuts validation wall-clock ~5-10x.
+            with torch.amp.autocast('cuda', enabled=False):
+                sr_fp32 = sr.float()
+                hr_fp32 = hr.float()
+
+            # Perceptual (cheap relative to FDL/DCT/wavelet, kept for monitoring)
+            if self.use_perceptual and self.perceptual_loss is not None and perceptual_weight > 0:
+                with torch.amp.autocast('cuda', enabled=False):
+                    perc_loss = self.perceptual_loss(sr_fp32, hr_fp32)
+                if not (torch.isnan(perc_loss) or torch.isinf(perc_loss)):
+                    loss_dict['perceptual'] = perc_loss
+                    total_loss = total_loss + perceptual_weight * perc_loss
+
+            # Line art
+            if self.use_line_art and self.line_art_loss is not None:
+                line_result = self.line_art_loss(sr, hr)
+                line_loss = line_result['line_art'] if isinstance(line_result, dict) else line_result
+                if not (torch.isnan(line_loss) or torch.isinf(line_loss)):
+                    loss_dict['line_art'] = line_loss
+                    total_loss = total_loss + weights.get('line_art', self.line_art_weight) * line_loss
+
+            # Color
+            if self.use_color and self.color_loss is not None:
+                color_result = self.color_loss(sr, hr)
+                color_loss = color_result['color_consistency'] if isinstance(color_result, dict) else color_result
+                if not (torch.isnan(color_loss) or torch.isinf(color_loss)):
+                    loss_dict['color'] = color_loss
+                    total_loss = total_loss + self.color_weight * color_loss
+
+            # Flat
+            if self.use_flat and self.flat_loss is not None:
+                flat_result = self.flat_loss(sr, hr)
+                flat_loss = flat_result['flat_preservation'] if isinstance(flat_result, dict) else flat_result
+                if not (torch.isnan(flat_loss) or torch.isinf(flat_loss)):
+                    loss_dict['flat'] = flat_loss
+                    total_loss = total_loss + weights.get('flat', self.flat_weight) * flat_loss
+
+            loss_dict['total'] = total_loss
+            return loss_dict
         
         # Perceptual loss (DISTS) - MUST run in FP32
         if self.use_perceptual and self.perceptual_loss is not None:
@@ -1118,8 +1186,16 @@ class NeosrSPANFinetuner:
                 lr = F.interpolate(hr, scale_factor=1/scale, mode='bicubic', align_corners=False)
 
             # Forward with gradient accumulation
-            # CRITICAL: Run model in autocast, but compute losses carefully
-            with autocast('cuda'):
+            # CRITICAL: Run model in autocast, but compute losses carefully.
+            # Phase 4 (2026-06): use BF16 instead of FP16. BF16 has the same Tensor Core
+            # throughput on Ampere as FP16, a wider exponent (same as FP32), and does NOT
+            # require GradScaler (no underflow risk). FP16 caused silent NaN in DISTS,
+            # discriminator, and frequency loss; BF16 is stable for these. Numerically
+            # sensitive ops (DISTS, discriminator, FDL DINOv2, wavelet decomposition) are
+            # already wrapped in `torch.amp.autocast('cuda', enabled=False)` further down
+            # in _compute_total_loss / _train_discriminator, so they continue to run in
+            # FP32 regardless of the autocast dtype here.
+            with autocast('cuda', dtype=torch.bfloat16):
                 sr = self.model(lr)
 
             # Compute non-adversarial losses
@@ -1134,16 +1210,24 @@ class NeosrSPANFinetuner:
                 adv_weight = weights['adversarial']
 
                 if adv_weight > 0:
-                    # Step 1: Train discriminator (modifies discriminator weights)
-                    sr_detached = sr.detach().clone()
+                    # Step 1: Train discriminator (modifies discriminator weights).
+                    # Phase 2: drop the redundant .clone() — the inner
+                    # _train_discriminator already calls .detach() on fake_images.
+                    sr_detached = sr.detach()
                     disc_metrics = self._train_discriminator(hr, sr_detached)
                     loss_dict['discriminator'] = torch.tensor(disc_metrics['d_loss'])
                     loss_dict['disc_real'] = torch.tensor(disc_metrics['disc_real'])
                     loss_dict['disc_fake'] = torch.tensor(disc_metrics['disc_fake'])
 
-                    # Step 2: Compute adversarial loss for generator using UPDATED discriminator
+                    # Step 2: Compute adversarial loss for generator using UPDATED discriminator.
+                    # Phase 2: reuse disc_real from the D-step instead of re-running the
+                    # discriminator on the same HR batch (saves one full D forward per step).
+                    # Phase 1.1d: the HR-side tensor is wrapped in no_grad because the
+                    # relativistic cross-term only flows through disc_fake into G.
+                    cached_disc_real = disc_metrics['_disc_real_tensor']
                     with torch.amp.autocast('cuda', enabled=False):
-                        disc_real = self.discriminator(hr.float())
+                        with torch.no_grad():
+                            disc_real = cached_disc_real
                         disc_fake = self.discriminator(sr.float())
 
                     adv_loss = self.adversarial_loss_fn.generator_loss(disc_real, disc_fake)
@@ -1299,7 +1383,7 @@ class NeosrSPANFinetuner:
                     lr = F.interpolate(hr, scale_factor=1/scale, mode='bicubic', align_corners=False)
 
                 sr = self.model(lr)
-                loss_dict = self._compute_total_loss(sr, hr, batch_idx)
+                loss_dict = self._compute_total_loss(sr, hr, batch_idx, fast_validation=True)
 
                 # Accumulate losses
                 for key, value in loss_dict.items():

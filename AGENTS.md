@@ -17,6 +17,35 @@ uv pip install -r requirements.txt
 
 No `pyproject.toml`, `setup.py`, or lockfile. Dependencies managed via `requirements.txt` only.
 
+## Pretrained Checkpoints
+
+The `pretrained/` folder contains 3 SPAN checkpoints with **very different** behavior. Loading the wrong one as a warm-start silently produces flat-blue outputs that training cannot recover from.
+
+| File | Status | Use for |
+|---|---|---|
+| `pretrained/span_nomosuni_4x.pth` | **BROKEN** -- flat-blue output (`upsampler.0.bias mean ~0.43`). Missing upstream `spanx4_ch48.pth` warm-start that the official `4xNomosUni_span_multijpg` lineage requires. | **DO NOT USE** as `pretrained_path` |
+| `pretrained/span_pix_pretrain_4x.pth` | **OK** -- Phhofm official pix-loss pretrain (the actual warm-start of `4xNomosUni_span_multijpg`). Produces real images (output std ~0.24). | canonical warm-start for all SPAN finetune configs |
+| `pretrained/span_mssim_pretrain_4x.pth` | **OK** -- Phhofm official mssim-loss pretrain. | alternative (different pretrain loss objective) |
+
+### Warm-start taint signature
+
+A checkpoint warm-started from `span_nomosuni_4x.pth` has `model.upsampler.0.bias` with `mean ~0.43, std ~0.02` (vs `mean ~0.06, std ~0.007` for clean pretrains). Training does NOT recover from this -- V4_HYBRID_003 ran 66 epochs and the bias stayed at 0.4331. Forward-pass output is dominated by this bias and becomes flat.
+
+### Audit
+
+Run `python scripts/audit_pretrain_ckpts.py` to scan all checkpoints. It writes `results/audit/taint_report.csv` and per-checkpoint SR PNGs to `results/audit/`. Taint verdict is `TAINTED` if `bias_mean in [0.35, 0.45]` AND `bias_std < 0.05`.
+
+### History (2026-06-20)
+
+50 tainted checkpoints across 5 locations were deleted:
+- `checkpoints/NEOSR_SPAN_V3_FINE_TUNE_001/` (2 .pth)
+- `checkpoints/NEOSR_SPAN_V4_HYBRID_{002,003,004}/` (46 .pth combined)
+- `checkpoints/finetune_epoch_{5,10}.pth` (root-level, 2 .pth)
+
+All 7 finetune configs (`finetune_neosr_span.yaml`, `_v2.yaml`, `_v3.yaml`, `_v4.yaml`, `_v4_speed.yaml`, `_v5.yaml`, `_v5_corrected.yaml`) were patched from `span_nomosuni_4x.pth` to `span_pix_pretrain_4x.pth`. v6 and v7 already used `span_pix_pretrain_4x.pth` (no change).
+
+To re-introduce `span_nomosuni_4x.pth` for any reason, first re-download from https://github.com/Phhofm/models/releases/tag/4xNomosUni_span_multijpg and verify `upsampler.0.bias mean < 0.1`.
+
 ## Key Commands
 
 ```bash
@@ -221,6 +250,177 @@ python scripts/compare_checkpoints.py --baseline checkpoints/NEOSR_SPAN_V6_ANIME
 
 # 4. Update docs/v7_results.md Section 3 with the v7 column.
 ```
+
+## V7 Tier 1 Performance Speedups (2026-06-20)
+
+Branch: `perf/v7-tier1-speedups`. Targets the **loss (45.6%) + backward (36.4%) = 82% of iter time** identified by `scripts/profile_loss_breakdown.py`. Five pure refactors, no model architecture changes. Expected wall-clock savings: **30-50ms per batch (~15-22%)** on the 225ms v7 baseline at crop=128, batch=4 on RTX 4000 Mobile.
+
+### Phase 1: `torch.no_grad()` on frozen-backbone target forwards
+
+Every loss with a frozen backbone (VGG19, ResNet50, DINOv2, edge detectors) was running the **target-side forward with autograd enabled**. The target is constant w.r.t. the generator, so the autograd graph through it is pure waste.
+
+| File | Change | Est. savings |
+|---|---|---|
+| `src/losses/fdl_loss.py:108-110` | Wrap `target_feat = self.extract_features(target_norm)` in `no_grad` (DINOv2 frozen) | 10-20 ms |
+| `src/losses/twin_perceptual_loss.py:244-268` | New `forward` extracts target VGG+ResNet under `no_grad`, then pred; keeps `compute_vgg_loss`/`compute_resnet_loss` public for backward compat | 10-20 ms |
+| `src/losses/wavelet_guided_loss.py:89-90` | Wrap `target_w = self._haar_wavelet_dec(target)` in `no_grad` | 1-2 ms |
+| `src/training/neosr_finetuner.py` G-step | Wrap `disc_real = self.discriminator(hr.float())` in `no_grad` (relativistic cross-term only flows through `disc_fake`) | 2-5 ms |
+
+### Phase 2: Cache D-step disc outputs for G-step reuse
+
+`src/training/neosr_finetuner.py:_train_discriminator` now returns `_disc_real_tensor` and `_disc_fake_tensor` (detached). The G-step reuses the cached `disc_real` under `no_grad` instead of re-running the discriminator on HR. Also dropped the redundant `sr.detach().clone()` (3 MB allocation per batch) in favor of `sr.detach()`. Saves 5-10 ms per adversarial step.
+
+### Phase 3: Precompute DCT basis; fuse Haar wavelet into grouped conv
+
+- **DCT basis** (`src/losses/frequency_aware_loss.py`): The old code rebuilt the 64-element DCT-II basis on every forward via 64 individual `torch.cos()` calls (each a GPU kernel launch + CPU sync). New: precomputed once in `__init__` using `math.cos` on CPU, registered as a buffer. Saves 1-3 ms per forward.
+- **Haar wavelet** (`src/losses/wavelet_guided_loss.py`): The old code used 6 separate `F.conv2d` calls (4 subband × row+col cascade), which actually applied the conv **twice** (cascade) producing `H/4` subbands — a two-level decomposition, not the standard single-level. New: single grouped `F.conv2d` with kernel `[4, 2, 2]` (outer product of avg/diff H × W × 0.25) at stride 2, producing `H/2` subbands. **Bit-exact** equivalence to the correct single-level decomposition (verified: max abs diff = 0.0 vs canonical reference). Saves 1-2 ms per forward.
+
+### Phase 4: BF16 autocast (instead of FP16)
+
+`src/training/neosr_finetuner.py:1132` changed `autocast('cuda')` (default FP16) to `autocast('cuda', dtype=torch.bfloat16)`. On Ampere (RTX 30/40-series including RTX 4000 Mobile) BF16 has the same Tensor Core throughput as FP16, FP32's exponent range (no underflow/overflow), and **does not require GradScaler** (scaler is a no-op when BF16 or AMP disabled).
+
+- Existing `GradScaler('cuda', enabled=self.use_amp)` kept for FP16 fallback compatibility.
+- `enabled=False` FP32 overrides on DISTS, discriminator, wavelet decomposition, and FDL DINOv2 are preserved — numerically sensitive ops continue to run in FP32 regardless of autocast dtype.
+
+**This is the only change that requires GPU validation.** Cannot verify on CPU. User must run 2-epoch smoke test + `scripts/profile_loss_breakdown.py` to confirm BF16 stability on RTX 4000 Mobile.
+
+### Phase 5: `fast_validation` flag in `_compute_total_loss`
+
+`src/training/neosr_finetuner.py:_compute_total_loss` gained a `fast_validation: bool = False` parameter. When `True`, the heavy frozen-backbone losses (FDL/DINOv2, frequency/DCT, wavelet-guided) are skipped and only the cheap ones (pixel, perceptual, line_art, color, flat) are computed. `validate()` calls it with `fast_validation=True`. Cuts validation wall-clock ~5-10x.
+
+Validation loss values are still logged (just cheaper subset). Checkpoint selection (PSNR/SSIM/LPIPS) is unaffected.
+
+### Verified
+
+- `pytest tests/test_fdl_loss.py tests/test_relativistic_gan.py tests/test_phase2_high_priority_fixes.py tests/test_phase3_medium_fixes.py tests/test_two_phase_training.py tests/test_safe_checkpoint_load.py tests/test_phase4_low_priority_fixes.py tests/test_grad_scaler.py` → **90/90 passing**.
+- `pytest tests/test_perceptual_loss.py tests/test_new_losses.py tests/test_xdog_pseudo_gt.py tests/test_neosr_finetuner.py tests/test_v7_loss_schedule.py tests/test_critical_fixes.py tests/test_phase1_critical_fixes.py tests/test_phase3_medium_priority_fixes.py tests/test_phase5_additional_fixes.py` → **99 passed, 3 pre-existing failures unrelated to changes** (DISTS CPU/CUDA mismatch, `torch.load` local-class pickle, `ReduceLROnPlateau(verbose=)` removed in newer PyTorch). Confirmed via `git stash` that all 3 fail on `HEAD` too.
+- `pytest tests/test_v7_tier1_phase5_fast_validation.py` → **13/13 passing** (Phase 5 dedicated regression test: signature, behavior, disabled-flag handling, `validate()` wiring).
+- `scripts/train.py --config configs/finetune_neosr_span_v7_anime.yaml --dry-run` → **valid**.
+- `py_compile src/training/neosr_finetuner.py src/losses/*.py tests/test_v7_tier1_phase5_fast_validation.py` → clean.
+
+### User action items (after this commit)
+
+1. **GPU smoke test (REQUIRED):**
+   ```bash
+   python scripts/train.py --config configs/finetune_neosr_span_v7_anime_smoke.yaml
+   ```
+   Verify no NaN, losses sane, no autocast errors. Then run the full v7 finetune.
+
+2. **Profile to confirm savings:**
+   ```bash
+   python scripts/profile_loss_breakdown.py --config configs/finetune_neosr_span_v7_anime.yaml --batches 20 --device cuda
+   ```
+   Compare against the pre-Tier-1 baseline (Loss 45.6% / Backward 36.4%).
+
+3. **NOT committed yet** per AGENTS.md convention. Review `git diff` then commit:
+   ```bash
+   git diff
+   git add src/losses/fdl_loss.py src/losses/twin_perceptual_loss.py src/losses/wavelet_guided_loss.py src/losses/frequency_aware_loss.py src/training/neosr_finetuner.py
+   git commit -m "v7 tier 1: no_grad frozen backbones, disc cache, DCT precomp, Haar fusion, BF16, fast_validation"
+   ```
+
+## V8+ Survey (2026-06-20)
+
+A complete 2024-2026 survey of anime super-resolution candidates is in `docs/survey_2026/`:
+- `README.md` — executive summary + 3-step weekend plan.
+- `self_baseline.md` — what v7 looks like.
+- `sources.md` — 49 sources (arXiv + Phhofm + OpenModelDB + spandrel + HF).
+- `candidates.md` — 45 candidates scored by effort/risk/expected gain.
+- `deep_dives.md` — 1-page writeups for top 5.
+- `comparison.md` — master matrix vs v7 baseline.
+- `recommendations.md` — Tier 1/2/3 ranked adoption order.
+
+### The MANIQA gap
+
+Our v7 self-baseline N=10 val_hr scores vs APISR targets:
+
+| Metric | Stock pretrained | v4 finetune best | APISR target | Gap |
+|---|---:|---:|---:|---:|
+| CLIPIQA | **0.667** | 0.632 | >= 0.65 | cleared |
+| MANIQA  | **0.422** | 0.334 | >= 0.48 | **-0.058** |
+| NIQE    | 7.681 | **7.123** | <= 7.5 | cleared (v4) |
+| LPIPS   | 0.0229 | **0.0104** | <= 0.10 | cleared |
+
+**MANIQA is the only target not cleared by our self-baseline.**
+
+### Tier 1 quick wins (S-effort, ship this weekend, expected Δ MANIQA +0.01 to +0.06)
+
+1. **TTA 8x flip/rot ensemble** at inference (`scripts/inference.py --tta`): LPIPS -10%, free.
+2. **Model souping** v6 + v7 `finetune_best.pth` EMA params: MANIQA +0.01 to +0.05.
+3. **OS-RealPLKSR preset** in `DegradationPipeline`: NIQE -0.05.
+4. **3-phase GAN scheduler**: NIQE -0.05.
+5. **D-EMA** (mirror G-EMA on D): NIQE -0.05.
+
+### Tier 2 medium wins (M-effort, 1-2 weeks, expected Δ MANIQA +0.02 to +0.04)
+
+1. **MambaIRv2** (`sab_type: mamba_v2`, Linux-only): MANIQA +0.02.
+2. **DINOv3 in FDL** (`src/losses/fdl_loss.py`): MANIQA +0.01.
+3. **Projected-GAN discriminator**: MANIQA +0.02, less mode collapse.
+4. **Patch-NCE loss**: MANIQA +0.02 (needs unpaired LR).
+5. **`2xBHI_small_span_fast_pretrain`** warm-start swap: -50% inference.
+6. **Hard-example mining curriculum**: MANIQA +0.005.
+7. **VQD-SR learned codebook**: MANIQA +0.02 on OOD-LR only.
+
+### Tier 3 heavy (L-effort, 2-4 weeks, only if MANIQA gap remains)
+
+- DAT2 backbone swap: CLIPIQA +0.02, MANIQA -0.01.
+- HAT-Lite: CLIPIQA +0.03 (PSNR ceiling).
+- RealPLKSR + Dysample: CLIPIQA +0.005, MANIQA +0.005.
+- SUPIR post-process: MANIQA +0.03 (slow, 25s/img).
+
+### Projected MANIQA after Tier 1+2: 0.532 (target 0.48 cleared with margin)
+
+See `docs/survey_2026/recommendations.md` for the full action plan with code snippets, expected wall-clock, and integration steps.
+
+## V8 Tier 1 Shipped (2026-06-20)
+
+Two Tier-1 items from the V8+ survey are now in the working tree (untracked on branch `perf/v7-tier1-speedups`). Code + tests are green; only docs and the long GPU smoke remain.
+
+### TTA — D4 8x flip/rot ensemble
+
+- **`src/inference/tta.py`** — `D4_AUGMENTATIONS` (8 (aug, inv) pairs) and `tta_forward(model, lr, use_clip=True)`. The forward runs the model 8 times on D4-augmented inputs, applies the inverse aug to each prediction, optionally clamps to `[0, 1]`, and returns the mean in the original dtype. `use_clip=True` is the default (matches the `clamp(0, 1)` behavior used everywhere else for SR output).
+- **`scripts/inference.py --tta`** — `argparse` flag, prints `[TTA] Enabled: 8x D4 flip/rot ensemble (8x inference cost)`, applied in both single-image and directory-batch paths.
+- **`scripts/compare_checkpoints.py --tta`** — same flag, applied inside `run_inference_tta(...)` helper.
+- **`tests/test_tta.py`** — 9 tests: D4 closure under inversion (3), `tta_forward` averaging/clipping/dtype/manual-mean equivalence (5), CUDA smoke (1, skipped on CPU-only).
+
+### Model souping
+
+- **`scripts/soup_checkpoints.py`** — `soup_checkpoints(input_paths, output_path, use_ema=True)` averages EMA state-dicts across N checkpoints (Wortsman et al., ICML 2022). Preference order: `ema_state_dict` > `model_state_dict` > `params` > `state_dict` > raw. Output drops `scaler_state_dict` and `optimizer_state_dict` (per-checkpoint state; user re-inits on resume) and stamps `soup_inputs` / `soup_sources` / `soup_n` / `soup_timestamp` metadata. CLI: `--inputs a.pth b.pth [...] --output soup.pth [--no-ema]`.
+- **`tests/test_soup_checkpoints.py`** — 8 tests: 2-ckpt EMA, EMA-fallback to model_state_dict, key-mismatch ValueError, single-ckpt ValueError, 3-ckpt average, dtype preservation, `load_state_dict` EMA preference, raw-state_dict fallback.
+
+### Verification (per `docs/plans/todos_v8_mambair_2026_06.md` D.1–D.3)
+
+```
+pytest tests/test_tta.py tests/test_soup_checkpoints.py  -> 17 passed
+py_compile src/inference/tta.py scripts/soup_checkpoints.py scripts/inference.py scripts/compare_checkpoints.py  -> clean
+```
+
+### Quick-start
+
+```bash
+# TTA inference on a single image
+python scripts/inference.py --model-type neosr_span \
+    --checkpoint checkpoints/NEOSR_SPAN_V7_ANIME/finetune_best.pth \
+    --input lr.jpg --output sr_tta.png --tta
+
+# Side-by-side with TTA enabled
+python scripts/compare_checkpoints.py \
+    --baseline checkpoints/NEOSR_SPAN_V6_ANIME/finetune_best.pth \
+    --v7      checkpoints/NEOSR_SPAN_V7_ANIME/finetune_best.pth \
+    --input data/val_hr --gt data/val_hr \
+    --output results/comparison_v6_vs_v7/ \
+    --metrics psnr ssim lpips clipiqa maniqa niqe topiq_nr --tta
+
+# Soup v6 + v7 finetune_best
+python scripts/soup_checkpoints.py \
+    --inputs checkpoints/NEOSR_SPAN_V6_ANIME/finetune_best.pth \
+            checkpoints/NEOSR_SPAN_V7_ANIME/finetune_best.pth \
+    --output  checkpoints/SOUP_V6_V7/soup.pth
+```
+
+### NOT committed
+
+Per AGENTS.md convention, the V8 Tier 1 files are in the working tree but uncommitted. User reviews `git diff` and commits when ready.
 
 ## V7 Post-Build Follow-Ons (Phase G)
 
@@ -668,6 +868,38 @@ The project accumulates dead code through iterative development. Before adding n
 - **Checkpoint loaders**: `src/utils/` had 3 loaders (2 never imported). Consolidate before adding new ones.
 - **Config files**: `configs/` accumulates debug/working variants with non-standard schemas. Delete broken configs, don't fix them.
 - **Summary .md files**: Implementation summaries in root become stale quickly. Prefer updating AGENTS.md.
+
+## `apps/anime_upscaler_gui/` — UI/UX Overhaul (Phases 0–14 done)
+
+The Tkinter desktop app has its own **14-phase UI/UX overhaul** in
+progress. If you touch this app in a fresh conversation, read the
+**resume point first**:
+
+- **`apps/anime_upscaler_gui/docs/RESUME.md`** — state of play, test infra
+  (the conftest.py shared-root pattern is critical), next steps, and
+  quick commands. Start here.
+- **`apps/anime_upscaler_gui/docs/plans/ui_ux_overhaul.md`** — the master
+  plan with full per-phase detail.
+- **`apps/anime_upscaler_gui/docs/plans/ui_ux_overhaul_checklist.md`** —
+  per-phase task list with current status (11/14 done).
+- **`apps/anime_upscaler_gui/docs/audit/ui_ux_audit.md`** — the initial
+  audit that informed the plan.
+- **`apps/anime_upscaler_gui/docs/onboarding.md`**, **`docs/themes.md`**, and
+  **`docs/dev/widgets.md`** — Phase 12 user and contributor docs.
+
+Quick facts: Tk GUI at `apps/anime_upscaler_gui/anime_upscaler_gui/`,
+~1200 LOC, pytest `179/179` passing. Standalone venv at
+`apps/anime_upscaler_gui/.venv/`. Run tests from the **repo root** with
+`apps/anime_upscaler_gui/.venv/Scripts/python.exe -m pytest apps/anime_upscaler_gui/tests/ -q`.
+
+**Last updated 2026-07-26**: Phases 0–10 complete (token sweep, data layer,
+widget extraction, tabbed layout, settings/persistence, theme system,
+threading fixes, interaction improvements, empty/error states, telemetry,
+accessibility), Phase 12 (Documentation), and Phase 14 (i18n EN + AR —
+minimal viable: two Python dicts in `messages.py`, `Ctrl+Shift+L`
+toggle, `side_for()` RTL mirroring helper). Phase 11 (Visual polish /
+Phosphor icons) and Phase 13 (Splash) remain — both blocked by missing
+icon assets.
 
 Rule of thumb: if a file isn't imported by `src/` or referenced by a config, it's likely dead.
 

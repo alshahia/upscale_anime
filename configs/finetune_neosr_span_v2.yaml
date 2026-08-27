@@ -46,7 +46,7 @@ model:
   upscale: 4
   bias: true
   norm: false
-  pretrained_path: pretrained/span_nomosuni_4x.pth
+  pretrained_path: pretrained/span_pix_pretrain_4x.pth
 
 training:
   mode: finetune
@@ -62,7 +62,7 @@ training:
     warmup_epochs: 5
     min_lr: 0.000001
     gradient_accumulation_steps: 2
-    pretrained_path: pretrained/span_nomosuni_4x.pth
+    pretrained_path: pretrained/span_pix_pretrain_4x.pth
     freeze_layers: []
     val_interval: 5
     save_interval: 10
