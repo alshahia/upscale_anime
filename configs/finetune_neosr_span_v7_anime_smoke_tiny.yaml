@@ -1,0 +1,35 @@
+base: finetune_neosr_span_v7_anime_smoke.yaml
+
+# -------------------------------------------------------------------------
+# TINY SMOKE OVERRIDE (~3 minutes total on RTX 4000 8GB)
+# -------------------------------------------------------------------------
+# Used to confirm V7 Tier 1 perf speedups + V8 Tier 1 (TTA + souping)
+# pipeline end-to-end on local hardware. Reduces anime_faces to 100
+# images via sample_ratio so 2 epochs complete in ~3 min instead of 2h.
+#
+# IMPORTANT: this is a pipeline-validation smoke only. The actual trained
+# quality is unrepresentative. Use configs/finetune_neosr_span_v7_anime.yaml
+# for production finetune on a real GPU.
+# -------------------------------------------------------------------------
+
+output:
+  run_name: NEOSR_SPAN_V7_ANIME_SMOKE_TINY
+
+data:
+  datasets:
+    - name: anime_faces
+      hr_dir: data/anime_faces
+      enabled: true
+      weight: 1.0
+      sample_ratio: 0.002   # 0.002 * 63565 = ~127 images per epoch
+    - name: anime_val
+      hr_dir: data/val_hr
+      enabled: true
+      is_validation: true
+      weight: 1.0
+      sample_ratio: 1.0
+
+training:
+  finetune:
+    epochs: 3
+    save_interval: 1

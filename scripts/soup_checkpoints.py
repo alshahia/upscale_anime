@@ -19,6 +19,12 @@ from pathlib import Path
 
 import torch
 
+# Add src/ to sys.path so we can unpickle our own checkpoints, which embed
+# `utils.config.Config` and other classes. Without this, torch.load with
+# weights_only=False raises ModuleNotFoundError on the embedded class refs.
+# (Same convention as scripts/inference.py and scripts/compare_checkpoints.py.)
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+
 
 def load_state_dict(checkpoint_path: str) -> tuple:
     """Load a checkpoint and pick the best state-dict.
