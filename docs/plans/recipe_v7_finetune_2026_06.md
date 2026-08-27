@@ -1,12 +1,12 @@
 # V7 Anime Finetune Recipe (2026-06)
 
-Status: BLOCKED until weight-update bug (see docs/v7_finetune_weight_update_bug.md) is fixed.
+Status: UNBLOCKED. Root cause identified — see docs/v7_finetune_root_cause.md. Single config change fixes it (gradient_accumulation_steps: 64 -> 1).
 
-This recipe was the user's planned v7 finetune workflow. The training step itself is blocked on a systemic trainer bug (zero weight updates); everything else (V7 Tier 1 perf speedups, V8 Tier 1 TTA+souping) is verified working.
+This recipe was the user's planned v7 finetune workflow. The training bug was a config issue (gradient_accumulation_steps too high for the small batch-per-epoch count), NOT a trainer bug; everything else (V7 Tier 1 perf speedups, V8 Tier 1 TTA+souping) was already verified working.
 
 ## Pre-flight checklist
 
-- [ ] Fix weight-update bug in src/training/neosr_finetuner.py (see docs/v7_finetune_weight_update_bug.md for evidence + diagnostic recipe).
+- [ ] Fix gradient_accumulation_steps in configs/finetune_neosr_span_v7_anime.yaml (line 168). Change `gradient_accumulation_steps: 64` to `1` (or remove the key entirely). See docs/v7_finetune_root_cause.md for evidence.
 - [ ] Confirm fix via: run scripts/train.py with configs/finetune_neosr_span_v7_anime_smoke_tiny.yaml. Ckpts in checkpoints/NEOSR_SPAN_V7_ANIME_SMOKE_TINY/ should have ema_state_dict hash DIFFERENT from 07f84330c2d7779b.
 - [ ] GPU with >=16GB VRAM. RTX 4000 8GB (this machine) is too small for the full B=64 crop=64 config — use a remote GPU.
 
