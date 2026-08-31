@@ -1,0 +1,158 @@
+"""ffmpeg helpers: pipe raw frames, stream-copy cut extraction, duration probe.
+
+Supports NVENC (NVIDIA hardware H.264 encoder) via the `use_nvenc` flag.
+Falls back to libx264 when NVENC is requested but unavailable.
+"""
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Optional
+
+
+# --- NVENC support --------------------------------------------------------
+
+_NVENC_SUPPORTED: Optional[bool] = None  # None = not probed yet
+_NVENC_FALLBACK_WARNED = False
+_NVENC_PROBE_TIMEOUT = 5  # seconds
+
+
+def _detect_nvenc_support() -> bool:
+    """Probe ffmpeg for h264_nvenc. Cached after first call.
+
+    Returns True iff `ffmpeg -hide_banner -encoders` lists 'h264_nvenc'.
+    Returns False if ffmpeg is missing or the probe fails.
+    """
+    global _NVENC_SUPPORTED
+    if _NVENC_SUPPORTED is not None:
+        return _NVENC_SUPPORTED
+    if not ffmpeg_available():
+        _NVENC_SUPPORTED = False
+        return False
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=_NVENC_PROBE_TIMEOUT,
+        )
+        _NVENC_SUPPORTED = "h264_nvenc" in r.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        _NVENC_SUPPORTED = False
+    return _NVENC_SUPPORTED
+
+
+def ffmpeg_available() -> bool:
+    return shutil.which("ffmpeg") is not None
+
+
+def ffprobe_available() -> bool:
+    return shutil.which("ffprobe") is not None
+
+
+def open_encoder(
+    out_path, fps: float, w: int, h: int,
+    crf: int = 18, preset: str = "medium",
+    use_nvenc: bool = False, nvenc_preset: str = "p1", nvenc_qp: int = 18,
+):
+    """Spawn ffmpeg with rawvideo on stdin. Returns the Popen or None (no ffmpeg).
+
+    When `use_nvenc=True` AND `h264_nvenc` is present, uses NVIDIA hardware
+    encoder with constant-QP rate control (`-rc constqp -qp <nvenc_qp>`).
+    Falls back to `libx264` when NVENC is unavailable (warns to stderr once
+    per process).
+    """
+    if not ffmpeg_available():
+        return None
+
+    use_hardware = use_nvenc and _detect_nvenc_support()
+    if use_nvenc and not use_hardware:
+        # warn once per process, then silently fall back to libx264
+        global _NVENC_FALLBACK_WARNED
+        if not _NVENC_FALLBACK_WARNED:
+            print(
+                "[ffmpeg] h264_nvenc requested but not available; "
+                "falling back to libx264.",
+                file=sys.stderr, flush=True,
+            )
+            _NVENC_FALLBACK_WARNED = True
+
+    if use_hardware:
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "bgr24",
+            "-s", f"{w}x{h}", "-r", f"{fps:.3f}",
+            "-i", "pipe:0",
+            "-c:v", "h264_nvenc", "-preset", nvenc_preset,
+            "-rc", "constqp", "-qp", str(nvenc_qp),
+            "-pix_fmt", "yuv420p", str(out_path),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "bgr24",
+            "-s", f"{w}x{h}", "-r", f"{fps:.3f}",
+            "-i", "pipe:0",
+            "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+            "-pix_fmt", "yuv420p", str(out_path),
+        ]
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE)
+
+
+
+def extract_cut(full_path, cut_path, start_seconds: float, cut_seconds: float) -> bool:
+    """Stream-copy a cut window from an already-encoded mp4."""
+    if not ffmpeg_available():
+        return False
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-ss", f"{max(0.0, start_seconds):.3f}",
+        "-i", str(full_path),
+        "-t", f"{max(0.0, cut_seconds):.3f}",
+        "-c", "copy", str(cut_path),
+    ]
+    r = subprocess.run(cmd, capture_output=True)
+    return r.returncode == 0
+
+
+def probe_duration(path) -> Optional[float]:
+    """Return video duration in seconds via ffprobe, or None on failure."""
+    if not ffprobe_available():
+        return None
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return None
+        return float(r.stdout.strip())
+    except (subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def probe_video_meta(path):
+    """Probe width / height / fps / duration via ffprobe. Returns dict or None."""
+    if not ffprobe_available():
+        return None
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-print_format", "json",
+             "-show_streams", "-select_streams", "v:0", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            return None
+        info = json.loads(r.stdout)
+        s = info["streams"][0]
+        fps_s = s.get("r_frame_rate", "24/1")
+        num, den = (fps_s.split("/") + ["1"])[:2]
+        fps = float(num) / float(den) if float(den) else 24.0
+        return {
+            "width": int(s.get("width", 0)),
+            "height": int(s.get("height", 0)),
+            "fps": fps,
+            "duration": float(s.get("duration", 0.0)),
+        }
+    except Exception:
+        return None

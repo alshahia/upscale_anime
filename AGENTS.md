@@ -892,6 +892,8 @@ Quick facts: Tk GUI at `apps/anime_upscaler_gui/anime_upscaler_gui/`,
 `apps/anime_upscaler_gui/.venv/`. Run tests from the **repo root** with
 `apps/anime_upscaler_gui/.venv/Scripts/python.exe -m pytest apps/anime_upscaler_gui/tests/ -q`.
 
+**Last updated 2026-08-31**: Phase 1 (Real-time 4K) shipped. See "Phase 1 (Real-time 4K) Shipped" entry below + `docs/rfdn_realtime_report.md` Section 10.
+
 **Last updated 2026-07-26**: Phases 0–10 complete (token sweep, data layer,
 widget extraction, tabbed layout, settings/persistence, theme system,
 threading fixes, interaction improvements, empty/error states, telemetry,
@@ -900,6 +902,51 @@ minimal viable: two Python dicts in `messages.py`, `Ctrl+Shift+L`
 toggle, `side_for()` RTL mirroring helper). Phase 11 (Visual polish /
 Phosphor icons) and Phase 13 (Splash) remain — both blocked by missing
 icon assets.
+
+## Phase 1 (Real-time 4K) Shipped (2026-08-31)
+
+Phase 1 of the `docs/plans/realtime_4k_plan.md` plan (B + C + NVENC) is in the working tree. Phase 1.B (TensorRT engine) and Phase 1.N (NVENC encoder) are production-ready; Phase 1.C (batching) is code-complete but the batched-TensorRT path has a known stream-sync bug (deferred — see docs).
+
+### Shipped
+
+- **Phase 1.B — TensorRT engine for RFDN student**
+  - Per-shape per-batch disk-persisted engine cache (`%APPDATA%/anime_upscaler_gui/cache/trt/`, 1 GB LRU cap). Engines built on first run, reused thereafter.
+  - TRT 11.2.1.2 backend via `_TrtBackend` with multi-stream `wait_stream` synchronization.
+  - 2.37× inference speedup over PyTorch FP16 (Phase 1.B bench).
+  - Files: `trt_engine.py` (new, 10 KB), `pipeline.py` (extended), `settings.py` + `widgets/settings_panel.py` (TRT checkbox).
+- **Phase 1.N — NVENC hardware encoder**
+  - `h264_nvenc -preset p1 -rc constqp -qp 18` path with auto-fallback to libx264 when NVENC unavailable.
+  - 26.5% CPU at 4K encode vs 42.5% for libx264 (Phase 1.N measurement).
+  - Files: `ffmpeg.py` (extended, 88 → 158 lines), `settings.py`, `settings_panel.py` (NVENC checkbox + preset combobox), `pipeline.py` (`_RunJob` threaded), `app.py` (`_enqueue_next` populates fields).
+- **Phase 1.C — Batching** (code-complete, batched-TensorRT path DEFERRED)
+  - `_process_video_batch` + `_to_tensor_batch` + `_tensor_to_bgr_batch` helpers; `_PinnedPool` extended for 4D (N, 3, H, W) input + (N, H, W, 3) output buffers.
+  - PyTorch batched path works (1.11–1.16× speedup); TensorRT batched path needs stream-sync fix (per-call `torch.cuda.synchronize` works but kills async perf; CUDA graphs are the proper fix).
+  - E2E measurement shows b4 is SLOWER than b1 on RTX 4000 for this model — batching deferred in practice; the per-frame path (b=1) is the production path.
+  - Phase 1.C also exposed two latent bugs in the existing batched call site, fixed: `writer = None` default + pre-bound ref lists.
+
+### Measured end-to-end fps (10.2 s 854x480 → 3416x1920)
+
+| Config | fps mean | fps peak | infer ms |
+|---|---:|---:|---:|
+| **trt_b1_nvenc (production)** | **18.80** | **20.52** | 23.81 |
+| trt_b4_nvenc | 16.82 | 19.11 | 104.00 |
+| pt_b1_nvenc | 10.02 | 11.33 | 83.44 |
+| pt_b4_nvenc | 9.01 | 10.77 | 262.87 |
+| pt_b1_libx (baseline) | 10.18 | 10.86 | 74.72 |
+
+### Goal assessment
+
+- Inference ≥ 25 fps @ 4K: **PASS** (31.4 fps @ 4K, Phase 1.B bench).
+- End-to-end ≥ 25 fps @ 4K: **PARTIAL** (18.80 / 20.52 fps — ~75% of target; 13 ms/frame short, requires CUDA graphs or NVDEC, Phase 2 territory).
+- TRT ≥ 2× speedup: **PASS** (1.87× end-to-end, 2.37× inference only).
+- NVENC CPU < 30%: **PASS** (26.5% vs 42.5%).
+- Engine cache survives restart: **PASS** (rebuild on missing, reuse on present).
+- Batching ≥ 3×: **DEFERRED** (RFDN too small; b4 is 11% slower than b1).
+
+### Full report
+
+See `docs/rfdn_realtime_report.md` Section 10 for the full Phase 1 E2E verification with all measurements, files-changed inventory, and Phase 2 candidates to close the remaining gap to 25 fps end-to-end.
+
 
 Rule of thumb: if a file isn't imported by `src/` or referenced by a config, it's likely dead.
 
