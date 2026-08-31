@@ -418,7 +418,7 @@ class _PyTorchBackend:
 class _OnnxBackend:
     """Optional onnxruntime-gpu backend; auto-exports the .onnx if missing."""
 
-    def __init__(self, onnx_path: Path, kind: str, device, fp16: bool):
+    def __init__(self, onnx_path: Path, kind: str, device, fp16: bool, model=None):
         if not _HAS_ORT:
             raise RuntimeError("onnxruntime not installed")
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -429,6 +429,9 @@ class _OnnxBackend:
         self.fp16 = fp16
         self.np_dtype = np.float16 if fp16 else np.float32
         self.device = device
+        # Phase 2 (Real-time 4K): the cascade helper inspects backend.model.scale;
+        # stash it here so ONNX behaves the same as PyTorch / TRT.
+        self.model = model
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():

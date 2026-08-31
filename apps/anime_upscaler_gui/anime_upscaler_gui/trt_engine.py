@@ -215,6 +215,10 @@ class _TrtBackend:
         # 2x RFDN student (cascade 2x+2x) and a 4x RFDN student produce
         # differently-sized SR outputs. Defaults to 4 if the model has no
         # explicit scale attr (e.g. SRVGG/SPAN/ERANet always 4x or 2x).
+        # Also expose the model itself for the cascade helper, which reads
+        # model.scale from the *current* backend (TRT, ONNX, PyTorch all
+        # need to behave the same here).
+        self.model = model
         self._scale = int(getattr(model, "scale",
                                   getattr(model, "upscale", 4)) or 4)
         self._cache = None
