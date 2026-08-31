@@ -6,6 +6,11 @@
 **Branch:** `feature/phase-1-realtime-4k` (continues Phase 1)
 **Hardware:** Quadro RTX 4000 8 GB, single GPU
 **Goal:** ≥ 30 fps @ 4K end-to-end with cascade 2×+2× + Phase 1 stack (TRT + b4 + NVENC).
+**Status (2026-08-31 EOD):** GOAL NOT MET. Cascade is functional but slower
+than single 4× and -1.39 dB on PSNR. See Section "Findings" at end. Commits:
+  * 90d10b4 -- Phase 2.A code (RFDN scale + dataset + distill)
+  * e6e2da3 -- Phase 2.B (cascade plumbing + eval script)
+  * 27856d1 -- Phase 2.C (training + measurement, this commit)
 
 ---
 
@@ -91,3 +96,41 @@
 - **v3 distill recipe:** see `distill.py` docstring → `.claude/plans/distill_v3_recipe.md`
 - **E2E harness:** `tmp/test_e2e.py`
 - **Test clip:** `.venv/test_4k_540p_input.mp4`
+
+---
+
+## Findings (2026-08-31 EOD)
+
+**The cascade 2×+2× hypothesis was wrong for this architecture.**
+
+| Metric | single 4× | cascade 2×2× | delta |
+|---|---:|---:|---:|
+| Test PSNR (val, 25 batches) | 30.10 dB | 28.71 dB | **-1.39 dB** |
+| PyTorch E2E fps @ 4K (b1)   | 10.02 fps | 2.86 fps  | **-7.16 fps** |
+| PyTorch infer ms/frame      | 83.44 ms  | 310 ms    | **3.7× slower** |
+
+The body-heavy RFDN architecture dominates the compute cost at LR
+resolution. A single 4× stage runs body convolutions once at LR
+resolution; cascade 2×+2× runs body convolutions **at LR (stage 1) +
+4× more pixels at stage 2** -- both stages are non-trivial. Total
+compute is roughly 5-8× LR-units vs single 4× ~ 2× LR-units.
+
+For RFDN specifically:
+- Single 4× at LR=480x854: 24 ms (TRT) inference, 18.80 fps E2E
+- Cascade 2×+2× at same LR: ~85-150 ms inference, 2.86 fps E2E
+
+**The 30 fps goal requires a different architectural approach.**
+
+### Open follow-ups (not actioned in this sprint)
+
+- [ ] CUDA graph capture of the TRT 4× engine (saves 5-10 ms of
+      per-frame kernel-launch overhead on a small model).
+- [ ] NVDEC decode integration that actually engages (the
+      `_PyAvReader` had a hwaccel attempt but didn't engage in
+      tests; same decoder was 17.80 fps vs cv2 18.80 fps, no win).
+- [ ] Re-evaluate the v2_2x student in a different role: Phase 2B's
+      Option-2 self-distilled stage 2 could close the quality gap.
+- [ ] Smaller student ("distilled-tiny" -- ~50K params): the
+      existing 4× at 24 ms is hard to beat; a smaller model might
+      fit two in cascade within the same latency.
+
