@@ -51,6 +51,35 @@ except Exception:
 
 
 # ============================================================================ #
+# Cascade mode (Phase 2.A)
+# ============================================================================ #
+# A 2x student (`model.scale == 2`) applied twice yields the same final
+# resolution as a single 4x model but with two smaller/cheaper model passes.
+# This is the cascade 2x + 2x path: total upscale = 4x, but inference is
+# roughly 1.5-2x faster end-to-end than a single 4x model at 4K input.
+# The 2x and 4x code paths stay uniform: `_cascade_count()` decides how many
+# times to invoke the backend, given the model that's loaded. Same `kind`
+# field ('rfdn_student') -- the only thing that varies is the weights.
+def _cascade_count(model) -> int:
+    """How many times to invoke `model()` to reach a 4x output.
+
+    * 4x model -> 1 call (current behavior).
+    * 2x model -> 2 calls (cascade 2x+2x).
+    * Other scales are passed through unchanged (best-effort).
+    """
+    s = getattr(model, "scale", getattr(model, "upscale", 4))
+    try:
+        s = int(s)
+    except (TypeError, ValueError):
+        s = 4
+    if s >= 4:
+        return 1
+    # 4 / 2 = 2 cascades; 4 / 3 ~= 1 (3x model single-shot).
+    n = max(1, round(4 / s))
+    return int(n)
+
+
+# ============================================================================ #
 # Job + event dataclasses
 # ============================================================================ #
 @dataclass
@@ -98,6 +127,10 @@ class _RunJob:
     use_nvenc: bool = True
     nvenc_preset: str = "p1"   # p1 = fastest, p4 = balanced, p7 = best (we expose p1..p4)
     nvenc_qp: int = 18         # constant-QP target (lower = better quality)
+    # Phase 2 (Real-time 4K): Cascade mode. None means "auto from model scale":
+    # 2x model -> cascade 2x2x (apply twice); 4x model -> single shot. Set to
+    # an explicit integer to force a specific cascade depth.
+    cascade_mode: Optional[int] = None
 
 
 @dataclass
@@ -506,10 +539,15 @@ class _PipelineWorker(threading.Thread):
                 torch.cuda.synchronize()
             t0 = time.perf_counter()
             with torch.no_grad():
-                if job.tta:
-                    y, _n_aug, _names = _tta_forward(backend.model, x)
-                else:
-                    y = backend(x)
+                # Cascade: 2x model applied twice -> 4x; 4x model once.
+                n_cascade = (job.cascade_mode if job.cascade_mode is not None
+                             else _cascade_count(backend.model))
+                y = x
+                for _ in range(n_cascade):
+                    if job.tta:
+                        y, _n_aug, _names = _tta_forward(backend.model, y)
+                    else:
+                        y = backend(y)
             if device.type == "cuda":
                 torch.cuda.synchronize()
             dt_ms = (time.perf_counter() - t0) * 1000.0
@@ -671,10 +709,15 @@ class _PipelineWorker(threading.Thread):
                         torch.cuda.synchronize()
                     t0 = time.perf_counter()
                     with torch.no_grad():
-                        if job.tta:
-                            y, _n_aug, _names = _tta_forward(backend.model, x)
-                        else:
-                            y = backend(x)
+                        # Cascade: 2x model applied twice -> 4x; 4x model once.
+                        n_cascade = (job.cascade_mode if job.cascade_mode is not None
+                                     else _cascade_count(backend.model))
+                        y = x
+                        for _ in range(n_cascade):
+                            if job.tta:
+                                y, _n_aug, _names = _tta_forward(backend.model, y)
+                            else:
+                                y = backend(y)
                     if device.type == "cuda":
                         torch.cuda.synchronize()
                     dt_ms = (time.perf_counter() - t0) * 1000.0
@@ -801,8 +844,13 @@ class _PipelineWorker(threading.Thread):
                 torch.cuda.synchronize()
             t0 = time.perf_counter()
             with torch.no_grad():
-                # TTA already excluded by use_batch gate.
-                y = backend(x)  # (N, 3, H*4, W*4)
+                # TTA already excluded by use_batch gate. Cascade: 2x model
+                # applied twice -> 4x; 4x model once (single shot).
+                n_cascade = (job.cascade_mode if job.cascade_mode is not None
+                             else _cascade_count(backend.model))
+                y = x
+                for _ in range(n_cascade):
+                    y = backend(y)  # grows by `scale` per iteration
             if device.type == "cuda":
                 torch.cuda.synchronize()
             dt_ms = (time.perf_counter() - t0) * 1000.0
@@ -856,7 +904,12 @@ class _PipelineWorker(threading.Thread):
             x = _to_tensor(rgb_in, device, job.fp16, fp16_pin=False, pinned_in=pinned_in)
             try:
                 with torch.no_grad():
-                    y = backend(x)
+                    # Cascade: 2x model applied twice -> 4x; 4x model once.
+                    n_cascade = (job.cascade_mode if job.cascade_mode is not None
+                                 else _cascade_count(backend.model))
+                    y = x
+                    for _ in range(n_cascade):
+                        y = backend(y)
                 if job.fp16:
                     y = y.float()
             except Exception as e:

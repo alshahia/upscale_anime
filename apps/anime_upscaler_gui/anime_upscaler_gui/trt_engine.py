@@ -211,6 +211,12 @@ class _TrtBackend:
         self.batch_size = int(batch_size)
         if self.batch_size < 1:
             raise RuntimeError(f"TensorRT batch_size must be >= 1, got {batch_size}")
+        # Phase 2 (Real-time 4K): output scale comes from the model so a
+        # 2x RFDN student (cascade 2x+2x) and a 4x RFDN student produce
+        # differently-sized SR outputs. Defaults to 4 if the model has no
+        # explicit scale attr (e.g. SRVGG/SPAN/ERANet always 4x or 2x).
+        self._scale = int(getattr(model, "scale",
+                                  getattr(model, "upscale", 4)) or 4)
         self._cache = None
         self._onnx_path = None
         if not _HAS_TRT:
@@ -234,7 +240,7 @@ class _TrtBackend:
         b, c, h, w = x.shape
         assert c == 3, "TRT backend expects 3-channel input, got " + str(c)
         engine, exec_ctx, stream = self._cache.get(b, h, w)
-        out_h, out_w = h * 4, w * 4
+        out_h, out_w = h * self._scale, w * self._scale
         y = torch.empty(b, 3, out_h, out_w, device=x.device, dtype=x.dtype)
         exec_ctx.set_input_shape("lr", (b, c, h, w))
         exec_ctx.set_tensor_address("lr", x.data_ptr())

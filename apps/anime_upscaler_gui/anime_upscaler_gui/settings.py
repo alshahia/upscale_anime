@@ -94,6 +94,10 @@ class _Defaults(FormState):
     use_nvenc: bool = True
     nvenc_preset: str = "p1"
     nvenc_qp: int = 18         # constant-QP target; lower = better quality, larger file
+    # Phase 2 (Real-time 4K): Cascade depth. None = auto from the loaded model's
+    # scale (2x model -> cascade 2x+2x = 4 calls; 4x model -> single shot).
+    # Set to an explicit positive int to force a depth (advanced / debugging).
+    cascade_mode: Optional[int] = None
     # Model
     last_model: str = ""
     # Queue

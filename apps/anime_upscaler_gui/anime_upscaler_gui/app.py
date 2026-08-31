@@ -579,6 +579,11 @@ class UpscaleGUI(_TK_BASE):
                     use_nvenc=bool(sp.use_nvenc_var.get()),
                     nvenc_preset=str(sp.nvenc_preset_var.get()),
                     nvenc_qp=int(self.settings.data.nvenc_qp),
+                    # Phase 2 (Real-time 4K): auto from model scale (None = auto;
+                    # 2x -> cascade 2x2x, 4x -> single shot). Settings doesn't
+                    # expose this yet (advanced); power users can edit settings
+                    # JSON manually to force a depth.
+                    cascade_mode=self.settings.data.cascade_mode,
                     cut_start_seconds=float(j.cut_start),
                     cut_end_seconds=float(j.cut_end),
                     on_frame_error=lambda idx, msg: self._wait_resume_action(j.id, idx, msg),
@@ -802,6 +807,7 @@ class UpscaleGUI(_TK_BASE):
         s.use_nvenc = bool(sp.use_nvenc_var.get())
         s.nvenc_preset = sp.nvenc_preset_var.get()
         s.nvenc_qp = int(getattr(s, "nvenc_qp", 18))  # no GUI yet; persist default
+        s.cascade_mode = getattr(s, "cascade_mode", None)  # None=auto-from-model-scale
         sel = self.model_panel.model_dropdown.get()
         if sel:
             s.last_model = sel.split()[0]
