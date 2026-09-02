@@ -173,13 +173,24 @@ def _adv_lambda(epoch: int, peak: float) -> float:
 def _shortcut_weight(epoch: int, mode: str) -> float:
     """Phase 3 bicubic residual shortcut anneal (handoff A.4).
 
-    mode='1to0': ep 1 -> 1.0, ep 5 -> 0.0 (linear); ep 6+ -> 0.0.
-    mode='off': always 1.0 (legacy behavior).
+    mode='1to0':      ep 1 -> 1.0, ep 5 -> 0.0 (linear); ep 6+ -> 0.0.
+                      Designed for FROM-SCRATCH runs (handoff B.3 smoke OK).
+    mode='1to0slow':  ep 1 -> 1.0, ep 15 -> 0.0 (linear); ep 16+ -> 0.0.
+                      Designed for WARM-START runs: the v1 student was
+                      trained with shortcut=1.0 throughout, so a 5-epoch
+                      anneal causes mode collapse (Phase C.3 halt observed
+                      in run on 2026-09-02: PSNR 29.57 -> 5.41 over 5 epochs).
+                      A 15-epoch anneal gives the warm-started student
+                      enough time to scale its delta-prediction up to a
+                      full SR signal.
+    mode='off':       always 1.0 (legacy behavior).
     """
     if mode == "off":
         return 1.0
     if mode == "1to0":
         return max(0.0, 1.0 - (epoch - 1) / 4.0)
+    if mode == "1to0slow":
+        return max(0.0, 1.0 - (epoch - 1) / 14.0)
     raise ValueError(f"unknown shortcut-anneal mode: {mode!r}")
 
 
@@ -260,7 +271,7 @@ def main():
                     help="teacher name (Phase 3 default animevideov3; ")
     ap.add_argument("--lambda-adv", type=float, default=0.001,
                     help="peak adversarial weight (Phase 3 handoff A.4). ")
-    ap.add_argument("--shortcut-anneal", choices=["off", "1to0"], default="off",
+    ap.add_argument("--shortcut-anneal", choices=["off", "1to0", "1to0slow"], default="off",
                     help="bicubic residual shortcut anneal schedule (Phase 3 A.4). ")
     ap.add_argument("--no-ema", action="store_true",
                     help="disable EMA shadow (Phase 3 ablation only).")
@@ -273,6 +284,10 @@ def main():
                     help="val minibatches per quick epoch-end eval")
     ap.add_argument("--resume", default=None,
                     help="path to student_last.pt/student_best.pt to continue training from")
+    ap.add_argument("--fresh-epoch", action="store_true",
+                    help="when --resume is set, ignore the ckpt's epoch counter "
+                         "and start at epoch 1. Use for warm-start from v1: "
+                         "load weights but reset the training schedule.")
     ap.add_argument("--smoke", action="store_true",
                     help="tiny subset + 2 epochs: verify the whole loop runs")
     ap.add_argument("--degradation", default="apsisr_v1",
@@ -411,10 +426,17 @@ def main():
         # Phase 3: also restore D state if present and D was rebuilt.
         if D is not None and rs.get("D") is not None:
             D.load_state_dict(rs["D"])
-        resume_from = rs["epoch"] + 1
-        best_psnr = rs["val_psnr"]
-        print("[resume] from epoch", rs["epoch"], "at", args.resume,
-              "val_psnr %.2f dB" % best_psnr)
+        if args.fresh_epoch:
+            # Warm-start semantics: load weights but reset the training schedule.
+            resume_from = 1
+            best_psnr = -1.0
+            print("[resume] warm-start from", args.resume,
+                  "-> student weights loaded, epoch counter reset to 1")
+        else:
+            resume_from = rs["epoch"] + 1
+            best_psnr = rs["val_psnr"]
+            print("[resume] from epoch", rs["epoch"], "at", args.resume,
+                  "val_psnr %.2f dB" % best_psnr)
     # Phase 2: construct EMA shadow AFTER --resume so it seeds from the loaded
     # weights (not from RFDN()'s random init). Phase 3 handoff A.4: --no-ema
     # disables the shadow entirely (ablation path).
@@ -714,19 +736,27 @@ def main():
                 "lambda_adv": _adv_lambda(epoch, args.lambda_adv),
                 "seconds": round(dt, 1),
             }, f, indent=2)
-        # Rotate: keep last 5 epoch_N.pt on disk; archive older.
-        epoch_ckpts = sorted(out_dir.glob("epoch_[0-9]*.pt"))
-        if len(epoch_ckpts) > 5:
+        # Rotate: keep last 5 epoch_N.pt on disk; archive older. Sort by
+        # NUMERIC epoch (not alphabetical) so ep 9 wins over ep 30 with the
+        # broken string sort (which kept only ep 8/9 in 2026-09-02 run).
+        def _epoch_num(p):
+            # Extract integer epoch from filename epoch_N[_ema].pt
+            try:
+                return int(p.stem.split("_")[1])
+            except (IndexError, ValueError):
+                return -1
+        epoch_ckpts = sorted(out_dir.glob("epoch_*.pt"),
+                             key=_epoch_num)
+        # Unique epoch numbers in chronological order
+        epoch_nums = sorted({_epoch_num(p) for p in epoch_ckpts if _epoch_num(p) >= 0})
+        if len(epoch_nums) > 5:
             archive = out_dir / "archive"
             archive.mkdir(exist_ok=True)
-            for old in epoch_ckpts[:-5]:
-                shutil.move(str(old), str(archive / old.name))
-                ema_old = old.with_name(old.stem + "_ema.pt")
-                if ema_old.exists():
-                    shutil.move(str(ema_old), str(archive / ema_old.name))
-                json_old = old.with_name(old.stem + "_metrics.json")
-                if json_old.exists():
-                    shutil.move(str(json_old), str(archive / json_old.name))
+            for old_ep in epoch_nums[:-5]:
+                for suffix in (".pt", "_ema.pt", "_metrics.json"):
+                    f = out_dir / f"epoch_{old_ep}{suffix}"
+                    if f.exists():
+                        shutil.move(str(f), str(archive / f.name))
 
     # ---- final held-out evaluation ----
     best = torch.load(out_dir / "student_best.pt", map_location=device,
