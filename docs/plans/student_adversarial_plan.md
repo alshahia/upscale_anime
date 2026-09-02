@@ -253,6 +253,7 @@ Where:
   - D step: 1 per G step (no D pre-training; relies on the warm-up).
   - EMA: shadow update every step, decay=0.999; eval/ckpt from EMA.
   - **Checkpoint every epoch** to runs/distill_v3_4x/epoch_N.pt (N=1..30). Never overwrite; rotate. Keep last 5 epochs on disk to recover from a late-training spike.
+  - **Checkpoint every epoch** to runs/distill_v3_4x/epoch_N.pt (N=1..30). Never overwrite; rotate. Keep last 5 epochs on disk to recover from a late-training spike.
 
 ### 6e. Per-epoch eval gate (must pass to continue training)
 
