@@ -252,6 +252,7 @@ Where:
     ep 21-30 -> 0.01
   - D step: 1 per G step (no D pre-training; relies on the warm-up).
   - EMA: shadow update every step, decay=0.999; eval/ckpt from EMA.
+  - **Checkpoint every epoch** to runs/distill_v3_4x/epoch_N.pt (N=1..30). Never overwrite; rotate. Keep last 5 epochs on disk to recover from a late-training spike.
 
 ### 6e. Per-epoch eval gate (must pass to continue training)
 
@@ -342,6 +343,14 @@ Where:
 
 ### Phase C -- Training (~1 day unattended)
 
+  - [ ] C.0 Implement per-epoch checkpoint rotation in distill.py before
+        starting the run. Every epoch save:
+        - runs/distill_v3_4x/epoch_N.pt            (raw G weights, for resume)
+        - runs/distill_v3_4x/epoch_N_ema.pt        (EMA copy, for eval/ship)
+        - runs/distill_v3_4x/epoch_N_metrics.json  (val PSNR/SSIM/LPIPS/lap_var)
+        - runs/distill_v3_4x/latest.pt and latest_ema.pt (rotating)
+        Never overwrite. Keep last 5 epochs on disk; archive older to
+        runs/distill_v3_4x/archive/ if disk is tight.
   - [ ] C.1 Run full 30-epoch training (warm-start from v1):
         python anime_upscaler/distill.py --teacher animevideov3
         --resume pretrained/RFDN_distill_v1_4x_student.pth
@@ -351,8 +360,12 @@ Where:
         re-run as runs/distill_v3_4x_scratch with no --resume.
   - [ ] C.3 If still stalls: try variant C (nf=52, 4 blocks) then D
         (nf=64, 4 blocks). Each is a separate --out-dir.
-  - [ ] C.4 Copy best EMA ckpt -> pretrained/RFDN_distill_v3_4x_student.pth
-        only after Phase D eval passes the lap_var >= 35 gate.
+  - [ ] C.4 After Phase D eval PASSES the lap_var >= 35 gate, copy the
+        specific epoch_N_ema.pt that produced the best result ->
+        pretrained/RFDN_distill_v3_4x_student.pth. **Do NOT delete** the
+        per-epoch ckpts in runs/distill_v3_4x/ until the user explicitly
+        confirms acceptance (they are the only fallback if a regression
+        is later discovered).
 
 ### Phase D -- Eval (0.5 day)
 
@@ -436,9 +449,10 @@ Once Q1-Q4 are approved (Q5 is nice-to-have), we can start Phase A.
   - [ ] Phase A code merged (324649f -> new commit on
         feature/phase-1-realtime-4k).
   - [ ] Phase B smoke tests all PASS.
-  - [ ] Phase C training run completed; v3 ckpt saved under
-        pretrained/RFDN_distill_v3_4x_student.pth (only after D gate
-        passes).
+  - [ ] Phase C training run completed; per-epoch ckpts preserved at
+        runs/distill_v3_4x/epoch_*.pt and runs/distill_v3_4x/epoch_*_ema.pt.
+        Best EMA ckpt copied to pretrained/RFDN_distill_v3_4x_student.pth
+        only after D gate passes.
   - [ ] Phase D eval PASS on lap_var >= 35 gate, visual review
         accepted.
   - [ ] Phase E RealESRGAN baseline shipped (independent of C/D).
