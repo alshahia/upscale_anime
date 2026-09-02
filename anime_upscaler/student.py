@@ -72,6 +72,11 @@ class RFDN(nn.Module):
             nn.Conv2d(nf, num_out_ch * self.scale * self.scale, 3, padding=1),
             nn.PixelShuffle(self.scale),
         )
+        # Bicubic residual shortcut weight (Phase 3 handoff A.4 / gotchas).
+        # 1.0 = full shortcut (legacy v1 behavior); the Phase 3 trainer anneals
+        # this down to 0.0 over the first 5 epochs so the network is forced to
+        # learn detail rather than anchor output near bicubic.
+        self.shortcut_weight = 1.0
 
     @property
     def upscale(self):
@@ -92,11 +97,24 @@ class RFDN(nn.Module):
         x = self.body_tail(x) + res
         if return_features:
             feats.append(x)                       # tap 3: body_out (vs teacher conv_cat)
-        sr = self.upsampler(self.pa(x)) + F.interpolate(
+        bicubic = F.interpolate(
             lr01, scale_factor=self.scale, mode="bicubic", align_corners=False)
+        # Phase 3 handoff A.4: shortcut_weight anneals 1.0 -> 0.0 in epoch 1..5
+        # so the student must learn high-frequency detail rather than rest on
+        # the bicubic anchor. When shortcut_weight == 0 the residual branch
+        # contributes nothing; the student must produce the full SR itself.
+        sr = self.upsampler(self.pa(x)) + self.shortcut_weight * bicubic
         if return_features:
             return sr, feats
         return sr
+
+    def set_shortcut_weight(self, w: float) -> None:
+        """Phase 3 annealing hook: set the bicubic residual shortcut weight.
+
+        Trainer calls this once per epoch. w=1.0 == legacy v1 behavior;
+        w=0.0 disables the shortcut entirely.
+        """
+        self.shortcut_weight = float(w)
 
     def num_params(self):
         return sum(p.numel() for p in self.parameters())

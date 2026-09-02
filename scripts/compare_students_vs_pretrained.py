@@ -50,6 +50,26 @@ MODELS = [
     # ("AnimeSR_v2",               "animesr",      "pretrained/AnimeSR_v2.pth",                       4, "video"),
 ]
 
+
+def _add_v3_row(models, v3_ckpt):
+    """Phase 3 handoff A.5: append a v3 row if --v3-ckpt is provided.
+
+    Accepts both absolute paths and paths relative to REPO_ROOT. Skipped
+    silently when v3_ckpt is None (the default) or when the file doesn't
+    exist on disk yet (Phase C will produce it).
+    """
+    if not v3_ckpt:
+        return models
+    p = Path(v3_ckpt)
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    if not p.exists():
+        print(f"[info] --v3-ckpt {v3_ckpt} does not exist; skipping v3 row")
+        return models
+    # v3 ckpt path is the literal arg so the row prints it verbatim
+    rel = v3_ckpt if Path(v3_ckpt).is_absolute() else str(p.relative_to(REPO_ROOT))
+    return models + [("v3_student_4x", "rfdn_student", rel, 4, "image")]
+
 CROPS = {
     "hair": dict(x0=470, y0=20,  w=180, h=180),
     "eye":  dict(x0=540, y0=140, w=140, h=100),
@@ -190,24 +210,32 @@ def make_grid_zoom(crops):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frame-idx", type=int, default=8)
+    # Phase 3 handoff A.5: --v3-ckpt appends a v3 row to MODELS (no-op when
+    # the file does not exist yet). --output overrides the default OUTDIR.
+    ap.add_argument("--v3-ckpt", default=None,
+                    help="path to v3 student .pth (skipped if not on disk)")
+    ap.add_argument("--output", default=None,
+                    help="output directory (default: results/quality_compare_students_vs_pretrained)")
     args = ap.parse_args()
 
-    OUTDIR.mkdir(parents=True, exist_ok=True)
-    (OUTDIR / "crops").mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.output) if args.output else OUTDIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "crops").mkdir(parents=True, exist_ok=True)
 
-    lr_png = OUTDIR / "source_frame.png"
+    lr_png = out_dir / "source_frame.png"
     if not extract_frame(VIDEO, lr_png, args.frame_idx):
         print(f"[FATAL] failed to extract frame from {VIDEO}")
         return 1
     lr_bgr = load_lr(lr_png)
     H, W = lr_bgr.shape[:2]
-    print(f"[Setup] LR: {W}x{H}  device={DEVICE}  out={OUTDIR}")
+    print(f"[Setup] LR: {W}x{H}  device={DEVICE}  out={out_dir}")
 
     metrics_rows = []
     full_outputs = []
     zoom_crops   = []
 
-    for label, kind, ckpt_rel, scale, mode in MODELS:
+    models = _add_v3_row(MODELS, args.v3_ckpt)
+    for label, kind, ckpt_rel, scale, mode in models:
         t0 = time.perf_counter()
         try:
             if kind == "bicubic":
@@ -242,7 +270,7 @@ def main():
             continue
 
         dt_ms = (time.perf_counter() - t0) * 1000
-        sr_path = OUTDIR / f"{label}_4x.png"
+        sr_path = out_dir / f"{label}_4x.png"
         cv2.imwrite(str(sr_path), sr_bgr)
         sh, sw = sr_bgr.shape[:2]
         stats = channel_stats(sr_bgr)
@@ -256,19 +284,19 @@ def main():
 
         for region_name, region in CROPS.items():
             crop_sr = crop_region(sr_bgr, region, scale=4)
-            zoom_path = OUTDIR / "crops" / f"{label}_{region_name}_2x.png"
+            zoom_path = out_dir / "crops" / f"{label}_{region_name}_2x.png"
             save_zoom(crop_sr, zoom_path, zoom=2)
             zoom_crops.append((label, region_name, cv2.imread(str(zoom_path))))
 
-    grid_full_path = OUTDIR / "grid_full.png"
-    grid_zoom_path = OUTDIR / "grid_zoom.png"
+    grid_full_path = out_dir / "grid_full.png"
+    grid_zoom_path = out_dir / "grid_zoom.png"
     cv2.imwrite(str(grid_full_path), make_grid_full(full_outputs))
     cv2.imwrite(str(grid_zoom_path), make_grid_zoom(zoom_crops))
     print(f"[Grid] full: {grid_full_path}")
     print(f"[Grid] zoom: {grid_zoom_path}")
 
-    csv_path = OUTDIR / "metrics.csv"
-    md_path  = OUTDIR / "metrics.md"
+    csv_path = out_dir / "metrics.csv"
+    md_path  = out_dir / "metrics.md"
     fieldnames = ["label", "mode", "w", "h", "dt_ms",
                   "mean", "std", "gray_mean", "gray_std",
                   "lap_var", "grad_mag", "sat_std"]
@@ -292,7 +320,7 @@ def main():
         f.write("**Saturation std**: higher = more chromatic variation preserved.\n")
     print(f"[Metrics] {csv_path}")
     print(f"[Metrics] {md_path}")
-    print(f"[Done] {len(metrics_rows)} models processed -> {OUTDIR}")
+    print(f"[Done] {len(metrics_rows)} models processed -> {out_dir}")
     return 0
 
 

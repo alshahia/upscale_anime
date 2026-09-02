@@ -43,6 +43,7 @@ checkpoints/
 logs/
 results/
 pretrained/
+runs/
 *.pth
 *.pt
 *.ckpt
