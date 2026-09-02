@@ -134,3 +134,31 @@ For RFDN specifically:
       existing 4× at 24 ms is hard to beat; a smaller model might
       fit two in cascade within the same latency.
 
+
+### Real-video confirmation (2026-08-31, user-requested follow-up)
+
+Ran a fresh E2E test on a 1-second real anime clip (854x480, 18 fps, 18
+frames) cut from .venv/test_4k_540p_input.mp4. Test runner:
+tmp/test_e2e_cascade_real_video.py (writes JSON + extracts middle frame).
+
+| Config          | batch | TRT | NVENC | scale | fps mean | fps peak | infer ms | file size |
+|-----------------|------:|-----|-------|------:|---------:|---------:|---------:|----------:|
+| single_pt_b1    |     1 | no  | yes   |     4 | **3.46** |     5.68 |   429.77 |   594.3 K |
+| cascade_pt_b1   |     1 | no  | yes   |     2 | **1.98** |     2.68 |   426.41 |   1.7 MB  |
+| cascade_pt_b4   |     4 | no  | yes   |     2 | **0.79** |     1.32 |  2367.16 |   1.7 MB  |
+| cascade_trt_b1  |     1 | yes | yes   |     2 | FAIL     |     -    |    -     |    261 B  |
+
+**Confirms the val-table conclusion on real video: single 4x is 1.75x faster
+than cascade 2x+2x at batch=1, and 4x faster at batch=4.**
+
+Cascade TRT path also crashed with cudaError 700 at pipeline.py:229 (the
+pinned->device copy on the very first frame). Reproduces in a fresh Python
+process. Likely stale stream state across the two 2x passes. This is a real
+bug, not a transient cleanup issue.
+
+Pixel-level difference (single 4x vs cascade 2x2x): PSNR 43.79 dB / SSIM
+0.93. No ground-truth 4K available for the clip; objective metric on test set
+favours single by 1.39 dB (30.10 vs 28.71 dB).
+
+Frames: tmp/e2e_real/{source,single_pt_b1,cascade_pt_b1,cascade_pt_b4}_frame.png
+Findings doc: docs/plans/todos_phase2_cascade_real_video_2026_08.md
