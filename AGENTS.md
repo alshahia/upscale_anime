@@ -947,6 +947,45 @@ Phase 1 of the `docs/plans/realtime_4k_plan.md` plan (B + C + NVENC) is in the w
 
 See `docs/rfdn_realtime_report.md` Section 10 for the full Phase 1 E2E verification with all measurements, files-changed inventory, and Phase 2 candidates to close the remaining gap to 25 fps end-to-end.
 
+## Phase 3 v3 student attempt (2026-09-02) — not promoted
+
+Attempted to train an adversarial v3 student (RFDN distilled from RealESRGAN-animevideov3 with PatchGAN70 + HingeGANLoss + Sobel edge loss). See `docs/plans/student_v3_result_2026_08.md` for the full writeup. Summary:
+
+- v3 trained cleanly (30 epochs, ~17 min on RTX 4000, no NaN, no collapse) but D.2 quality gate failed: full-frame lap_var=22.3 (threshold 35) vs v1's 21.0. Marginal improvement only.
+- Animevideov3 baseline (lap_var=58.1) is now the user-facing high-quality option in the GUI; v3 student is parked.
+- Code from Phase 3 is committed and works (Phase A smokes pass; can be re-purposed for a non-residual architecture in a future attempt).
+
+### Lessons learned (read these before any future distillation work)
+
+1. **Bicubic shortcut anneal is hostile to warm-start.** The RFDN student trained with shortcut_weight=1.0 (v1, v2) cannot be re-trained with shortcut<1.0 without mode collapse. Two attempts mode-collapsed:
+   - `--shortcut-anneal 1to0` (5 epochs): PSNR 29.92 → 5.41 over 5 epochs.
+   - `--shortcut-anneal 1to0slow` (15 epochs): PSNR 29.93 → 7.48 over 14 epochs.
+   Root cause: v1 student learned a delta-from-bicubic. Forcing it to also produce the full SR requires scaling the delta by 4x in 5 epochs, which LR=5e-5 cannot do.
+   **Decision rule**: if warm-starting, leave `--shortcut-anneal off` (or omit) and rely on adversarial + edge loss alone. If training from scratch, `--shortcut-anneal 1to0` (5 epochs) is OK (verified in B.3 smoke).
+
+2. **`val_lap_var` at training crop size is misleading.** I logged val_lap_var=187 in the per-epoch metrics.json, computed on small 192x192 val crops. The full-frame harness lap_var=22.3 is the ground truth. Always evaluate at the resolution the user actually sees (full 4x frame for video, native res for image). The training set's high-frequency aliasing artifacts inflate Laplacian variance on small crops.
+
+3. **Per-epoch checkpoint rotation works** but the alphabetical-sort bug shipped in commit `21151e7`. Always sort by **numeric** epoch (see `distill.py::end_of_epoch` rotation block):
+   ```python
+   def _epoch_num(p):
+       return int(p.stem.split("_")[1])  # NOT alphabetical sort
+   ```
+   Otherwise ep 9 wins over ep 30 because "9_ema" > "30" in string comparison, leaving only the last ~2 epochs on disk.
+
+4. **Animevideov3 IS the v1 replacement** for shipping quality. The RFDN student's residual structure (v1 with shortcut_weight=1.0) is fundamentally limited; the SRVGG architecture learns detail more naturally. The Phase 3 v3 plan's hoped-for gain didn't materialize with the available training compute (~17 min/run).
+
+5. **The per-epoch rotation metric JSON files were archived alongside the .pt files**, which made finding the best epoch awkward. If you re-derive metrics from the archive, glob across both `runs/.../epoch_*_metrics.json` AND `runs/.../archive/epoch_*_metrics.json`.
+
+### Phase 3 artifacts in tree
+
+- `anime_upscaler/adv_losses/__init__.py`, `adversarial.py` (PatchGAN70 + HingeGANLoss), `edge_loss.py` (Sobel L1 on Y)
+- `anime_upscaler/teacher.py` — added `SRVGGNetCompact`, `RealESRTeacher`, `TEACHERS` registry
+- `anime_upscaler/student.py` — added `RFDN.shortcut_weight` + `set_shortcut_weight(w)`
+- `anime_upscaler/distill.py` — added `--teacher`, `--lambda-adv`, `--shortcut-anneal {off,1to0,1to0slow}`, `--no-ema`, `--fresh-epoch`; per-epoch rotation with numeric sort; Phase 3 recipe + Phase 2 v3 recipe preserved
+- `scripts/train_v3_smoke.py` — 2-epoch harness
+- `scripts/compare_students_vs_pretrained.py` — `--v3-ckpt` appends v3 row to MODELS
+- v3 ckpt (un-promoted): `runs/distill_v3_4x_v3_epoch18_ema_unpromoted.pth`
+
 
 Rule of thumb: if a file isn't imported by `src/` or referenced by a config, it's likely dead.
 
