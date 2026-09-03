@@ -1011,11 +1011,13 @@ Attempted to train an adversarial v3 student (RFDN distilled from RealESRGAN-ani
 
 Three sequential experiments to break the RFDN+anneal ceiling established in Phase 3. Full plan in `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines, committed `26ac928`).
 
-**Status (2026-09-03)**: I1 EXECUTED, **NOT PROMOTED** (D.2 PASS, D.1 FAIL).
+**Status (2026-09-03, post-I2)**: I1 + I2 EXECUTED, both **NOT PROMOTED**.
 - I1 result doc: `docs/plans/student_phase4_i1_nearest_residual_result.md` (9056 bytes).
-- I1 code: commit `bd72dd3`. Tests: `tests/test_shortcut_mode.py` (4 passing).
-- I2 / I3: pending user re-approval given mixed I1 result.
-- Memory file `docs/PROJECT_MEMORY.md` §3 / §4 / §5 / §6 reflects the I1 outcome.
+- I2 result doc: `docs/plans/student_phase4_i2_isolated_adv_result.md` (10196 bytes).
+- I1 code: commit `bd72dd3`. I2 code: in flight (+`--feat-weight` flag, see §decision matrix).
+- Tests: `tests/test_shortcut_mode.py` (4 passing) + `tests/test_feature_distillation.py` (15 passing) — all 19 still pass after I2 change.
+- I3: pending user decision. Per matrix "FAIL FAIL → ship animevideov3 baseline only".
+- Memory file `docs/PROJECT_MEMORY.md` §3 / §4 / §5 / §6 reflects the I1 + I2 outcomes.
 
 ### Phase 4.I1 — Nearest-residual RFDN (cheap, ~1 hour) — **EXECUTED 2026-09-03, NOT PROMOTED**
 
@@ -1029,13 +1031,19 @@ Three sequential experiments to break the RFDN+anneal ceiling established in Pha
 - **Full doc**: `docs/plans/student_phase4_i1_nearest_residual_result.md`.
 - **Lesson** ("sharpness ≠ quality"): D.1 (PSNR) is the binding constraint, not D.2. See `docs/PROJECT_MEMORY.md` §6 decision log.
 
-### Phase 4.I2 — Isolated adversarial (medium, ~1.5 hours)
+### Phase 4.I2 — Isolated adversarial (medium, ~1.5 hours) — **EXECUTED 2026-09-03, NOT PROMOTED**
 
 - **Hypothesis**: Recent span+adv regression (PSNR 28.91 vs v1's 29.89) was caused by L_feat + L_adv pulling in opposite directions. Isolating them reveals which is the real culprit.
-- **Change**: Add `--feat-weight` flag to `distill.py`; gate feature loss at line 528-542. ~5 LOC.
-- **Runs**: I2a (animevideov3 + adv, sanity check) and I2b (span + adv + **feat_weight=0**, the new isolation).
-- **Success**: I2b >= 29.5 dB PSNR (beats feat=1 baseline at 28.91).
-- **Output dirs**: `runs/distill_i2a_adv_only_animevideov3/`, `runs/distill_i2b_adv_only_span/`
+- **Change**: Add `--feat-weight` flag to `distill.py`; gate feature loss at line 539, weight multiplier at line 552. ~5 LOC. Default = 1.0 (backward-compat with Phase 2 v3 / Phase 3 recipe).
+- **Runs**: I2a (animevideov3 + adv + feat=1.0, 30 ep = Phase 3 v3 sanity check) and I2b (SPAN + adv + **feat_weight=0**, 40 ep = the new isolation).
+- **Success criterion**: I2b >= 29.5 dB val PSNR (beats feat=1 baseline at 28.91).
+- **Result**: Both D.2 FAIL, but I2b is the meaningful partial win.
+  - **I2a**: val PSNR EMA 29.885 (= v1), full-frame lap_var **20.8** (= v1). Animevideov3+adv+feat=1 is a no-op over v1.
+  - **I2b**: val PSNR EMA **29.911** (+0.022 dB over v1), full-frame lap_var **24.2** (+15% over v1's 21.0). SPAN+adv+feat=0 yields a small but real improvement.
+  - I2a proves animevideov3+RFDN is a dead end; I2b confirms L_feat was the regression driver in the 2026-08 span+adv run, not L_adv.
+- **Output dirs**: `runs/distill_i2a_adv_only_animevideov3/` (17.3 min), `runs/distill_i2b_adv_only_span/` (23.8 min). Both gitignored per Q6.
+- **Full doc**: `docs/plans/student_phase4_i2_isolated_adv_result.md` (10196 bytes).
+- **Lesson**: `feat_weight=0` is the safe default for any future SPAN+adv RFDN variant. Animevideov3 is too far from v1's distribution for adversarial-only intervention to help; SRVGG body (I3) is needed to make animevideov3's response signal useful.
 
 ### Phase 4.I3 — SRVGG-body student (heavy, ~3 hours)
 
@@ -1067,7 +1075,7 @@ Three sequential experiments to break the RFDN+anneal ceiling established in Pha
 | PASS | PASS | PASS | I3 (most novel) |
 | FAIL | FAIL | FAIL | animevideov3 baseline only (already shipped) |
 
-**Current state (2026-09-03)**: I1 row is `FAIL` (D.1 regression). I2 / I3 pending. Per matrix: animevideov3 baseline remains the production quality option.
+**Current state (2026-09-03, post-I2)**: I1 row = D.1 FAIL, I2 row = D.2 FAIL (both sub-runs). Per matrix "FAIL FAIL → ship animevideov3 baseline only". I3 is the last hope if you want to attempt an architecture change (SRVGG body). Otherwise Phase 4 closes with the existing v1 (real-time, 21.0 lap_var) and animevideov3 (quality, 58.1 lap_var) shipped in the GUI.
 
 ### Rollback (if all fail)
 
@@ -1088,13 +1096,16 @@ Per-epoch ckpts in `runs/` are preserved (Q6 rule).
 | `tests/test_shortcut_mode.py` | I1 | +10 |
 | `tests/test_tiny_srvgg.py` | I3 | +30 |
 
-### Status snapshot (2026-09-03, post-I1)
+### Status snapshot (2026-09-03, post-I2)
 
 - **Branch**: `feature/phase-1-realtime-4k`
-- **HEAD**: `7a7a624 memory: self-record in §2 HEAD table - replace _upcoming_ placeholders with real commit hashes`
+- **HEAD**: post-I2 (commits below, after I1's `7a7a624`)
 - **Phase 4 I1 commits**: `bd72dd3` (code + result doc + tests), `924995f` (memory update), `7a7a624` (memory self-record).
+- **Phase 4 I2 commits (in flight)**: `+--feat-weight` flag + I2 result doc + AGENTS.md / PROJECT_MEMORY.md updates (one commit series at end of post-I2 pass).
 - **Phase 4 I1 outcome**: D.2 PASS (lap_var 109.4), D.1 FAIL (PSNR 27.97). NOT PROMOTED.
-- **Pending**: user decision — proceed to Phase 4.I2 (adversarial isolation, more valuable now), skip to I3 (SRVGG body), or stop Phase 4 entirely. See user-facing summary in the last assistant turn.
+- **Phase 4 I2 outcome**: I2a D.2 FAIL (lap_var 20.8, = v1), I2b D.2 FAIL (lap_var 24.2, +15% over v1 but below 35 threshold). I2b is the marginal winner (val PSNR +0.022 dB over v1) confirming L_feat was the regression driver in the 2026-08 span+adv run.
+- **Per matrix "FAIL FAIL → ship animevideov3 baseline only"**: Phase 4 is effectively closed; I3 (SRVGG body) is the only path left if you want to attempt the architecture change.
+- **Pending**: user decision — proceed to Phase 4.I3 (SRVGG body, ~3 hours), or stop Phase 4 and accept the existing shipped options.
 
 
 Rule of thumb: if a file isn't imported by `src/` or referenced by a config, it's likely dead.

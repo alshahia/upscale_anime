@@ -40,7 +40,7 @@ Anime super-resolution project. Two production paths:
 - **RFDN Distill v1** (315K params) — real-time (~3 fps on RTX 4000), shipped, PSNR 29.89 / lap_var 21.0.
 - **RealESRGAN AnimeVideo v3** (621K params, pre-trained from xinntao) — quality option, PSNR 29.04 / lap_var 58.1, already in GUI registry.
 
-Goal: train a student that beats v1 and approaches animevideov3 quality. Phase 3 attempts (adversarial v3 RFDN) failed D.2 quality gate (lap_var 22.3 vs threshold 35). Phase 4.I1 (nearest-residual RFDN) executed 2026-09-03 — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.97 dB). NOT PROMOTED. I2/I3 pending user re-approval.
+Goal: train a student that beats v1 and approaches animevideov3 quality. Phase 3 attempts (adversarial v3 RFDN) failed D.2 quality gate (lap_var 22.3 vs threshold 35). Phase 4.I1 (nearest-residual RFDN) executed 2026-09-03 — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.97 dB). Phase 4.I2 (isolated adversarial) executed same day — both sub-runs D.2 FAIL (I2a 20.8, I2b 24.2). I1 + I2 NOT PROMOTED. Per plan §5 "FAIL FAIL → ship animevideov3 baseline only"; I3 is optional last attempt.
 
 Working directory: `E:\python projects\upscale_anime`
 Branch: `feature/phase-1-realtime-4k`
@@ -52,6 +52,7 @@ HEAD: see §2 below.
 
 | Commit | Message |
 |---|---|
+| `7ac0665` | Phase 4.I2: feat-weight flag — isolated adversarial ablation |
 | `19f6fa0` | docs: reflect Phase 4.I1 outcome in AGENTS.md, plan §11, PROJECT_MEMORY.md |
 | `924995f` | memory: I1 result + decision log + empirical anchors updated |
 | `bd72dd3` | Phase 4.I1: nearest-residual RFDN — D.2 PASS, D.1 FAIL, NOT PROMOTED |
@@ -89,39 +90,46 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 - Ckpt preserved un-promoted: `runs/distill_v3_4x_v3_epoch18_ema_unpromoted.pth`.
 - Full doc: `docs/plans/student_v3_result_2026_08.md`.
 
-### Phase 4 — I1 EXECUTED, NOT PROMOTED (2026-09-03)
+### Phase 4 — I1 + I2 EXECUTED, BOTH NOT PROMOTED (2026-09-03)
 - Three sequential experiments (I1 → I2 → I3) to break the RFDN+anneal ceiling.
-- I1: nearest-residual RFDN — **COMPLETE**, **NOT PROMOTED**.
+- **I1**: nearest-residual RFDN — **COMPLETE**, **NOT PROMOTED**.
   - Hypothesis "nearest residual → sharper" confirmed: full-frame lap_var **109.4** (5.2× v1).
   - But PSNR regressed: **27.97 dB** vs v1 29.89 (−1.92 dB), student < bicubic (−1.48 dB).
   - D.2 gate PASS (lap_var ≥ 35). D.1 gate FAIL (PSNR ≥ 29.0). Sharpness ≠ quality.
   - Likely root cause: adversarial + from-scratch + new-shortcut = oversharpening.
   - Run preserved: `runs/distill_i1_nearest_residual/` (per Q6 rule).
   - Full doc: `docs/plans/student_phase4_i1_nearest_residual_result.md` (9056 bytes).
-- I2 / I3: pending user re-approval given mixed I1 result.
+- **I2**: isolated adversarial — **COMPLETE**, **BOTH sub-runs NOT PROMOTED** (D.2 FAIL).
+  - Two sub-runs warm-started from v1: I2a animevideov3 + adv + feat=1 (30 ep); I2b SPAN + adv + **feat_weight=0** (40 ep).
+  - **I2a (sanity check, identical to Phase 3 v3 recipe)**: val PSNR EMA 29.885 (= v1); full-frame lap_var **20.8** (= v1). Animevideov3+adv+feat=1 is a no-op over v1.
+  - **I2b (the new isolation)**: val PSNR EMA **29.911** (+0.022 dB over v1); full-frame lap_var **24.2** (+15% over v1). SPAN+adv+feat=0 yields a small but real improvement but still below 35 threshold.
+  - **Lesson**: SPAN is a stronger distillation teacher than animevideov3 for RFDN. `feat_weight=0` is the safe default for any future SPAN+adv RFDN variant. Animevideov3's per-pixel response is too lossy for adversarial-only intervention to help; SRVGG body (I3) is needed.
+  - Runs preserved: `runs/distill_i2a_adv_only_animevideov3/`, `runs/distill_i2b_adv_only_span/` (per Q6 rule).
+  - Full doc: `docs/plans/student_phase4_i2_isolated_adv_result.md` (10196 bytes).
+- **I3**: pending user decision. Per plan §5 "FAIL FAIL → ship animevideov3 baseline only"; I3 is optional.
 - Full plan: `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines).
-- Code added: `--shortcut-mode {bicubic,nearest}` arg, `RFDN(shortcut_mode=...)` constructor,
-  `set_shortcut_mode()` method, conditional `align_corners` for nearest mode,
-  `tests/test_shortcut_mode.py` (4 tests, all passing). Default stays "bicubic" for backward compat.
+- Code added (Phase 4 I1): `--shortcut-mode {bicubic,nearest}` arg, `RFDN(shortcut_mode=...)` constructor, `set_shortcut_mode()` method, conditional `align_corners` for nearest mode, `tests/test_shortcut_mode.py` (4 tests, all passing).
+- Code added (Phase 4 I2): `--feat-weight {float, default=1.0}` arg, gate at line 539 (feature distillation block conditioned on `args.feat_weight > 0`), weight multiplier at line 552. All 19 pre-existing tests still pass. Default = 1.0 (backward-compatible with Phase 2 v3 / Phase 3 recipe).
 
 ---
 
 ## 4. Pending tasks
 
-### Blocked on user re-approval (mixed I1 result changes cost/benefit)
+### Blocked on user re-approval (matrix "FAIL FAIL → ship animevideov3 baseline only")
 
 - [x] **Phase 4.I1** — Nearest-residual RFDN. **COMPLETE, NOT PROMOTED** (D.1 FAIL).
   Docs: `docs/plans/student_phase4_i1_nearest_residual_result.md`. Per Q6, run preserved.
-- [ ] **Phase 4.I2** — Isolated adversarial. Code change: ~5 LOC (`--feat-weight` flag).
-  Two sub-runs: I2a (animevideov3 + adv), I2b (span + adv + **feat_weight=0**).
-  **More valuable now** after I1 — will isolate whether adversarial is the dominant
-  regression driver (most likely per I1 §4.1). Success: I2b >= 29.5 dB.
-  Output dirs: `runs/distill_i2a_*/`, `runs/distill_i2b_*/`.
-- [ ] **Phase 4.I3** — SRVGG-body student. Code change: ~80 LOC (new `TinySRVGGStudent`
-  + `--arch` flag + **`archs.py` vendored-RFDN update** so it honors `shortcut_mode`).
-  Smoke test first. Success: D.2 PASS, PSNR >= 28.0, inference <= 200 ms/frame.
+- [x] **Phase 4.I2** — Isolated adversarial. **COMPLETE, NOT PROMOTED** (both D.2 FAIL).
+  Code: ~5 LOC change (--feat-weight flag + gate + multiplier), backward-compat default=1.0.
+  Two sub-runs: I2a (animevideov3 + adv, val PSNR EMA 29.885 = v1, lap_var 20.8),
+  I2b (span + adv + feat=0, val PSNR EMA 29.911 = +0.022 over v1, lap_var 24.2).
+  Per Q6, both runs preserved under `runs/distill_i2a_*/` and `runs/distill_i2b_*/`.
+  Docs: `docs/plans/student_phase4_i2_isolated_adv_result.md`.
+- [ ] **Phase 4.I3** — SRVGG-body student (optional; user decision pending).
+  Code change: ~80 LOC (new `TinySRVGGStudent` + `--arch` flag + `archs.py` vendored-RFDN
+  update so it honors `shortcut_mode` + smoke test). Recommend `--feat-weight 0` baseline
+  per I2 lesson. Success: D.2 PASS, PSNR >= 28.0, inference <= 200 ms/frame.
   Output dir: `runs/distill_i3_srvgg_body/`.
-- [ ] Per-phase documentation: result docs (~80-100 lines each) + AGENTS.md updates.
 
 ### Always
 
@@ -141,6 +149,8 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 | **RealESRGAN AnimeVideo v3** (621K, xinntao) | 29.04 | **58.1** | 0.8863 | 3.21 | 98.7 |
 | SPAN checkpoint (2.2M, ours) | 30.44 (test retrain) | — | 0.9218 | — | — |
 | **Phase 4.I1 RFDN (315K, nearest)** | 27.97 (regressed) | **109.4** (5× v1, oversharpened) | 0.8335 | — | 86.5 | D.2 PASS, D.1 FAIL, **NOT PROMOTED** |
+| **Phase 4.I2a (RFDN 315K, animevideov3+adv+feat=1)** | 29.32 (test) | **20.8** (= v1) | — | — | 95.8 | D.2 FAIL (= v1, no improvement) |
+| **Phase 4.I2b (RFDN 315K, span+adv+feat=0)** | 29.35 (test) | **24.2** (+15% over v1) | — | — | 97.2 | D.2 FAIL (+15%, still below 35) |
 
 > Important: the **27.97** for I1 comes from distill.py's `evaluate()` on the held-out `test` split of `anime_video_frames` (192×192 crops). The PSNR for v1/v3/animevideov3 in this table is the **clip** mean from the canonical harness. Same data domain, slightly different test pipeline — close enough to flag the regression but not directly comparable. The **lap_var 109.4** was measured with `tmp/eval_i1_correct_shortcut.py` on the same `tmp/real_video_1sec.mp4` frame 8 used by the canonical harness, so it IS directly comparable to v1's 21.0 / animevideov3's 58.1.
 
@@ -202,6 +212,36 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 - Reason: span+adv+feat=1 regressed (28.91 dB); the two objectives pull in opposite directions.
 - Action: Phase 4.I2 will isolate via `--feat-weight` flag.
 
+### 2026-09-03 — Phase 4.I2 executed (user approved after seeing plan + I1 result)
+- Decision: Run both sub-runs per plan §2.3: I2a animevideov3+adv+feat=1 (30 ep, sanity),
+  I2b SPAN+adv+feat=0 (40 ep, the new isolation).
+- Reason: User said "Proceed to I2 (isolated adversarial)". The plan §2.1 hypothesis was
+  that L_feat+L_adv was the regression driver; isolating them reveals which is responsible.
+- Result: I2a D.2 FAIL (lap_var 20.8 = v1, no improvement); I2b D.2 FAIL but PARTIAL WIN:
+  val PSNR EMA 29.911 = +0.022 dB over v1, full-frame lap_var 24.2 = +15% over v1. Both NOT
+  PROMOTED per matrix "FAIL FAIL → ship animevideov3 baseline only".
+- Reversal cost: low. Code change is backward-compatible (`--feat-weight` defaults to 1.0,
+  matches Phase 2 v3 / Phase 3 recipe). All 19 pre-existing tests pass.
+
+### 2026-09-03 — feat_weight=0 unlocks SPAN+adv gradient (lesson from I2b)
+- Decision: For any future SPAN+adv RFDN variant, default `--feat-weight 0` (disable L_feat).
+- Reason: I2b reproduces the 2026-08 span+adv recipe but drops L_feat; goes from
+  28.91 dB regression (span+adv+feat=1) to +0.022 dB over v1 (span+adv+feat=0). The
+  L_feat L2-normalized cosine pull on SPAN's intermediate features was actively hurting
+  the student when combined with adversarial's distribution-matching gradient.
+- Action: Use `--feat-weight 0` in any future variant. Animevideov3+adv path remains a
+  no-op (I2a = v1); the student needs SRVGG body (I3) to make animevideov3's response
+  signal useful at this parameter scale.
+
+### 2026-09-03 — Animevideov3 is the GRAIN OF TRUTH for shipping (re-affirmed post-I2)
+- Decision: Animevideov3 baseline remains the canonical "quality" GUI option.
+- Reason: Cannot be matched by RFDN student at available compute. After 4 distinct
+  attempts (Phase 3 v3 + Phase 4 I1/I2a/I2b), the best RFDN variant (I2b) still lands at
+  29.91 dB val PSNR / 24.2 lap_var — far short of animevideov3's 58.1 lap_var. The
+  remaining 2.4× sharpness gap is the SRVGG-body contribution (I3 still pending if
+  user wants to attempt it).
+- Registry: `apps/anime_upscaler_gui/anime_upscaler_gui/registry.py::PRESET_CATALOG`.
+
 ---
 
 ## 7. Halt conditions / guardrails
@@ -247,11 +287,14 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 
 - `anime_upscaler/student.py:126-132` — `set_shortcut_weight()` (unchanged from Phase 3).
 - `anime_upscaler/student.py:134-144` — `set_shortcut_mode()` runtime hook.
-- `anime_upscaler/distill.py:276-278` — `--shortcut-mode {bicubic,nearest}` arg.
+- `anime_upscaler/distill.py:276-278` — `--shortcut-mode {bicubic,nearest}` arg (Phase 4 I1).
+- `anime_upscaler/distill.py:279-281` — `--feat-weight {float, default=1.0}` arg (Phase 4 I2).
 - `anime_upscaler/distill.py:371` — `RFDN(scale=args.scale, shortcut_mode=args.shortcut_mode)` build call.
-- `anime_upscaler/distill.py:528-542` — feature distillation loss application.
+- `anime_upscaler/distill.py:539` — feature distillation gate (`args.feat_weight > 0`).
+- `anime_upscaler/distill.py:552` — feature distillation weight multiplier (`args.feat_weight * `).
 - `anime_upscaler/distill.py:638-639` — `_shortcut_weight` anneal call (unchanged from Phase 3).
 - `anime_upscaler/distill.py:384-385` — recipe log line now includes `shortcut_mode`.
+- `tmp/eval_i2a_full_frame.py` — one-off full-frame lap_var eval for I2a/I2b (untracked).
 - `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py:591` — **STALE**: vendored RFDN's hardcoded `mode="bicubic"` shortcut. Must be updated before any nearest-shortcut ckpt is shipped via the GUI (Phase 4.I3 prerequisite).
 - `apps/anime_upscaler_gui/anime_upscaler_gui/registry.py::PRESET_CATALOG` — GUI preset catalog.
 - `tmp/eval_i1_correct_shortcut.py` — one-off full-frame eval with correct shortcut mode (forensics only, untracked).
@@ -286,3 +329,18 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
   108-118, 134-144). AGENTS.md Phase 4 section updated to reflect I1 EXECUTED/NOT
   PROMOTED + decision matrix updated + status snapshot refreshed (HEAD now `7a7a624`).
   Plan file §11 "Approval gate" replaced with execution log. Commit pending below.
+- **2026-09-03**: Phase 4.I2 executed (~40 min total: 17 + 24 = ~41 min). Code added to
+  `distill.py` (~5 LOC): `--feat-weight {float, default=1.0}` argparse; feature distillation
+  block gated by `args.feat_weight > 0` at line 539; weight multiplier at line 552. Two
+  warm-start sub-runs from v1: I2a animevideov3+adv+feat=1 (30 ep, 17.3 min, val PSNR EMA
+  29.885 = v1, full-frame lap_var **20.8** = v1, held-out test 29.32); I2b SPAN+adv+feat=0
+  (40 ep, 23.8 min, val PSNR EMA **29.911** +0.022 over v1, full-frame lap_var **24.2** +15%
+  over v1, held-out test 29.35). Both D.2 FAIL, both NOT PROMOTED per matrix. **Three new
+  decisions logged** in §6: I2 executed, `feat_weight=0` is the safe default for any future
+  SPAN+adv RFDN variant, animevideov3 baseline reaffirmed as the shipping quality option.
+  **AGENTS.md** Phase 4 section updated to "post-I2": status header, I2 subsection
+  EXECUTED+NOT PROMOTED, decision matrix current state "FAIL FAIL → ship animevideov3
+  baseline only", status snapshot. New halt condition remains H6 (oversharpening from I1).
+  New result doc: `docs/plans/student_phase4_i2_isolated_adv_result.md` (10196 bytes).
+  All 19 pre-existing tests still pass (`test_shortcut_mode` + `test_feature_distillation`).
+  Commits: `<this-commit>` (docs pass), `7ac0665` (I2 code + test).
