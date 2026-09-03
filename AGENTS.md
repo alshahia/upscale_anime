@@ -986,6 +986,81 @@ Attempted to train an adversarial v3 student (RFDN distilled from RealESRGAN-ani
 - `scripts/compare_students_vs_pretrained.py` — `--v3-ckpt` appends v3 row to MODELS
 - v3 ckpt (un-promoted): `runs/distill_v3_4x_v3_epoch18_ema_unpromoted.pth`
 
+## Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body (2026-09-03)
+
+Three sequential experiments to break the RFDN+anneal ceiling established in Phase 3. Full plan in `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines, committed `26ac928`). **No code changes yet** — awaiting user approval to execute.
+
+### Phase 4.I1 — Nearest-residual RFDN (cheap, ~1 hour)
+
+- **Hypothesis**: RFDN+bicubic's lap_var ceiling comes from the residual *type*, not the block. Animevideov3 uses `mode='nearest'`, ours uses `mode='bicubic'`.
+- **Change**: Add `--shortcut-mode {bicubic,nearest}` to `distill.py`; `RFDN.shortcut_mode` honors it. ~10 LOC.
+- **Command**: `distill.py --teacher animevideov3 --shortcut-mode nearest --lambda-adv 0.001 --shortcut-anneal off --epochs 40 --lr 5e-5`
+- **Success**: D.2 PASS (full-frame lap_var >= 35), PSNR >= 29.0.
+- **Output dir**: `runs/distill_i1_nearest_residual/`
+
+### Phase 4.I2 — Isolated adversarial (medium, ~1.5 hours)
+
+- **Hypothesis**: Recent span+adv regression (PSNR 28.91 vs v1's 29.89) was caused by L_feat + L_adv pulling in opposite directions. Isolating them reveals which is the real culprit.
+- **Change**: Add `--feat-weight` flag to `distill.py`; gate feature loss at line 528-542. ~5 LOC.
+- **Runs**: I2a (animevideov3 + adv, sanity check) and I2b (span + adv + **feat_weight=0**, the new isolation).
+- **Success**: I2b >= 29.5 dB PSNR (beats feat=1 baseline at 28.91).
+- **Output dirs**: `runs/distill_i2a_adv_only_animevideov3/`, `runs/distill_i2b_adv_only_span/`
+
+### Phase 4.I3 — SRVGG-body student (heavy, ~3 hours)
+
+- **Hypothesis**: Animevideov3's plain SRVGG stack is just better for anime than RFDN's FIM+PA design. Copy the architecture at our 315K budget.
+- **Change**: New `TinySRVGGStudent` class in `student.py` (12 convs × 42 channels, PReLU, PixelShuffle, nearest residual, ~315K params). Add `--arch {rfdn,srvgg}` to `distill.py`. Wire into `archs.py`. ~80 LOC + smoke test.
+- **Smoke first**: `python -c "from anime_upscaler.student import TinySRVGGStudent; ..."` → verify shape `(1, 3, 192, 192)` and params < 600K.
+- **Command**: `distill.py --arch srvgg --teacher animevideov3 --shortcut-mode nearest --lambda-adv 0.001 --epochs 40 --lr 5e-5`
+- **Success**: D.2 PASS (lap_var >= 35), PSNR >= 28.0, inference <= 200 ms/frame.
+- **Output dir**: `runs/distill_i3_srvgg_body/`
+
+### Halt conditions (apply to all phases)
+
+- Val PSNR < 20 dB → mode collapse → halt.
+- Val PSNR < 26 dB after 10 epochs → slow → halt.
+- EMA PSNR not improving for 10 consecutive epochs → plateau → halt.
+- Final lap_var < 35 → D.2 gate fail → don't ship, document.
+
+### Decision matrix (what to ship after Phase 4)
+
+| I1 | I2 | I3 | Ship |
+|---|---|---|---|
+| PASS | FAIL | FAIL | I1 |
+| FAIL | PASS | FAIL | I2's best |
+| FAIL | FAIL | PASS | I3 |
+| PASS | PASS | FAIL | I1 (cheapest) |
+| PASS | FAIL | PASS | I3 if lap_var higher than I1; else I1 |
+| FAIL | PASS | PASS | I3 if lap_var higher than I2; else I2 |
+| PASS | PASS | PASS | I3 (most novel) |
+| FAIL | FAIL | FAIL | animevideov3 baseline only (already shipped) |
+
+### Rollback (if all fail)
+
+```bash
+git checkout ad14781 -- anime_upscaler/student.py anime_upscaler/distill.py apps/anime_upscaler_gui/anime_upscaler_gui/archs.py
+git clean -fd tests/test_shortcut_mode.py tests/test_tiny_srvgg.py
+```
+
+Per-epoch ckpts in `runs/` are preserved (Q6 rule).
+
+### Key files to edit (when approved)
+
+| File | Phase | Net LOC |
+|---|---|---|
+| `anime_upscaler/student.py` | I1, I3 | +60 |
+| `anime_upscaler/distill.py` | I1, I2, I3 | +15 |
+| `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py` | I3 | +10 |
+| `tests/test_shortcut_mode.py` | I1 | +10 |
+| `tests/test_tiny_srvgg.py` | I3 | +30 |
+
+### Status snapshot (2026-09-03)
+
+- **Branch**: `feature/phase-1-realtime-4k`
+- **HEAD**: `26ac928 Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body`
+- **Parent**: `ad14781 Phase 3.F: AGENTS.md lessons learned + v3 result doc`
+- **Pending**: user approval to begin Phase 4.I1 code changes
+
 
 Rule of thumb: if a file isn't imported by `src/` or referenced by a config, it's likely dead.
 
