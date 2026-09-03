@@ -1108,7 +1108,7 @@ Per-epoch ckpts in `runs/` are preserved (Q6 rule).
 - **HEAD**: post-I3 (commits below, after I2's `7d4e491`)
 - **Phase 4 I1 commits**: `bd72dd3` (code + result doc + tests), `924995f` (memory update), `7a7a624` (memory self-record).
 - **Phase 4 I2 commits**: `7ac0665` (code + tests), `8929287` (memory update), `7d4e491` (memory self-record).
-- **Phase 4 I3 commits**: `<this-commit>` (TinySRVGGStudent + --arch flag + vendored GUI copy + result doc + 9 tests); memory update commits to follow.
+- **Phase 4 I3 commits**: `7783669` (TinySRVGGStudent + --arch flag + vendored GUI copy + result doc + 9 tests), `c82767e` (memory update), `bcf5354` (memory self-record).
 - **Phase 4 I1 outcome**: D.2 PASS (lap_var 109.4), D.1 FAIL (PSNR 27.97). NOT PROMOTED.
 - **Phase 4 I2 outcome**: I2a D.2 FAIL (lap_var 20.8 = v1), I2b D.2 FAIL (lap_var 24.2, +15% over v1 but below 35). I2b is the marginal winner (val PSNR +0.022 dB over v1) confirming L_feat was the regression driver in the 2026-08 span+adv run.
 - **Phase 4 I3 outcome**: D.2 PASS (lap_var 306.48, 5.3× animevideov3, 14.6× v1), D.1 FAIL (PSNR 27.91), H6 oversharpening halt triggered (student < bicubic). Latency win: 61 ms/frame (1.7× faster than v1). NOT PROMOTED.

@@ -113,6 +113,7 @@ Last updated: 2026-09-03 (after Phase 4.I3 execution; **Phase 4 closed**).
 - Full plan: `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines).
 - Code added (Phase 4 I1): `--shortcut-mode {bicubic,nearest}` arg, `RFDN(shortcut_mode=...)` constructor, `set_shortcut_mode()` method, conditional `align_corners` for nearest mode, `tests/test_shortcut_mode.py` (4 tests, all passing).
 - Code added (Phase 4 I2): `--feat-weight {float, default=1.0}` arg, gate at line 539 (feature distillation block conditioned on `args.feat_weight > 0`), weight multiplier at line 552. All 19 pre-existing tests still pass. Default = 1.0 (backward-compatible with Phase 2 v3 / Phase 3 recipe).
+- Code added (Phase 4 I3): new `TinySRVGGStudent` class in `student.py` (52 ch × 12 convs + PReLU + PixelShuffle + nearest residual, 317,300 params; mirrors animevideov3's SRVGGNetCompact exactly), `--arch {rfdn,srvgg}` argparse in `distill.py` with arch-aware build + forward dispatch (s_feats=[] when srvgg), vendored `TinySRVGGStudent` + vendored RFDN shortcut_mode honor in `apps/.../archs.py::build` (sniffs num_feat/num_conv/scale from srvgg_student ckpt; auto-sniffs shortcut_mode from rfdn_student ckpt args), 9 new smoke tests in `tests/test_tiny_srvgg.py` (all passing). All 28 pre-existing tests still pass. Default `--arch rfdn` (backward-compatible with Phase 2 v3 / Phase 3 / Phase 4 I1+I2 recipes).
 
 ---
 
