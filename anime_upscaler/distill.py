@@ -30,7 +30,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from dataset import AnimePairDataset, denorm01
-from student import RFDN
+from student import RFDN, TinySRVGGStudent
 from teacher import SPANTeacher, FEATURE_CHANNELS, TAP_ORDER, TEACHERS
 
 # v3 loss terms (Phase 1 of .claude/plans/distill_v3_recipe.md):
@@ -279,6 +279,13 @@ def main():
     ap.add_argument("--feat-weight", type=float, default=1.0,
                     help="feature distillation weight (Phase 4 I2). 0 disables "
                          "L_feat entirely; 1.0 (default) preserves the Phase 2 v3 weight.")
+    # Phase 4 I3: --arch dispatches between RFDN (legacy v1 / Phase 2-3) and
+    # TinySRVGGStudent (new SRVGG-body variant that mirrors animevideov3's
+    # inductive bias). 'rfdn' is the default for backward compatibility.
+    ap.add_argument("--arch", choices=["rfdn", "srvgg"], default="rfdn",
+                    help="student architecture (Phase 4 I3). 'rfdn' (default) "
+                         "uses RFDN; 'srvgg' uses TinySRVGGStudent (animevideov3 "
+                         "style: stacked 3x3 convs + PReLU + nearest residual).")
     ap.add_argument("--no-ema", action="store_true",
                     help="disable EMA shadow (Phase 3 ablation only).")
     ap.add_argument("--epochs", type=int, default=40)
@@ -371,19 +378,27 @@ def main():
                   else cls(**kwargs)
         tap_chans = None  # SRVGG teachers do not expose feature taps
         is_real_esr_teacher = True
-    student = RFDN(scale=args.scale, shortcut_mode=args.shortcut_mode).to(device)
-    if tap_chans is not None:
-        adapters = StudentFeatureAdapters(52, tap_chans).to(device)
+    # Phase 4 I3: --arch dispatches the student build. TinySRVGGStudent has
+    # no intermediate features for distillation, so tap_chans / adapters are
+    # forced to None regardless of teacher (matches the SRVGG-teacher path).
+    if args.arch == "srvgg":
+        student = TinySRVGGStudent(scale=args.scale).to(device)
+        tap_chans = None
+        adapters = None
     else:
-        adapters = None  # RealESR teachers have no taps -> no adapters needed
-    print(f"[student] {student.num_params():,} params (<600K)")
+        student = RFDN(scale=args.scale, shortcut_mode=args.shortcut_mode).to(device)
+        if tap_chans is not None:
+            adapters = StudentFeatureAdapters(52, tap_chans).to(device)
+        else:
+            adapters = None  # RealESR teachers have no taps -> no adapters needed
+    print(f"[student] arch={args.arch} {student.num_params():,} params (<600K)")
     assert student.num_params() < 600_000
 
     # Phase 3 handoff A.4: detect whether to use the new recipe. Triggered by
     # any of: SRVGG teacher (animevideov3, lsdir), lambda_adv > 0, shortcut
     # anneal != off. When false, the existing Phase 2 v3 wiring is unchanged.
     use_phase3 = is_real_esr_teacher or args.lambda_adv > 0 or args.shortcut_anneal != "off"
-    print(f"[recipe] phase3={use_phase3}  teacher={args.teacher}  "
+    print(f"[recipe] phase3={use_phase3}  arch={args.arch}  teacher={args.teacher}  "
           f"lambda_adv={args.lambda_adv}  shortcut_anneal={args.shortcut_anneal}"
           f"  shortcut_mode={args.shortcut_mode}")
 
@@ -510,6 +525,10 @@ def main():
             # ---- Student forward ----
             if use_phase3 and is_real_esr_teacher:
                 # Phase 3 + SRVGG: skip return_features (no taps to distill).
+                s_out = student(lr)
+                s_feats = []
+            elif args.arch == "srvgg":
+                # Phase 4 I3: TinySRVGGStudent has no intermediate taps.
                 s_out = student(lr)
                 s_feats = []
             else:

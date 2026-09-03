@@ -563,11 +563,21 @@ class RFDN(nn.Module):
     Defaults match the production v1 student: nf=52, 6 blocks, ~315K params.
     Residual to bicubic-upsampled LR for a stable starting point.
     `scale` controls the upscale factor and final PixelShuffle output shape.
+
+    Phase 4 I1: optional `shortcut_mode` arg (default "bicubic" for backward
+    compat with v1 ckpts). When "nearest", the residual shortcut uses
+    nearest-neighbor upsampling (matches animevideov3's anchor); the GUI's
+    `build()` auto-sniffs this from the ckpt's saved `args.shortcut_mode`.
     """
 
-    def __init__(self, num_in_ch=3, num_out_ch=3, nf=52, num_blocks=6, scale=4):
+    def __init__(self, num_in_ch=3, num_out_ch=3, nf=52, num_blocks=6, scale=4,
+                 shortcut_mode: str = "bicubic"):
         super().__init__()
+        if shortcut_mode not in {"bicubic", "nearest"}:
+            raise ValueError(
+                f"RFDN: shortcut_mode must be 'bicubic' or 'nearest', got {shortcut_mode!r}")
         self.scale = int(scale)
+        self.shortcut_mode = shortcut_mode
         self.head = nn.Conv2d(num_in_ch, nf, 3, padding=1)
         self.blocks = nn.ModuleList(_RFDN_Block(nf) for _ in range(num_blocks))
         self.body_tail = nn.Conv2d(nf, nf, 3, padding=1)
@@ -588,10 +598,62 @@ class RFDN(nn.Module):
         for blk in self.blocks:
             x = blk(x)
         x = self.body_tail(x) + res
-        sr = self.upsampler(self.pa(x)) + F.interpolate(
-            lr01, scale_factor=self.scale, mode="bicubic", align_corners=False
-        )
-        return sr
+        # Phase 4 I1: honor shortcut_mode. PyTorch only accepts `align_corners`
+        # for interpolating modes (bicubic/bilinear); nearest/area raise.
+        if self.shortcut_mode in ("bicubic", "bilinear"):
+            sc = F.interpolate(lr01, scale_factor=self.scale,
+                               mode=self.shortcut_mode, align_corners=False)
+        else:
+            sc = F.interpolate(lr01, scale_factor=self.scale,
+                               mode=self.shortcut_mode)
+        return self.upsampler(self.pa(x)) + sc
+
+
+# ============================================================================ #
+# TinySRVGGStudent -- vendored copy of anime_upscaler/student.py::TinySRVGGStudent
+# Phase 4 I3: the distilled student that mirrors animevideov3's SRVGG-body
+# inductive bias at our 315K budget. Always uses nearest residual (matches the
+# teacher it's distilled from). Edit here only when anime_upscaler/student.py
+# changes; keep them in lockstep.
+# ============================================================================ #
+class TinySRVGGStudent(nn.Module):
+    """SRVGG-body student at our 315K budget (Phase 4 I3).
+
+    Architecture matches animevideov3's SRVGGNetCompact exactly: stacked 3x3
+    convs with per-conv PReLU activations + PixelShuffle head + nearest
+    residual. No return_features path (no taps to distill against).
+    """
+
+    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=52, num_conv=12, scale=4):
+        super().__init__()
+        self.scale = int(scale)
+        self.num_feat = int(num_feat)
+        self.num_conv = int(num_conv)
+        layers = [nn.Conv2d(num_in_ch, num_feat, 3, 1, 1),
+                  nn.PReLU(num_feat)]
+        for _ in range(num_conv):
+            layers.append(nn.Conv2d(num_feat, num_feat, 3, 1, 1))
+            layers.append(nn.PReLU(num_feat))
+        layers.append(nn.Conv2d(num_feat, num_out_ch * self.scale * self.scale, 3, 1, 1))
+        self.body = nn.Sequential(*layers)
+        self.upsampler = nn.PixelShuffle(self.scale)
+
+    @property
+    def upscale(self):
+        """Backwards-compat alias for `scale`."""
+        return self.scale
+
+    def forward(self, lr01):
+        out = self.body(lr01)
+        out = self.upsampler(out)
+        return out + F.interpolate(lr01, scale_factor=self.scale, mode="nearest")
+
+    def num_params(self):
+        """Sum of all parameter counts. Mirrors the canonical
+        anime_upscaler/student.py::TinySRVGGStudent so the GUI parity test
+        (tests/test_tiny_srvgg.py::test_vendored_archs_matches_student_py)
+        can compare against the same definition."""
+        return sum(p.numel() for p in self.parameters())
 
 
 # ============================================================================ #
@@ -624,8 +686,14 @@ def _save_sr(out, path):
 def build(kind: str, ckpt_path) -> nn.Module:
     """Build + load + set eval() on the right architecture.
 
-    kind: 'srvgg' | 'span' | 'era' | 'animesr' | 'rfdn_student'
+    kind: 'srvgg' | 'srvgg_student' | 'span' | 'era' | 'animesr' | 'rfdn_student'
     ckpt_path: path to .pth
+
+    Phase 4 I1 update: 'rfdn_student' auto-sniffs shortcut_mode from the
+    ckpt's saved args (so the GUI honors nearest-shortcut v3+ students
+    without the user having to pick the mode manually).
+    Phase 4 I3 update: 'srvgg_student' dispatches to TinySRVGGStudent for
+    the new SRVGG-body student distilled in Phase 4 I3.
     """
     ckpt_path = str(ckpt_path)
     if kind == 'span':
@@ -634,6 +702,38 @@ def build(kind: str, ckpt_path) -> nn.Module:
     elif kind == 'srvgg':
         sd = _load_state_dict(ckpt_path)
         m = SRVGGNetCompact()
+        m.load_state_dict(sd, strict=False)
+    elif kind == 'srvgg_student':
+        # Phase 4 I3: SRVGG-body distilled student. We sniff num_feat from
+        # body.0.weight (input conv) and num_conv from counting the conv
+        # layers in body. Scale is sniffed from the last body conv's out_ch
+        # (= num_out_ch * scale * scale). Defaults match the production run
+        # (num_feat=52, num_conv=12, scale=4).
+        sd = _load_state_dict(ckpt_path)
+        import math
+        num_feat = 52
+        first_w = sd.get('body.0.weight') if isinstance(sd, dict) else None
+        if first_w is not None and hasattr(first_w, 'shape') and len(first_w.shape) == 4:
+            num_feat = int(first_w.shape[0])
+        # body.<i>.weight keys: even i are conv weights (0, 2, 4, ..., 2*(num_conv+1))
+        body_conv_keys = sorted([k for k in sd.keys()
+                                 if k.startswith('body.') and k.endswith('.weight')
+                                 and (k.split('.')[1].isdigit()
+                                      and int(k.split('.')[1]) % 2 == 0)],
+                                key=lambda k: int(k.split('.')[1]))
+        # First is head, last is the upsample pre-shuffle conv; the middle
+        # `len(body_conv_keys) - 2` are the internal body convs.
+        num_conv = max(len(body_conv_keys) - 2, 1)
+        scale = 4
+        if len(body_conv_keys) >= 2:
+            last_w = sd[body_conv_keys[-1]]
+            if hasattr(last_w, 'shape') and len(last_w.shape) == 4:
+                out_ch = int(last_w.shape[0])
+                ratio = out_ch // 3
+                sq = int(round(math.sqrt(max(ratio, 1))))
+                if sq * sq == ratio and sq in (2, 3, 4, 8):
+                    scale = sq
+        m = TinySRVGGStudent(num_feat=num_feat, num_conv=num_conv, scale=scale)
         m.load_state_dict(sd, strict=False)
     elif kind == 'era':
         sd = _load_state_dict(ckpt_path)
@@ -645,6 +745,19 @@ def build(kind: str, ckpt_path) -> nn.Module:
         m.load_state_dict(sd, strict=False)
     elif kind == 'rfdn_student':
         sd = _load_state_dict(ckpt_path)
+        # Phase 4 I1: sniff shortcut_mode from the full ckpt's saved args
+        # (default bicubic for backward compat with v1 ckpts that have no
+        # args dict). This makes the GUI correctly honor nearest-shortcut
+        # ckpts (Phase 4 I1+) without manual mode selection.
+        shortcut_mode = "bicubic"
+        try:
+            full = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+            if isinstance(full, dict) and isinstance(full.get('args'), dict):
+                sm = full['args'].get('shortcut_mode')
+                if sm in ('bicubic', 'nearest'):
+                    shortcut_mode = sm
+        except Exception:
+            pass
         # Sniff scale from the upsampler's conv weight shape:
         #   scale=2 -> out_ch = 3*4  = 12   (conv.weight shape: [12, nf, 3, 3])
         #   scale=4 -> out_ch = 3*16 = 48   (matches v1_4x ckpt in the repo)
@@ -658,11 +771,11 @@ def build(kind: str, ckpt_path) -> nn.Module:
             ratio = out_ch // num_out_ch
             scale_sqrt = int(round(math.sqrt(max(ratio, 1))))
             if scale_sqrt * scale_sqrt == ratio and scale_sqrt in (2, 3, 4, 8):
-                m = RFDN(scale=scale_sqrt)
+                m = RFDN(scale=scale_sqrt, shortcut_mode=shortcut_mode)
             else:
-                m = RFDN()  # defaults to 4; let strict=False sort out any mismatch
+                m = RFDN(shortcut_mode=shortcut_mode)  # defaults to 4
         else:
-            m = RFDN()  # weight-shape sniff failed; default to 4
+            m = RFDN(shortcut_mode=shortcut_mode)  # weight-shape sniff failed
         m.load_state_dict(sd, strict=False)
     else:
         raise ValueError(f"unsupported arch kind: {kind!r}")
@@ -672,6 +785,7 @@ def build(kind: str, ckpt_path) -> nn.Module:
 
 # Public surface
 __all__ = [
-    "SRVGGNetCompact", "MSRSWVSR", "ERANet", "NeosrSPAN", "Conv3XC", "SPAB", "RFDN",
+    "SRVGGNetCompact", "MSRSWVSR", "ERANet", "NeosrSPAN", "Conv3XC", "SPAB",
+    "RFDN", "TinySRVGGStudent",
     "create_neosr_span", "build", "_save_sr", "_load_state_dict",
 ]

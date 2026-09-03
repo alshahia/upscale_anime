@@ -147,6 +147,80 @@ class RFDN(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
 
+class TinySRVGGStudent(nn.Module):
+    """SRVGG-body student at our 315K budget (Phase 4 I3).
+
+    Mirrors the inductive bias of RealESRGAN's animevideov3 (SRVGGNetCompact):
+    a stack of plain 3x3 convs with per-conv PReLU activations + PixelShuffle
+    head + nearest residual. There are no skip taps and no attention gates --
+    the body learns the residual end-to-end against the nearest-upsampled LR.
+
+    Architectural differences vs RFDN:
+    - No feature-distillation branches (no 1x1 d1/d2 splits); distill.py
+      treats this student's forward as tap-less (s_feats=[]) regardless of
+      which teacher is paired with it.
+    - No shortcut anneal (single-path architecture; the residual is fixed at
+      weight 1.0 and is not annealed).
+    - No return_features path (no meaningful intermediate features at any
+      particular depth that would correspond to teacher taps).
+    """
+
+    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=52, num_conv=12, scale=4):
+        super().__init__()
+        if num_conv < 1:
+            raise ValueError(f"TinySRVGGStudent: num_conv must be >= 1, got {num_conv}")
+        self.scale = int(scale)
+        self.num_feat = int(num_feat)
+        self.num_conv = int(num_conv)
+        # Match animevideov3's SRVGGNetCompact exactly: conv -> PReLU -> conv
+        # -> PReLU -> ... -> conv (no activation after the final conv, which
+        # is then fed straight into PixelShuffle). Each PReLU is its own
+        # module instance (per-channel learnable slope), as in RealESRGAN.
+        layers = [nn.Conv2d(num_in_ch, num_feat, 3, 1, 1),
+                  nn.PReLU(num_feat)]
+        for _ in range(num_conv):
+            layers.append(nn.Conv2d(num_feat, num_feat, 3, 1, 1))
+            layers.append(nn.PReLU(num_feat))
+        layers.append(nn.Conv2d(num_feat, num_out_ch * self.scale * self.scale, 3, 1, 1))
+        self.body = nn.Sequential(*layers)
+        self.upsampler = nn.PixelShuffle(self.scale)
+
+    @property
+    def upscale(self):
+        """Backwards-compat alias for `scale` (downstream consumers + older
+        ckpt loaders used `model.upscale`)."""
+        return self.scale
+
+    def forward(self, lr01, return_features=False):
+        # SRVGG has no meaningful intermediate features for distillation;
+        # `return_features` is accepted only to keep a uniform call signature
+        # with RFDN so distill.py's dispatch is trivial.
+        out = self.body(lr01)
+        out = self.upsampler(out)
+        out = out + F.interpolate(lr01, scale_factor=self.scale, mode="nearest")
+        if return_features:
+            return out, []
+        return out
+
+    def num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    # The next two hooks mirror RFDN so a uniform ablation harness (e.g. a
+    # future shortcut-anneal experiment on SRVGG) could call them without
+    # dispatching on architecture. They are no-ops today.
+    def set_shortcut_weight(self, w: float) -> None:
+        """No-op (SRVGG has no annealable shortcut)."""
+        return
+
+    def set_shortcut_mode(self, mode: str) -> None:
+        """No-op (SRVGG always uses nearest residual)."""
+        if mode not in {"bicubic", "nearest"}:
+            raise ValueError(
+                f"TinySRVGGStudent.set_shortcut_mode: invalid mode {mode!r} "
+                f"(SRVGG uses nearest; this is a no-op)")
+        return
+
+
 if __name__ == "__main__":
     torch.manual_seed(42)
     s = RFDN()
@@ -171,3 +245,18 @@ if __name__ == "__main__":
                 s(lr)
             torch.cuda.synchronize()
         print(f"GPU latency: {(time.time()-t0)/30*1000:.2f} ms/frame @270x480 LR")
+
+    # Phase 4 I3: SRVGG-body student smoke check (mirrors the RFDN block above).
+    # Note: PReLU's slope is initialised randomly so the first forward differs
+    # from a deterministic nn.ReLU; we only check shape + param ceiling here.
+    s2 = TinySRVGGStudent()
+    n2 = s2.num_params()
+    assert n2 < 600_000, f"srvgg student too big: {n2}"
+    lr2 = torch.randn(1, 3, 48, 48)
+    sr2 = s2(lr2)
+    print(f"\nTinySRVGGStudent params: {n2:,} (<600K OK)")
+    print("lr:", tuple(lr2.shape), "-> sr:", tuple(sr2.shape))
+    # return_features path returns (sr, []) to keep dispatch uniform.
+    sr2f, feats2 = s2(lr2, return_features=True)
+    assert sr2.shape == sr2f.shape
+    assert feats2 == [], f"SRVGG must expose no taps, got {len(feats2)}"
