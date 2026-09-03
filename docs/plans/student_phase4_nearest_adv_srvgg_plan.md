@@ -384,8 +384,12 @@ If all three succeed and the GUI registry is updated, add 30 min for the registr
 
 ---
 
-## 11. Approval gate
+## 11. Approval gate + execution log
 
-**STOP HERE.** Do not begin code changes until the user has reviewed this plan and explicitly approved Phase I1 (and the sequence I1 → I2 → I3).
+**Original gate (now superseded):** Do not begin code changes until the user has reviewed this plan and explicitly approved Phase I1 (and the sequence I1 → I2 → I3). The plan is reversible (Section 6). All runs are written to `runs/` (gitignored). No destructive operations are planned.
 
-The plan is reversible (Section 6). All runs are written to `runs/` (gitignored). No destructive operations are planned.
+**Execution log:**
+
+- **2026-09-03**: User approved and said "go to Phase I1". I1 was executed (`bd72dd3`).
+  Result doc: `student_phase4_i1_nearest_residual_result.md`. Outcome: NOT PROMOTED.
+- I2 and I3 not yet executed. See `docs/PROJECT_MEMORY.md` §4 for pending-tasks status and the user-facing summary in the conversation for the next-step options.

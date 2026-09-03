@@ -1009,15 +1009,25 @@ Attempted to train an adversarial v3 student (RFDN distilled from RealESRGAN-ani
 
 ## Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body (2026-09-03)
 
-Three sequential experiments to break the RFDN+anneal ceiling established in Phase 3. Full plan in `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines, committed `26ac928`). **No code changes yet** — awaiting user approval to execute.
+Three sequential experiments to break the RFDN+anneal ceiling established in Phase 3. Full plan in `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines, committed `26ac928`).
 
-### Phase 4.I1 — Nearest-residual RFDN (cheap, ~1 hour)
+**Status (2026-09-03)**: I1 EXECUTED, **NOT PROMOTED** (D.2 PASS, D.1 FAIL).
+- I1 result doc: `docs/plans/student_phase4_i1_nearest_residual_result.md` (9056 bytes).
+- I1 code: commit `bd72dd3`. Tests: `tests/test_shortcut_mode.py` (4 passing).
+- I2 / I3: pending user re-approval given mixed I1 result.
+- Memory file `docs/PROJECT_MEMORY.md` §3 / §4 / §5 / §6 reflects the I1 outcome.
+
+### Phase 4.I1 — Nearest-residual RFDN (cheap, ~1 hour) — **EXECUTED 2026-09-03, NOT PROMOTED**
 
 - **Hypothesis**: RFDN+bicubic's lap_var ceiling comes from the residual *type*, not the block. Animevideov3 uses `mode='nearest'`, ours uses `mode='bicubic'`.
-- **Change**: Add `--shortcut-mode {bicubic,nearest}` to `distill.py`; `RFDN.shortcut_mode` honors it. ~10 LOC.
+- **Change**: Add `--shortcut-mode {bicubic,nearest}` to `distill.py`; `RFDN.shortcut_mode` honors it. ~10 LOC + `set_shortcut_mode()` runtime hook.
 - **Command**: `distill.py --teacher animevideov3 --shortcut-mode nearest --lambda-adv 0.001 --shortcut-anneal off --epochs 40 --lr 5e-5`
-- **Success**: D.2 PASS (full-frame lap_var >= 35), PSNR >= 29.0.
-- **Output dir**: `runs/distill_i1_nearest_residual/`
+- **Success criterion**: D.2 PASS (full-frame lap_var >= 35), PSNR >= 29.0.
+- **Result**: D.2 PASS (lap_var **109.4**, 5.2× v1 — hypothesis CONFIRMED), but D.1 FAIL (PSNR **27.97** vs v1 29.89, student < bicubic 29.45). **NOT PROMOTED.**
+- **Root cause**: adversarial + from-scratch + new-shortcut together oversharpen.
+- **Output dir**: `runs/distill_i1_nearest_residual/` (preserved per Q6 rule, all 40 epochs).
+- **Full doc**: `docs/plans/student_phase4_i1_nearest_residual_result.md`.
+- **Lesson** ("sharpness ≠ quality"): D.1 (PSNR) is the binding constraint, not D.2. See `docs/PROJECT_MEMORY.md` §6 decision log.
 
 ### Phase 4.I2 — Isolated adversarial (medium, ~1.5 hours)
 
@@ -1042,6 +1052,7 @@ Three sequential experiments to break the RFDN+anneal ceiling established in Pha
 - Val PSNR < 26 dB after 10 epochs → slow → halt.
 - EMA PSNR not improving for 10 consecutive epochs → plateau → halt.
 - Final lap_var < 35 → D.2 gate fail → don't ship, document.
+- **H6 (oversharpening, NEW 2026-09-03)**: Student PSNR < bicubic PSNR on the held-out test split → adversarial is producing hallucinated edges; stop, document, isolate adversarial (Phase 4.I2 path).
 
 ### Decision matrix (what to ship after Phase 4)
 
@@ -1055,6 +1066,8 @@ Three sequential experiments to break the RFDN+anneal ceiling established in Pha
 | FAIL | PASS | PASS | I3 if lap_var higher than I2; else I2 |
 | PASS | PASS | PASS | I3 (most novel) |
 | FAIL | FAIL | FAIL | animevideov3 baseline only (already shipped) |
+
+**Current state (2026-09-03)**: I1 row is `FAIL` (D.1 regression). I2 / I3 pending. Per matrix: animevideov3 baseline remains the production quality option.
 
 ### Rollback (if all fail)
 
@@ -1075,12 +1088,13 @@ Per-epoch ckpts in `runs/` are preserved (Q6 rule).
 | `tests/test_shortcut_mode.py` | I1 | +10 |
 | `tests/test_tiny_srvgg.py` | I3 | +30 |
 
-### Status snapshot (2026-09-03)
+### Status snapshot (2026-09-03, post-I1)
 
 - **Branch**: `feature/phase-1-realtime-4k`
-- **HEAD**: `26ac928 Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body`
-- **Parent**: `ad14781 Phase 3.F: AGENTS.md lessons learned + v3 result doc`
-- **Pending**: user approval to begin Phase 4.I1 code changes
+- **HEAD**: `7a7a624 memory: self-record in §2 HEAD table - replace _upcoming_ placeholders with real commit hashes`
+- **Phase 4 I1 commits**: `bd72dd3` (code + result doc + tests), `924995f` (memory update), `7a7a624` (memory self-record).
+- **Phase 4 I1 outcome**: D.2 PASS (lap_var 109.4), D.1 FAIL (PSNR 27.97). NOT PROMOTED.
+- **Pending**: user decision — proceed to Phase 4.I2 (adversarial isolation, more valuable now), skip to I3 (SRVGG body), or stop Phase 4 entirely. See user-facing summary in the last assistant turn.
 
 
 Rule of thumb: if a file isn't imported by `src/` or referenced by a config, it's likely dead.

@@ -212,10 +212,13 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 - **H3 (plateau)**: EMA PSNR not improving for 10 consecutive epochs → halt.
 - **H4 (lap regression)**: Full-frame lap_var < v1 baseline (21.0) → regression → halt.
 - **H5 (D2 fail)**: Final lap_var < 35 → D.2 gate fail → don't ship.
+- **H6 (oversharpening, NEW 2026-09-03)**: Student test PSNR < bicubic test PSNR → adversarial
+  is producing hallucinated edges (high lap_var, low PSNR); halt, document, isolate adversarial.
 
-### Promotion gate (D.2)
+### Promotion gate (D.1 AND D.2; D.1 binds, NEW 2026-09-03)
 - Ship new checkpoint iff full-frame lap_var >= 35 AND PSNR >= baseline AND inference latency <= 200 ms/frame.
-- PSNR is informational, not gating.
+- **D.1 (PSNR) is now the binding constraint** (2026-09-03 lesson from I1). A model can trivially
+  max lap_var by hallucinating edges; PSNR >= 29.0 dB AND not regressing below v1 is the harder gate.
 - Per-epoch ckpts preserved per Q6 rule (do not delete without user confirmation).
 
 ### Code guardrails
@@ -237,14 +240,21 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 - `docs/plans/realtime_4k_plan.md` — Phase 1 master plan.
 
 ### Code anchors (use these to find the change site)
-- `anime_upscaler/student.py:100-101` — bicubic residual shortcut (change target for Phase 4.I1).
-- `anime_upscaler/student.py:64` — RFDN.__init__ args.
-- `anime_upscaler/student.py:117` — set_shortcut_weight method.
-- `anime_upscaler/distill.py:368` — `RFDN(scale=args.scale)` build call.
+- `anime_upscaler/student.py:64-65` — `RFDN.__init__` signature (now includes `shortcut_mode`).
+- `anime_upscaler/student.py:75-82` — `RFDN.shortcut_mode` storage + validation.
+- `anime_upscaler/student.py:108-118` — forward: conditional `align_corners` for `nearest`/`area` modes.
+
+- `anime_upscaler/student.py:126-132` — `set_shortcut_weight()` (unchanged from Phase 3).
+- `anime_upscaler/student.py:134-144` — `set_shortcut_mode()` runtime hook.
+- `anime_upscaler/distill.py:276-278` — `--shortcut-mode {bicubic,nearest}` arg.
+- `anime_upscaler/distill.py:371` — `RFDN(scale=args.scale, shortcut_mode=args.shortcut_mode)` build call.
 - `anime_upscaler/distill.py:528-542` — feature distillation loss application.
-- `anime_upscaler/distill.py:638-639` — `_shortcut_weight` anneal call.
-- `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py` — arch dispatch (wire-up site for Phase 4.I3).
+- `anime_upscaler/distill.py:638-639` — `_shortcut_weight` anneal call (unchanged from Phase 3).
+- `anime_upscaler/distill.py:384-385` — recipe log line now includes `shortcut_mode`.
+- `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py:591` — **STALE**: vendored RFDN's hardcoded `mode="bicubic"` shortcut. Must be updated before any nearest-shortcut ckpt is shipped via the GUI (Phase 4.I3 prerequisite).
 - `apps/anime_upscaler_gui/anime_upscaler_gui/registry.py::PRESET_CATALOG` — GUI preset catalog.
+- `tmp/eval_i1_correct_shortcut.py` — one-off full-frame eval with correct shortcut mode (forensics only, untracked).
+- `tests/test_shortcut_mode.py` — 4 smoke tests covering default/nearest/runtime-flip/invalid.
 
 ### Eval / harness
 - `scripts/compare_students_vs_pretrained.py` — quality harness with `--v3-ckpt` flag.
@@ -268,8 +278,10 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
   (PSNR 27.97 < v1 29.89 and < bicubic 29.45). NOT PROMOTED.** Result doc:
   `docs/plans/student_phase4_i1_nearest_residual_result.md` (9056 bytes).
   Lesson: sharpness ≠ quality; adversarial + from-scratch + new shortcut =
-  oversharpening. Per-epoch ckpts preserved per Q6.
-  Pending commits:
-  - code changes (`student.py`, `distill.py`, `tests/test_shortcut_mode.py`)
-  - result doc
-  - this memory file update
+  oversharpening. Per-epoch ckpts preserved per Q6. Commits `bd72dd3`, `924995f`, `7a7a624`.
+- **2026-09-03**: Documentation pass after I1. **§7 new halt condition H6** (oversharpening),
+  **§7 promotion gate** now binds on D.1 (PSNR), not just D.2 (lap_var). **§8 code anchors**
+  refreshed for new line numbers in `student.py` (shortcut_mode lives at lines 64-65, 75-82,
+  108-118, 134-144). AGENTS.md Phase 4 section updated to reflect I1 EXECUTED/NOT
+  PROMOTED + decision matrix updated + status snapshot refreshed (HEAD now `7a7a624`).
+  Plan file §11 "Approval gate" replaced with execution log. Commit pending below.
