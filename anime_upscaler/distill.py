@@ -276,6 +276,9 @@ def main():
     ap.add_argument("--shortcut-mode", choices=["bicubic", "nearest"], default="bicubic",
                     help="residual shortcut interpolation mode (Phase 4 I1). "
                          "'nearest' matches animevideov3's pixel-replicate baseline.")
+    ap.add_argument("--feat-weight", type=float, default=1.0,
+                    help="feature distillation weight (Phase 4 I2). 0 disables "
+                         "L_feat entirely; 1.0 (default) preserves the Phase 2 v3 weight.")
     ap.add_argument("--no-ema", action="store_true",
                     help="disable EMA shadow (Phase 3 ablation only).")
     ap.add_argument("--epochs", type=int, default=40)
@@ -529,8 +532,11 @@ def main():
                 loss_distill = _charbonnier(s_out_for_resp, t_out, eps=1e-3)
 
             # ---- Feature distillation (Phase 2 v3 only; SRVGG teachers have no taps) ----
+            # Phase 4 I2: --feat-weight=0 disables L_feat entirely, isolating
+            # adversarial as the only non-pixel objective. Default 1.0 preserves
+            # the Phase 2 v3 weight (multiplied into loss_feat below).
             loss_feat = torch.tensor(0.0, device=device)
-            if (not use_phase3) or not is_real_esr_teacher:
+            if ((not use_phase3) or not is_real_esr_teacher) and args.feat_weight > 0:
                 if s_feats and t_feats:
                     feat_terms = []
                     for sf, tf in zip(s_feats, t_feats):
@@ -543,7 +549,7 @@ def main():
                         feat_terms.append(
                             (1.0 - (sf_n * tf_n).sum(dim=1, keepdim=True)).mean()
                         )
-                    loss_feat = sum(feat_terms) / max(len(feat_terms), 1)
+                    loss_feat = args.feat_weight * sum(feat_terms) / max(len(feat_terms), 1)
 
             # ---- GT anchor (Phase 3 has new weights) ----
             if s_out.shape[-2:] != hr.shape[-2:]:
