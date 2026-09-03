@@ -52,6 +52,7 @@ HEAD: see §2 below.
 
 | Commit | Message |
 |---|---|
+| `19f6fa0` | docs: reflect Phase 4.I1 outcome in AGENTS.md, plan §11, PROJECT_MEMORY.md |
 | `924995f` | memory: I1 result + decision log + empirical anchors updated |
 | `bd72dd3` | Phase 4.I1: nearest-residual RFDN — D.2 PASS, D.1 FAIL, NOT PROMOTED |
 | `2cb458c` | memory: self-record creation in §2 HEAD table and §9 update history |
