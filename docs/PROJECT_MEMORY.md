@@ -52,6 +52,8 @@ HEAD: see §2 below.
 
 | Commit | Message |
 |---|---|
+| `c82767e` | memory: Phase 4.I3 outcome in AGENTS.md + PROJECT_MEMORY.md (Phase 4 closed) |
+| `7783669` | Phase 4.I3: SRVGG-body student -- D.2 PASS, D.1 FAIL, H6 triggered, NOT PROMOTED |
 | `8929287` | memory: Phase 4.I2 outcome in AGENTS.md + PROJECT_MEMORY.md |
 | `7ac0665` | Phase 4.I2: feat-weight flag — isolated adversarial ablation |
 | `19f6fa0` | docs: reflect Phase 4.I1 outcome in AGENTS.md, plan §11, PROJECT_MEMORY.md |
@@ -63,7 +65,7 @@ HEAD: see §2 below.
 | `26ac928` | Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body |
 | `ad14781` | Phase 3.F: AGENTS.md lessons learned + v3 result doc |
 
-Last updated: 2026-09-03 (after Phase 4.I1 execution).
+Last updated: 2026-09-03 (after Phase 4.I3 execution; **Phase 4 closed**).
 
 ---
 
