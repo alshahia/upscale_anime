@@ -52,6 +52,7 @@ HEAD: see §2 below.
 
 | Commit | Message |
 |---|---|
+| `4434609` | memory: add docs/PROJECT_MEMORY.md (canonical session-starting state file) and AGENTS.md pointer |
 | `624fb11` | AGENTS.md: add Phase 4 plan section (I1+I2+I3, awaiting approval) |
 | `26ac928` | Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body |
 | `ad14781` | Phase 3.F: AGENTS.md lessons learned + v3 result doc |
@@ -59,7 +60,7 @@ HEAD: see §2 below.
 | `21151e7` | Phase 3.A: PatchGAN + edge loss + RealESRTeacher + per-epoch ckpt rotation |
 | `cccc0b5` | Phase 3 handoff: structured resume doc for adversarial student work |
 
-Last updated: 2026-09-03.
+Last updated: 2026-09-03 (memory file created).
 
 ---
 
@@ -222,3 +223,4 @@ Last updated: 2026-09-03.
 ## 9. Update history
 
 - **2026-09-03**: Initial creation. Phase 4 plan committed; awaiting approval.
+- **2026-09-03**: Memory file created (`docs/PROJECT_MEMORY.md`, 224 lines) + AGENTS.md "Memory protocol — READ FIRST" section added at top of file. Commit `4434609`.
