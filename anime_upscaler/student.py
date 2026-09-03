@@ -61,7 +61,8 @@ class RFDN(nn.Module):
     # body_tail, pa) is scale-agnostic; only the upsampler convolution's out
     # channels and the PixelShuffle factor depend on `scale`. Bicubic residual
     # shortcut uses `scale_factor=self.scale` for stability.
-    def __init__(self, num_in_ch=3, num_out_ch=3, nf=52, num_blocks=6, scale=4):
+    def __init__(self, num_in_ch=3, num_out_ch=3, nf=52, num_blocks=6, scale=4,
+                 shortcut_mode: str = "bicubic"):
         super().__init__()
         self.scale = int(scale)
         self.head = nn.Conv2d(num_in_ch, nf, 3, padding=1)
@@ -72,10 +73,17 @@ class RFDN(nn.Module):
             nn.Conv2d(nf, num_out_ch * self.scale * self.scale, 3, padding=1),
             nn.PixelShuffle(self.scale),
         )
+        # Residual shortcut interpolation mode (Phase 4 I1).
+        # "bicubic" = legacy v1 (smooth low-pass anchor); "nearest" = animevideov3
+        # style (sharp pixel-replicate anchor; body learns the residuals).
+        if shortcut_mode not in {"bicubic", "nearest"}:
+            raise ValueError(
+                f"RFDN: shortcut_mode must be 'bicubic' or 'nearest', got {shortcut_mode!r}")
+        self.shortcut_mode = shortcut_mode
         # Bicubic residual shortcut weight (Phase 3 handoff A.4 / gotchas).
         # 1.0 = full shortcut (legacy v1 behavior); the Phase 3 trainer anneals
         # this down to 0.0 over the first 5 epochs so the network is forced to
-        # learn detail rather than anchor output near bicubic.
+        # learn detail rather than anchor output near the (mode-selected) anchor.
         self.shortcut_weight = 1.0
 
     @property
@@ -97,24 +105,43 @@ class RFDN(nn.Module):
         x = self.body_tail(x) + res
         if return_features:
             feats.append(x)                       # tap 3: body_out (vs teacher conv_cat)
-        bicubic = F.interpolate(
-            lr01, scale_factor=self.scale, mode="bicubic", align_corners=False)
+        # PyTorch raises if `align_corners` is set for non-interpolating modes
+        # (nearest/area/nearest-exact). Only pass it when the mode supports it.
+        if self.shortcut_mode in ("bicubic", "bilinear", "linear", "trilinear"):
+            shortcut = F.interpolate(
+                lr01, scale_factor=self.scale, mode=self.shortcut_mode,
+                align_corners=False)
+        else:
+            shortcut = F.interpolate(
+                lr01, scale_factor=self.scale, mode=self.shortcut_mode)
         # Phase 3 handoff A.4: shortcut_weight anneals 1.0 -> 0.0 in epoch 1..5
         # so the student must learn high-frequency detail rather than rest on
-        # the bicubic anchor. When shortcut_weight == 0 the residual branch
+        # the shortcut anchor. When shortcut_weight == 0 the residual branch
         # contributes nothing; the student must produce the full SR itself.
-        sr = self.upsampler(self.pa(x)) + self.shortcut_weight * bicubic
+        sr = self.upsampler(self.pa(x)) + self.shortcut_weight * shortcut
         if return_features:
             return sr, feats
         return sr
 
     def set_shortcut_weight(self, w: float) -> None:
-        """Phase 3 annealing hook: set the bicubic residual shortcut weight.
+        """Phase 3 annealing hook: set the residual shortcut weight.
 
-        Trainer calls this once per epoch. w=1.0 == legacy v1 behavior;
-        w=0.0 disables the shortcut entirely.
+        Trainer calls this once per epoch. w=1.0 == full shortcut (anchor
+        output near the upsampled LR); w=0.0 disables the shortcut entirely.
         """
         self.shortcut_weight = float(w)
+
+    def set_shortcut_mode(self, mode: str) -> None:
+        """Phase 4 I1 hook: switch the residual shortcut interpolation mode.
+
+        Valid modes: "bicubic" (legacy v1) or "nearest" (animevideov3 style
+        pixel-replicate). Switching at runtime is safe; the next forward
+        pass picks up the new mode.
+        """
+        if mode not in {"bicubic", "nearest"}:
+            raise ValueError(
+                f"set_shortcut_mode: invalid mode {mode!r} (expected 'bicubic' or 'nearest')")
+        self.shortcut_mode = mode
 
     def num_params(self):
         return sum(p.numel() for p in self.parameters())

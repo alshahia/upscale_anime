@@ -273,6 +273,9 @@ def main():
                     help="peak adversarial weight (Phase 3 handoff A.4). ")
     ap.add_argument("--shortcut-anneal", choices=["off", "1to0", "1to0slow"], default="off",
                     help="bicubic residual shortcut anneal schedule (Phase 3 A.4). ")
+    ap.add_argument("--shortcut-mode", choices=["bicubic", "nearest"], default="bicubic",
+                    help="residual shortcut interpolation mode (Phase 4 I1). "
+                         "'nearest' matches animevideov3's pixel-replicate baseline.")
     ap.add_argument("--no-ema", action="store_true",
                     help="disable EMA shadow (Phase 3 ablation only).")
     ap.add_argument("--epochs", type=int, default=40)
@@ -365,7 +368,7 @@ def main():
                   else cls(**kwargs)
         tap_chans = None  # SRVGG teachers do not expose feature taps
         is_real_esr_teacher = True
-    student = RFDN(scale=args.scale).to(device)
+    student = RFDN(scale=args.scale, shortcut_mode=args.shortcut_mode).to(device)
     if tap_chans is not None:
         adapters = StudentFeatureAdapters(52, tap_chans).to(device)
     else:
@@ -378,7 +381,8 @@ def main():
     # anneal != off. When false, the existing Phase 2 v3 wiring is unchanged.
     use_phase3 = is_real_esr_teacher or args.lambda_adv > 0 or args.shortcut_anneal != "off"
     print(f"[recipe] phase3={use_phase3}  teacher={args.teacher}  "
-          f"lambda_adv={args.lambda_adv}  shortcut_anneal={args.shortcut_anneal}")
+          f"lambda_adv={args.lambda_adv}  shortcut_anneal={args.shortcut_anneal}"
+          f"  shortcut_mode={args.shortcut_mode}")
 
     # Build adversarial loss + discriminator (only when lambda_adv > 0).
     D = None
