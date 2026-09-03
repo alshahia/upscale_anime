@@ -40,7 +40,7 @@ Anime super-resolution project. Two production paths:
 - **RFDN Distill v1** (315K params) — real-time (~3 fps on RTX 4000), shipped, PSNR 29.89 / lap_var 21.0.
 - **RealESRGAN AnimeVideo v3** (621K params, pre-trained from xinntao) — quality option, PSNR 29.04 / lap_var 58.1, already in GUI registry.
 
-Goal: train a student that beats v1 and approaches animevideov3 quality. Phase 3 attempts (adversarial v3 RFDN) failed D.2 quality gate (lap_var 22.3 vs threshold 35). Phase 4 plan is committed but not yet executed.
+Goal: train a student that beats v1 and approaches animevideov3 quality. Phase 3 attempts (adversarial v3 RFDN) failed D.2 quality gate (lap_var 22.3 vs threshold 35). Phase 4.I1 (nearest-residual RFDN) executed 2026-09-03 — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.97 dB). NOT PROMOTED. I2/I3 pending user re-approval.
 
 Working directory: `E:\python projects\upscale_anime`
 Branch: `feature/phase-1-realtime-4k`
@@ -52,15 +52,14 @@ HEAD: see §2 below.
 
 | Commit | Message |
 |---|---|
+| _upcoming_ | Phase 4.I1: nearest-residual RFDN — D.2 PASS, D.1 FAIL, NOT PROMOTED |
+| `2cb458c` | memory: self-record creation in §2 HEAD table and §9 update history |
 | `4434609` | memory: add docs/PROJECT_MEMORY.md (canonical session-starting state file) and AGENTS.md pointer |
 | `624fb11` | AGENTS.md: add Phase 4 plan section (I1+I2+I3, awaiting approval) |
 | `26ac928` | Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body |
 | `ad14781` | Phase 3.F: AGENTS.md lessons learned + v3 result doc |
-| `d62b524` | Phase 3.B/C/D: warm-start v3 trained, D.2 gate fails, ship animevideov3 baseline instead |
-| `21151e7` | Phase 3.A: PatchGAN + edge loss + RealESRTeacher + per-epoch ckpt rotation |
-| `cccc0b5` | Phase 3 handoff: structured resume doc for adversarial student work |
 
-Last updated: 2026-09-03 (memory file created).
+Last updated: 2026-09-03 (after Phase 4.I1 execution).
 
 ---
 
@@ -88,23 +87,38 @@ Last updated: 2026-09-03 (memory file created).
 - Ckpt preserved un-promoted: `runs/distill_v3_4x_v3_epoch18_ema_unpromoted.pth`.
 - Full doc: `docs/plans/student_v3_result_2026_08.md`.
 
-### Phase 4 — PLANNED, NOT STARTED (2026-09-03)
+### Phase 4 — I1 EXECUTED, NOT PROMOTED (2026-09-03)
 - Three sequential experiments (I1 → I2 → I3) to break the RFDN+anneal ceiling.
-- I1: nearest-residual RFDN (~1 hour).
-- I2: isolated adversarial with --feat-weight flag (~1.5 hours).
-- I3: SRVGG-body student architecture (~3 hours).
+- I1: nearest-residual RFDN — **COMPLETE**, **NOT PROMOTED**.
+  - Hypothesis "nearest residual → sharper" confirmed: full-frame lap_var **109.4** (5.2× v1).
+  - But PSNR regressed: **27.97 dB** vs v1 29.89 (−1.92 dB), student < bicubic (−1.48 dB).
+  - D.2 gate PASS (lap_var ≥ 35). D.1 gate FAIL (PSNR ≥ 29.0). Sharpness ≠ quality.
+  - Likely root cause: adversarial + from-scratch + new-shortcut = oversharpening.
+  - Run preserved: `runs/distill_i1_nearest_residual/` (per Q6 rule).
+  - Full doc: `docs/plans/student_phase4_i1_nearest_residual_result.md` (9056 bytes).
+- I2 / I3: pending user re-approval given mixed I1 result.
 - Full plan: `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines).
-- **AWAITING USER APPROVAL.** No code modified yet.
+- Code added: `--shortcut-mode {bicubic,nearest}` arg, `RFDN(shortcut_mode=...)` constructor,
+  `set_shortcut_mode()` method, conditional `align_corners` for nearest mode,
+  `tests/test_shortcut_mode.py` (4 tests, all passing). Default stays "bicubic" for backward compat.
 
 ---
 
 ## 4. Pending tasks
 
-### Blocked on user approval
+### Blocked on user re-approval (mixed I1 result changes cost/benefit)
 
-- [ ] **Phase 4.I1** — Nearest-residual RFDN. Code change: ~10 LOC (`student.py` + `distill.py`). Train 40 ep from scratch (~17 min). Success: D.2 PASS (lap_var >= 35), PSNR >= 29.0. Output dir: `runs/distill_i1_nearest_residual/`.
-- [ ] **Phase 4.I2** — Isolated adversarial. Code change: ~5 LOC (`--feat-weight` flag). Two sub-runs: I2a (animevideov3 + adv), I2b (span + adv + **feat_weight=0**). Success: I2b >= 29.5 dB. Output dirs: `runs/distill_i2a_*/`, `runs/distill_i2b_*/`.
-- [ ] **Phase 4.I3** — SRVGG-body student. Code change: ~80 LOC (new `TinySRVGGStudent` + `--arch` flag + `archs.py` wire-up). Smoke test first. Success: D.2 PASS, PSNR >= 28.0, inference <= 200 ms/frame. Output dir: `runs/distill_i3_srvgg_body/`.
+- [x] **Phase 4.I1** — Nearest-residual RFDN. **COMPLETE, NOT PROMOTED** (D.1 FAIL).
+  Docs: `docs/plans/student_phase4_i1_nearest_residual_result.md`. Per Q6, run preserved.
+- [ ] **Phase 4.I2** — Isolated adversarial. Code change: ~5 LOC (`--feat-weight` flag).
+  Two sub-runs: I2a (animevideov3 + adv), I2b (span + adv + **feat_weight=0**).
+  **More valuable now** after I1 — will isolate whether adversarial is the dominant
+  regression driver (most likely per I1 §4.1). Success: I2b >= 29.5 dB.
+  Output dirs: `runs/distill_i2a_*/`, `runs/distill_i2b_*/`.
+- [ ] **Phase 4.I3** — SRVGG-body student. Code change: ~80 LOC (new `TinySRVGGStudent`
+  + `--arch` flag + **`archs.py` vendored-RFDN update** so it honors `shortcut_mode`).
+  Smoke test first. Success: D.2 PASS, PSNR >= 28.0, inference <= 200 ms/frame.
+  Output dir: `runs/distill_i3_srvgg_body/`.
 - [ ] Per-phase documentation: result docs (~80-100 lines each) + AGENTS.md updates.
 
 ### Always
@@ -124,6 +138,9 @@ Last updated: 2026-09-03 (memory file created).
 | v3 RFDN (315K, failed) | 29.99 | 22.3 | — | 3.22 | 102.4 |
 | **RealESRGAN AnimeVideo v3** (621K, xinntao) | 29.04 | **58.1** | 0.8863 | 3.21 | 98.7 |
 | SPAN checkpoint (2.2M, ours) | 30.44 (test retrain) | — | 0.9218 | — | — |
+| **Phase 4.I1 RFDN (315K, nearest)** | 27.97 (regressed) | **109.4** (5× v1, oversharpened) | 0.8335 | — | 86.5 | D.2 PASS, D.1 FAIL, **NOT PROMOTED** |
+
+> Important: the **27.97** for I1 comes from distill.py's `evaluate()` on the held-out `test` split of `anime_video_frames` (192×192 crops). The PSNR for v1/v3/animevideov3 in this table is the **clip** mean from the canonical harness. Same data domain, slightly different test pipeline — close enough to flag the regression but not directly comparable. The **lap_var 109.4** was measured with `tmp/eval_i1_correct_shortcut.py` on the same `tmp/real_video_1sec.mp4` frame 8 used by the canonical harness, so it IS directly comparable to v1's 21.0 / animevideov3's 58.1.
 
 ### Architecture comparison
 
@@ -141,6 +158,10 @@ Last updated: 2026-09-03 (memory file created).
 - Warm-start v1 + shortcut-anneal → mode collapse (PSNR 29.92 to 5.41).
 - Warm-start v1 + span + adv + feat=1 → regression (PSNR 28.91 < v1's 29.89).
 - Adversarial alone (animevideov3, no feat) → marginal only (PSNR 29.99, lap_var 22.3).
+- **NEW 2026-09-03**: From-scratch + nearest-residual + adv=0.001 → oversharpened
+  (PSNR 27.97 < bicubic 29.45; lap_var 109.4, **5× v1 but 1.9× animevideov3**).
+  Adversarial + from-scratch + new shortcut together = oversharpening.
+  Pick one new thing per run; do NOT combine all three.
 
 ---
 
@@ -150,6 +171,19 @@ Last updated: 2026-09-03 (memory file created).
 - Decision: Wait for user approval before modifying code.
 - Reason: Phase 3 already attempted 4 variations and all plateaued at lap_var 22-23. The user requested a plan, not unilateral execution.
 - Reversal cost: low (plan is reversible via git checkout).
+
+### 2026-09-03 — Phase 4.I1 executed (user approved after seeing the plan)
+- Decision: Run `--shortcut-mode nearest` from-scratch per plan §1.3.
+- Reason: User said "go to Phase I1".
+- Result: D.2 PASS (lap_var 109.4), D.1 FAIL (PSNR 27.97). NOT PROMOTED.
+- Reversal cost: low. Code change is backward-compatible (default = bicubic).
+
+### 2026-09-03 — Sharpness ≠ quality (lesson from I1)
+- Decision: Treat PSNR ≥ 29.0 dB as the binding constraint for any future student,
+  not lap_var ≥ 35.
+- Reason: I1 lap_var 109.4 (5× v1) was a great sharpness number but PSNR dropped
+  −1.92 dB below v1. A model can trivially maximize lap_var by hallucinating edges.
+- Action: All future Phase 4/5 promotions require BOTH D.1 AND D.2 (D.1 binds).
 
 ### 2026-09-03 — Animevideov3 is shipped as quality option (carry-over from Phase 3.E)
 - Decision: RealESRGAN AnimeVideo v3 (pre-trained, xinntao) ships in GUI as quality option.
@@ -224,3 +258,17 @@ Last updated: 2026-09-03 (memory file created).
 
 - **2026-09-03**: Initial creation. Phase 4 plan committed; awaiting approval.
 - **2026-09-03**: Memory file created (`docs/PROJECT_MEMORY.md`, 224 lines) + AGENTS.md "Memory protocol — READ FIRST" section added at top of file. Commit `4434609`.
+- **2026-09-03**: Self-record creation in §2 HEAD table and §9 update history. Commit `2cb458c`.
+- **2026-09-03**: Phase 4.I1 executed. Code added (default backward-compat:
+  `shortcut_mode="bicubic"`): `--shortcut-mode` arg, `RFDN(shortcut_mode=...)`,
+  `set_shortcut_mode()`, conditional `align_corners` for nearest, 4 new tests
+  (`tests/test_shortcut_mode.py`, all passing). 40-epoch run completed
+  (~22 min on RTX 4000). **D.2 PASS (lap_var 109.4, 5× v1), D.1 FAIL
+  (PSNR 27.97 < v1 29.89 and < bicubic 29.45). NOT PROMOTED.** Result doc:
+  `docs/plans/student_phase4_i1_nearest_residual_result.md` (9056 bytes).
+  Lesson: sharpness ≠ quality; adversarial + from-scratch + new shortcut =
+  oversharpening. Per-epoch ckpts preserved per Q6.
+  Pending commits:
+  - code changes (`student.py`, `distill.py`, `tests/test_shortcut_mode.py`)
+  - result doc
+  - this memory file update
