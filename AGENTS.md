@@ -1,5 +1,26 @@
 # AGENTS.md — upscale_anime
 
+## Memory protocol — READ FIRST
+
+**At the start of every session**, before reading any other section of this file:
+
+1. Read [`docs/PROJECT_MEMORY.md`](docs/PROJECT_MEMORY.md) — the canonical "where are we?" file. It has the current branch/HEAD, pending tasks, empirical anchors (PSNR/lap_var numbers), decision log, and halt conditions.
+2. Confirm the branch and HEAD match what you intend to work on.
+3. Cross-reference any task you pick up against the "Pending tasks" section.
+
+**During work**, update `PROJECT_MEMORY.md` whenever:
+- A decision is made or reversed → append to "Decision log" with date stamp.
+- A phase begins or completes → update "Phase history".
+- Tasks move forward → update "Pending tasks" (mark done / add new).
+- A new finding (PSNR, lap_var, fps, etc.) → update "Key empirical anchors".
+- A new critical rule → update "Halt conditions / guardrails".
+
+After updating, commit with: `memory: <one-line summary>`.
+
+Do not use `PROJECT_MEMORY.md` for long-form docs, code documentation, or large tables — those belong in `docs/plans/`, `AGENTS.md`, or `docs/v7_results.md`. The memory file is for **state**, not reference material.
+
+---
+
 ## Project
 
 PyTorch anime super-resolution with progressive ensemble distillation and neosr SPAN finetuning. Model paths:
