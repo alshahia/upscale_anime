@@ -52,6 +52,7 @@ HEAD: see §2 below.
 
 | Commit | Message |
 |---|---|
+| `8929287` | memory: Phase 4.I2 outcome in AGENTS.md + PROJECT_MEMORY.md |
 | `7ac0665` | Phase 4.I2: feat-weight flag — isolated adversarial ablation |
 | `19f6fa0` | docs: reflect Phase 4.I1 outcome in AGENTS.md, plan §11, PROJECT_MEMORY.md |
 | `924995f` | memory: I1 result + decision log + empirical anchors updated |
