@@ -40,7 +40,7 @@ Anime super-resolution project. Two production paths:
 - **RFDN Distill v1** (315K params) — real-time (~3 fps on RTX 4000), shipped, PSNR 29.89 / lap_var 21.0.
 - **RealESRGAN AnimeVideo v3** (621K params, pre-trained from xinntao) — quality option, PSNR 29.04 / lap_var 58.1, already in GUI registry.
 
-Goal: train a student that beats v1 and approaches animevideov3 quality. Phase 3 attempts (adversarial v3 RFDN) failed D.2 quality gate (lap_var 22.3 vs threshold 35). Phase 4.I1 (nearest-residual RFDN) executed 2026-09-03 — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.97 dB). Phase 4.I2 (isolated adversarial) executed same day — both sub-runs D.2 FAIL (I2a 20.8, I2b 24.2). I1 + I2 NOT PROMOTED. Per plan §5 "FAIL FAIL → ship animevideov3 baseline only"; I3 is optional last attempt.
+Goal: train a student that beats v1 and approaches animevideov3 quality. Phase 3 attempts (adversarial v3 RFDN) failed D.2 quality gate (lap_var 22.3 vs threshold 35). Phase 4.I1 (nearest-residual RFDN) executed 2026-09-03 — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.97 dB). Phase 4.I2 (isolated adversarial) executed same day — both sub-runs D.2 FAIL (I2a 20.8, I2b 24.2). Phase 4.I3 (SRVGG-body student) executed same day — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.91 dB, student < bicubic = H6 halt). All three NOT PROMOTED. Per plan §5 "FAIL FAIL FAIL → ship animevideov3 baseline only". **Phase 4 closed.**
 
 Working directory: `E:\python projects\upscale_anime`
 Branch: `feature/phase-1-realtime-4k`
@@ -91,7 +91,7 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 - Ckpt preserved un-promoted: `runs/distill_v3_4x_v3_epoch18_ema_unpromoted.pth`.
 - Full doc: `docs/plans/student_v3_result_2026_08.md`.
 
-### Phase 4 — I1 + I2 EXECUTED, BOTH NOT PROMOTED (2026-09-03)
+### Phase 4 — I1 + I2 + I3 EXECUTED, ALL NOT PROMOTED (2026-09-03)
 - Three sequential experiments (I1 → I2 → I3) to break the RFDN+anneal ceiling.
 - **I1**: nearest-residual RFDN — **COMPLETE**, **NOT PROMOTED**.
   - Hypothesis "nearest residual → sharper" confirmed: full-frame lap_var **109.4** (5.2× v1).
@@ -126,11 +126,21 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
   I2b (span + adv + feat=0, val PSNR EMA 29.911 = +0.022 over v1, lap_var 24.2).
   Per Q6, both runs preserved under `runs/distill_i2a_*/` and `runs/distill_i2b_*/`.
   Docs: `docs/plans/student_phase4_i2_isolated_adv_result.md`.
-- [ ] **Phase 4.I3** — SRVGG-body student (optional; user decision pending).
-  Code change: ~80 LOC (new `TinySRVGGStudent` + `--arch` flag + `archs.py` vendored-RFDN
-  update so it honors `shortcut_mode` + smoke test). Recommend `--feat-weight 0` baseline
-  per I2 lesson. Success: D.2 PASS, PSNR >= 28.0, inference <= 200 ms/frame.
-  Output dir: `runs/distill_i3_srvgg_body/`.
+- [x] **Phase 4.I3** — SRVGG-body student. **COMPLETE, NOT PROMOTED** (D.2 PASS, D.1 FAIL, H6 triggered).
+  Code: ~+320 LOC total (new `TinySRVGGStudent` class in `student.py`, `--arch {rfdn,srvgg}` arg +
+  dispatch in `distill.py`, vendored GUI copy of `TinySRVGGStudent` + auto-sniff `shortcut_mode` in
+  `archs.py::build`, 9 new smoke tests in `tests/test_tiny_srvgg.py`). PREREQUISITE: vendored
+  `archs.py:591` STALE shortcut_mode (PROJECT_MEMORY §8 line 299) — fixed as part of I3.
+  One run, 40 ep, ~21 min, val PSNR EMA **28.10**, held-out test PSNR **27.91**, full-frame lap_var
+  **306.48** (5.3× animevideov3, 14.6× v1). Latency 61 ms/frame (1.7× faster than v1 RFDN).
+  H6 oversharpening halt triggered: student 27.91 < bicubic 29.45. Architecture unlocks
+  animevideov3's response signal but overshoots by 5× even at adv=0 (epoch 1 in-batch lap_var 3236).
+  Per Q6, run preserved: `runs/distill_i3_srvgg_body/` (40 epochs, last 5 un-archived).
+  Docs: `docs/plans/student_phase4_i3_srvgg_body_result.md` (~13 KB).
+
+**Phase 4 closed** per plan §5 "FAIL FAIL FAIL → ship animevideov3 baseline only".
+No new model shipped; v1 RFDN (real-time, 21.0 lap_var) and animevideov3 SRVGG
+(quality, 58.1 lap_var) remain the production GUI options.
 
 ### Always
 
@@ -152,6 +162,7 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 | **Phase 4.I1 RFDN (315K, nearest)** | 27.97 (regressed) | **109.4** (5× v1, oversharpened) | 0.8335 | — | 86.5 | D.2 PASS, D.1 FAIL, **NOT PROMOTED** |
 | **Phase 4.I2a (RFDN 315K, animevideov3+adv+feat=1)** | 29.32 (test) | **20.8** (= v1) | — | — | 95.8 | D.2 FAIL (= v1, no improvement) |
 | **Phase 4.I2b (RFDN 315K, span+adv+feat=0)** | 29.35 (test) | **24.2** (+15% over v1) | — | — | 97.2 | D.2 FAIL (+15%, still below 35) |
+| **Phase 4.I3 SRVGG (317K, animevideov3+adv)** | 27.91 (test) | **306.5** (5.3× animevideov3, 14.6× v1) | 0.8508 | — | **61.0** | D.2 PASS, D.1 FAIL, H6 TRIGGERED, **NOT PROMOTED** |
 
 > Important: the **27.97** for I1 comes from distill.py's `evaluate()` on the held-out `test` split of `anime_video_frames` (192×192 crops). The PSNR for v1/v3/animevideov3 in this table is the **clip** mean from the canonical harness. Same data domain, slightly different test pipeline — close enough to flag the regression but not directly comparable. The **lap_var 109.4** was measured with `tmp/eval_i1_correct_shortcut.py` on the same `tmp/real_video_1sec.mp4` frame 8 used by the canonical harness, so it IS directly comparable to v1's 21.0 / animevideov3's 58.1.
 
@@ -175,6 +186,12 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
   (PSNR 27.97 < bicubic 29.45; lap_var 109.4, **5× v1 but 1.9× animevideov3**).
   Adversarial + from-scratch + new shortcut together = oversharpening.
   Pick one new thing per run; do NOT combine all three.
+- **NEW 2026-09-03**: From-scratch + new-arch (SRVGG) + adv=0.001 → oversharpened
+  (PSNR 27.91 < bicubic 29.45; lap_var 306.5, **14.6× v1, 5.3× animevideov3**).
+  Adversarial + from-scratch + new architecture together = oversharpening.
+  Same failure signature as I1 with a different "new thing" (arch vs shortcut).
+  **Generalization**: from-scratch + any single design choice + adversarial = overshoot.
+  Either warm-start the body, or drop adversarial, or push LPIPS/GT anchor weight up.
 
 ---
 
@@ -243,6 +260,43 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
   user wants to attempt it).
 - Registry: `apps/anime_upscaler_gui/anime_upscaler_gui/registry.py::PRESET_CATALOG`.
 
+### 2026-09-03 — Phase 4.I3 executed (user approved after seeing I2 outcome)
+- Decision: Run SRVGG-body student per plan §3.4: `--arch srvgg --teacher animevideov3
+  --lambda-adv 0.001 --shortcut-anneal off --epochs 40` (single run, no warm-start).
+- Reason: User said "Proceed to I3 (SRVGG body student)". Architecture change is the
+  only path left after I1 + I2 both failed the binding gates. Plan §3.1 hypothesis:
+  SRVGG body matches animevideov3's inductive bias exactly.
+- Result: **D.2 PASS (lap_var 306.5, 5.3× animevideov3 — biggest sharpness jump ever)**
+  but **D.1 FAIL (PSNR 27.91 < bicubic 29.45 → H6 oversharpening halt triggered)**.
+  NOT PROMOTED. Per plan §5 matrix "FAIL FAIL FAIL → ship animevideov3 baseline only".
+- Reversal cost: low. All Phase 4 code is backward-compatible: `--arch rfdn` is the
+  default (preserves Phase 2 v3 / Phase 3 / Phase 4 I1+I2 behavior); vendored
+  `archs.py` change is forward-compatible (default bicubic for v1 ckpts).
+- Latency win: 61 ms/frame vs v1's 104 ms (1.7× faster). If a future SRVGG student
+  variant achieves PSNR ≥ 29.0, this latency headroom is on the table.
+
+### 2026-09-03 — SRVGG body unlocks animevideov3's signal but overshoots (lesson from I3)
+- Decision: For any future SRVGG-student variant, do NOT combine from-scratch + adv.
+  Either warm-start the body from v1 (no from-scratch), or drop adversarial
+  (replace with stronger GT anchor: LPIPS weight 1.0 instead of 0.05).
+- Reason: I3's architecture change DID unlock animevideov3's response signal — full-frame
+  lap_var 306 vs animevideov3's 58, in-batch lap_var 3236 at epoch 1 (adv=0!). The
+  SRVGG body has a sharpness prior that produces high-frequency outputs from random init.
+  When combined with adversarial's distribution-matching gradient, the student overshoots
+  by 5× even when adversarial weight is just 0.001. The pixel accuracy loss (−1.98 dB vs
+  v1) is the cost; the sharpness gain is "free" but unwanted.
+- Action: Phase 5 candidate experiments (warm-start v1 → finetune with SRVGG-distill;
+  or SRVGG + no-adv + LPIPS-weight=1.0). Both orthogonal fixes from I3's recipe.
+
+### 2026-09-03 — Animevideov3 + v1 RFDN remain shipping (re-affirmed post-I3)
+- Decision: Phase 4 closed. v1 RFDN + animevideov3 SRVGG remain the only production
+  GUI options.
+- Reason: All three Phase 4 sub-experiments failed the binding D.1 (PSNR ≥ 29.0) gate
+  per plan §5 "FAIL FAIL FAIL → ship animevideov3 baseline only". SRVGG body is the
+  correct architecture (latency win confirmed) but at this compute / training budget
+  (17-22 min/run) cannot be made PSNR-accurate enough to ship.
+- Registry: `apps/anime_upscaler_gui/anime_upscaler_gui/registry.py::PRESET_CATALOG`.
+
 ---
 
 ## 7. Halt conditions / guardrails
@@ -288,18 +342,27 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
 
 - `anime_upscaler/student.py:126-132` — `set_shortcut_weight()` (unchanged from Phase 3).
 - `anime_upscaler/student.py:134-144` — `set_shortcut_mode()` runtime hook.
+- `anime_upscaler/student.py:150-228` — `TinySRVGGStudent` class (Phase 4 I3, 317K params, SRVGGNetCompact-style).
 - `anime_upscaler/distill.py:276-278` — `--shortcut-mode {bicubic,nearest}` arg (Phase 4 I1).
 - `anime_upscaler/distill.py:279-281` — `--feat-weight {float, default=1.0}` arg (Phase 4 I2).
-- `anime_upscaler/distill.py:371` — `RFDN(scale=args.scale, shortcut_mode=args.shortcut_mode)` build call.
+- `anime_upscaler/distill.py:283-288` — `--arch {rfdn,srvgg}` arg (Phase 4 I3, default rfdn).
+- `anime_upscaler/distill.py:381-394` — arch-aware student build (TinySRVGGStudent + forced tap_chans=None when srvgg).
+- `anime_upscaler/distill.py:529-532` — student forward dispatch (s_feats=[] when srvgg).
 - `anime_upscaler/distill.py:539` — feature distillation gate (`args.feat_weight > 0`).
 - `anime_upscaler/distill.py:552` — feature distillation weight multiplier (`args.feat_weight * `).
 - `anime_upscaler/distill.py:638-639` — `_shortcut_weight` anneal call (unchanged from Phase 3).
-- `anime_upscaler/distill.py:384-385` — recipe log line now includes `shortcut_mode`.
+- `anime_upscaler/distill.py:401` — recipe log line now includes `arch=`.
 - `tmp/eval_i2a_full_frame.py` — one-off full-frame lap_var eval for I2a/I2b (untracked).
-- `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py:591` — **STALE**: vendored RFDN's hardcoded `mode="bicubic"` shortcut. Must be updated before any nearest-shortcut ckpt is shipped via the GUI (Phase 4.I3 prerequisite).
-- `apps/anime_upscaler_gui/anime_upscaler_gui/registry.py::PRESET_CATALOG` — GUI preset catalog.
+- `tmp/eval_i3_full_frame.py` — one-off full-frame lap_var eval for I3 (untracked; arch-aware).
+- `tmp/summarize_i3.py` — per-epoch metric summary for I3 (untracked).
+- `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py` (vendored RFDN, lines ~560-595) — `shortcut_mode` arg honored at forward (Phase 4 I3 PREREQUISITE met; STALE entry below is RESOLVED).
+- `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py` (vendored TinySRVGGStudent, lines ~600-645) — Phase 4 I3 vendored copy, num_params() method.
+- `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py::build(kind='srvgg_student')` — Phase 4 I3 dispatch (sniffs num_feat + num_conv + scale from ckpt).
+- `apps/anime_upscaler_gui/anime_upscaler_gui/archs.py::build(kind='rfdn_student')` — auto-sniffs shortcut_mode from ckpt args (Phase 4 I3 prerequisite fix).
+- `apps/anime_upscaler_gui/anime_upscaler_gui/registry.py::PRESET_CATALOG` — GUI preset catalog (NOT updated for srvgg_student; would only be added on promotion, which didn't happen).
 - `tmp/eval_i1_correct_shortcut.py` — one-off full-frame eval with correct shortcut mode (forensics only, untracked).
 - `tests/test_shortcut_mode.py` — 4 smoke tests covering default/nearest/runtime-flip/invalid.
+- `tests/test_tiny_srvgg.py` — 9 smoke tests covering params/shape/return_features/residual/no-ops/parity/build (Phase 4 I3).
 
 ### Eval / harness
 - `scripts/compare_students_vs_pretrained.py` — quality harness with `--v3-ckpt` flag.
@@ -345,3 +408,22 @@ Last updated: 2026-09-03 (after Phase 4.I1 execution).
   New result doc: `docs/plans/student_phase4_i2_isolated_adv_result.md` (10196 bytes).
   All 19 pre-existing tests still pass (`test_shortcut_mode` + `test_feature_distillation`).
   Commits: `<this-commit>` (docs pass), `7ac0665` (I2 code + test).
+- **2026-09-03**: Phase 4.I3 executed (~21 min wall-time, 40 epochs). Code added ~+320 LOC
+  total: new `TinySRVGGStudent` class in `anime_upscaler/student.py` (52 ch × 12 convs + PReLU
+  + PixelShuffle + nearest residual, 317,300 params, matches v1's 315K budget); `--arch {rfdn,srvgg}`
+  argparse in `distill.py` + arch-aware student build + forward dispatch (s_feats=[] when srvgg);
+  vendored `TinySRVGGStudent` + vendored RFDN `shortcut_mode` honor in
+  `apps/.../archs.py::build` (sniffs num_feat/num_conv/scale from srvgg_student ckpt;
+  auto-sniffs shortcut_mode from rfdn_student ckpt args); new `tests/test_tiny_srvgg.py` with 9
+  smoke tests (all passing). Held-out test PSNR **27.91** (D.1 FAIL), val EMA PSNR **28.10**,
+  full-frame lap_var **306.48** (D.2 PASS, 5.3× animevideov3, 14.6× v1), latency 61 ms/frame
+  (1.7× faster than v1 RFDN). H6 oversharpening halt triggered: student 27.91 < bicubic 29.45.
+  Architecture unlock confirmed (lap_var at epoch 1 already 3236 with adv=0); overshooting
+  signature matches I1 (from-scratch + new design + adv = oversharpened). All 28 tests pass
+  (4 I1 + 15 Phase 2 + 9 I3). **New decisions logged** in §6: I3 executed, SRVGG body
+  unlocks animevideov3 signal but overshoots, Phase 4 closed per plan §5 "FAIL FAIL FAIL →
+  ship animevideov3 baseline only". **§5 empirical anchors** add I3 row. **§4 pending tasks**
+  marks I3 complete (was the only pending item). **§8 code anchors** refreshed for I3 file
+  structure. AGENTS.md Phase 4 section will be updated to "post-I3". Result doc:
+  `docs/plans/student_phase4_i3_srvgg_body_result.md` (~13 KB). Per Q6, full I3 run
+  preserved: `runs/distill_i3_srvgg_body/` with all 40 epochs (last 5 un-archived).

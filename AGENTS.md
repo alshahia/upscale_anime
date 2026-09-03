@@ -1011,13 +1011,13 @@ Attempted to train an adversarial v3 student (RFDN distilled from RealESRGAN-ani
 
 Three sequential experiments to break the RFDN+anneal ceiling established in Phase 3. Full plan in `docs/plans/student_phase4_nearest_adv_srvgg_plan.md` (391 lines, committed `26ac928`).
 
-**Status (2026-09-03, post-I2)**: I1 + I2 EXECUTED, both **NOT PROMOTED**.
+**Status (2026-09-03, post-I3 — PHASE 4 CLOSED)**: I1 + I2 + I3 ALL EXECUTED, ALL **NOT PROMOTED**.
 - I1 result doc: `docs/plans/student_phase4_i1_nearest_residual_result.md` (9056 bytes).
 - I2 result doc: `docs/plans/student_phase4_i2_isolated_adv_result.md` (10196 bytes).
-- I1 code: commit `bd72dd3`. I2 code: in flight (+`--feat-weight` flag, see §decision matrix).
-- Tests: `tests/test_shortcut_mode.py` (4 passing) + `tests/test_feature_distillation.py` (15 passing) — all 19 still pass after I2 change.
-- I3: pending user decision. Per matrix "FAIL FAIL → ship animevideov3 baseline only".
-- Memory file `docs/PROJECT_MEMORY.md` §3 / §4 / §5 / §6 reflects the I1 + I2 outcomes.
+- I3 result doc: `docs/plans/student_phase4_i3_srvgg_body_result.md` (~13 KB).
+- I1 code: commit `bd72dd3`. I2 code: `7ac0665`. I3 code: `<this-commit>`.
+- Tests: `tests/test_shortcut_mode.py` (4) + `tests/test_feature_distillation.py` (15) + `tests/test_tiny_srvgg.py` (9) — all 28 pass post-I3.
+- Memory file `docs/PROJECT_MEMORY.md` §3 / §4 / §5 / §6 / §8 reflects the I1 + I2 + I3 outcomes.
 
 ### Phase 4.I1 — Nearest-residual RFDN (cheap, ~1 hour) — **EXECUTED 2026-09-03, NOT PROMOTED**
 
@@ -1045,14 +1045,20 @@ Three sequential experiments to break the RFDN+anneal ceiling established in Pha
 - **Full doc**: `docs/plans/student_phase4_i2_isolated_adv_result.md` (10196 bytes).
 - **Lesson**: `feat_weight=0` is the safe default for any future SPAN+adv RFDN variant. Animevideov3 is too far from v1's distribution for adversarial-only intervention to help; SRVGG body (I3) is needed to make animevideov3's response signal useful.
 
-### Phase 4.I3 — SRVGG-body student (heavy, ~3 hours)
+### Phase 4.I3 — SRVGG-body student (heavy, ~3 hours) — **EXECUTED 2026-09-03, NOT PROMOTED**
 
 - **Hypothesis**: Animevideov3's plain SRVGG stack is just better for anime than RFDN's FIM+PA design. Copy the architecture at our 315K budget.
-- **Change**: New `TinySRVGGStudent` class in `student.py` (12 convs × 42 channels, PReLU, PixelShuffle, nearest residual, ~315K params). Add `--arch {rfdn,srvgg}` to `distill.py`. Wire into `archs.py`. ~80 LOC + smoke test.
-- **Smoke first**: `python -c "from anime_upscaler.student import TinySRVGGStudent; ..."` → verify shape `(1, 3, 192, 192)` and params < 600K.
-- **Command**: `distill.py --arch srvgg --teacher animevideov3 --shortcut-mode nearest --lambda-adv 0.001 --epochs 40 --lr 5e-5`
-- **Success**: D.2 PASS (lap_var >= 35), PSNR >= 28.0, inference <= 200 ms/frame.
-- **Output dir**: `runs/distill_i3_srvgg_body/`
+- **Change**: New `TinySRVGGStudent` class in `student.py` (12 convs × 52 channels, PReLU, PixelShuffle, nearest residual, 317,300 params — matches v1's 315K). Add `--arch {rfdn,srvgg}` to `distill.py`. Wire into `archs.py` (vendored copy + auto-sniff shortcut_mode for rfdn_student). ~+320 LOC total + 9 smoke tests.
+- **PREREQUISITE**: PROJECT_MEMORY §8 line 299 flagged `archs.py:591` as STALE; I3 fixes it (vendored RFDN now honors shortcut_mode; auto-sniffed from ckpt args by build()).
+- **Smoke first**: `python -c "from anime_upscaler.student import TinySRVGGStudent; ..."` → params 317,300 (<600K) and shape `(1, 3, 192, 192)`. PASS.
+- **Command**: `distill.py --arch srvgg --teacher animevideov3 --shortcut-mode nearest --lambda-adv 0.001 --epochs 40 --lr 5e-5` (full command in result doc §1).
+- **Success criterion**: D.2 PASS (lap_var >= 35), PSNR >= 28.0, inference <= 200 ms/frame.
+- **Result**: **D.2 PASS (lap_var 306.48, 5.3× animevideov3, 14.6× v1)**, **D.1 FAIL (PSNR 27.91 < 29.0)** + **H6 oversharpening halt triggered** (student 27.91 < bicubic 29.45), latency **61 ms/frame** (1.7× faster than v1's 104 ms; PASS with huge margin). NOT PROMOTED.
+- **Architecture unlock confirmed**: SRVGG body matches animevideov3's response signal exactly — in-batch lap_var at epoch 1 (adv=0) was already 3236 vs v1's typical ~350 (~9× sharper). The body has a sharpness prior.
+- **Overshoot signature**: same as I1 (from-scratch + new-design + adv = oversharpened). Generalization: pick one new thing per run.
+- **Output dir**: `runs/distill_i3_srvgg_body/` (preserved per Q6, all 40 epochs).
+- **Full doc**: `docs/plans/student_phase4_i3_srvgg_body_result.md`.
+- **Lesson**: SRVGG body is correct architecture but **at this compute budget (~17-22 min/run) it cannot be made PSNR-accurate enough to ship**. Phase 5 candidates: warm-start v1 → finetune with SRVGG-distill, OR SRVGG + no-adv + LPIPS-weight=1.0 (push GT anchor instead of adversarial).
 
 ### Halt conditions (apply to all phases)
 
@@ -1075,7 +1081,7 @@ Three sequential experiments to break the RFDN+anneal ceiling established in Pha
 | PASS | PASS | PASS | I3 (most novel) |
 | FAIL | FAIL | FAIL | animevideov3 baseline only (already shipped) |
 
-**Current state (2026-09-03, post-I2)**: I1 row = D.1 FAIL, I2 row = D.2 FAIL (both sub-runs). Per matrix "FAIL FAIL → ship animevideov3 baseline only". I3 is the last hope if you want to attempt an architecture change (SRVGG body). Otherwise Phase 4 closes with the existing v1 (real-time, 21.0 lap_var) and animevideov3 (quality, 58.1 lap_var) shipped in the GUI.
+**Current state (2026-09-03, post-I3 — PHASE 4 CLOSED)**: I1 row = D.1 FAIL, I2 row = D.2 FAIL (both sub-runs), I3 row = D.1 FAIL + H6 triggered. Per matrix "FAIL FAIL FAIL → ship animevideov3 baseline only". **No new student shipped**. Production GUI options remain v1 RFDN (real-time, 21.0 lap_var) and animevideov3 SRVGG (quality, 58.1 lap_var). Phase 5 candidates are documented in the I3 result doc §4.4 but are NOT planned.
 
 ### Rollback (if all fail)
 
@@ -1096,16 +1102,19 @@ Per-epoch ckpts in `runs/` are preserved (Q6 rule).
 | `tests/test_shortcut_mode.py` | I1 | +10 |
 | `tests/test_tiny_srvgg.py` | I3 | +30 |
 
-### Status snapshot (2026-09-03, post-I2)
+### Status snapshot (2026-09-03, post-I3 — Phase 4 closed)
 
 - **Branch**: `feature/phase-1-realtime-4k`
-- **HEAD**: post-I2 (commits below, after I1's `7a7a624`)
+- **HEAD**: post-I3 (commits below, after I2's `7d4e491`)
 - **Phase 4 I1 commits**: `bd72dd3` (code + result doc + tests), `924995f` (memory update), `7a7a624` (memory self-record).
-- **Phase 4 I2 commits (in flight)**: `+--feat-weight` flag + I2 result doc + AGENTS.md / PROJECT_MEMORY.md updates (one commit series at end of post-I2 pass).
+- **Phase 4 I2 commits**: `7ac0665` (code + tests), `8929287` (memory update), `7d4e491` (memory self-record).
+- **Phase 4 I3 commits**: `<this-commit>` (TinySRVGGStudent + --arch flag + vendored GUI copy + result doc + 9 tests); memory update commits to follow.
 - **Phase 4 I1 outcome**: D.2 PASS (lap_var 109.4), D.1 FAIL (PSNR 27.97). NOT PROMOTED.
-- **Phase 4 I2 outcome**: I2a D.2 FAIL (lap_var 20.8, = v1), I2b D.2 FAIL (lap_var 24.2, +15% over v1 but below 35 threshold). I2b is the marginal winner (val PSNR +0.022 dB over v1) confirming L_feat was the regression driver in the 2026-08 span+adv run.
-- **Per matrix "FAIL FAIL → ship animevideov3 baseline only"**: Phase 4 is effectively closed; I3 (SRVGG body) is the only path left if you want to attempt the architecture change.
-- **Pending**: user decision — proceed to Phase 4.I3 (SRVGG body, ~3 hours), or stop Phase 4 and accept the existing shipped options.
+- **Phase 4 I2 outcome**: I2a D.2 FAIL (lap_var 20.8 = v1), I2b D.2 FAIL (lap_var 24.2, +15% over v1 but below 35). I2b is the marginal winner (val PSNR +0.022 dB over v1) confirming L_feat was the regression driver in the 2026-08 span+adv run.
+- **Phase 4 I3 outcome**: D.2 PASS (lap_var 306.48, 5.3× animevideov3, 14.6× v1), D.1 FAIL (PSNR 27.91), H6 oversharpening halt triggered (student < bicubic). Latency win: 61 ms/frame (1.7× faster than v1). NOT PROMOTED.
+- **Per matrix "FAIL FAIL FAIL → ship animevideov3 baseline only"**: **Phase 4 closed**. v1 RFDN + animevideov3 SRVGG remain the production GUI options. No new model shipped.
+- **Total Phase 4 wall-time**: ~80 min of training (I1 22 + I2a 17 + I2b 24 + I3 21).
+- **Total Phase 4 LOC**: ~+320 (5 new flags / dispatch points, 1 new student class, vendored GUI parity, 4 + 9 new tests).
 
 
 Rule of thumb: if a file isn't imported by `src/` or referenced by a config, it's likely dead.
