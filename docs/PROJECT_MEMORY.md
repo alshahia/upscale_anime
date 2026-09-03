@@ -52,7 +52,8 @@ HEAD: see §2 below.
 
 | Commit | Message |
 |---|---|
-| _upcoming_ | Phase 4.I1: nearest-residual RFDN — D.2 PASS, D.1 FAIL, NOT PROMOTED |
+| `924995f` | memory: I1 result + decision log + empirical anchors updated |
+| `bd72dd3` | Phase 4.I1: nearest-residual RFDN — D.2 PASS, D.1 FAIL, NOT PROMOTED |
 | `2cb458c` | memory: self-record creation in §2 HEAD table and §9 update history |
 | `4434609` | memory: add docs/PROJECT_MEMORY.md (canonical session-starting state file) and AGENTS.md pointer |
 | `624fb11` | AGENTS.md: add Phase 4 plan section (I1+I2+I3, awaiting approval) |
