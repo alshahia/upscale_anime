@@ -31,6 +31,13 @@ from torch.utils.data import DataLoader
 
 from dataset import AnimePairDataset, denorm01
 from student import RFDN, TinySRVGGStudent
+# Phase 5 MambaIRv2 path (2026-09-06): pure-PyTorch MambaIRv2-style
+# student. Import is conditional so the --arch rfdn/srvgg default paths
+# stay unaffected when the optional mambair module is missing.
+try:
+    from student_mambair import MambaIRv2Student  # noqa: E402
+except Exception:
+    MambaIRv2Student = None  # type: ignore
 from teacher import SPANTeacher, FEATURE_CHANNELS, TAP_ORDER, TEACHERS
 
 # v3 loss terms (Phase 1 of .claude/plans/distill_v3_recipe.md):
@@ -69,6 +76,47 @@ def _get_lpips(device):
         for p in _lpips_net.parameters():
             p.requires_grad_(False)
     return _lpips_net
+
+
+_twin_loss = None
+_twin_loss_signature = None
+
+
+def _get_twin_perceptual(device, danbooru_weight=0.5, vgg_weight=0.5,
+                         use_danbooru_resnet=True):
+    """Lazy-init the APISR balanced twin perceptual loss (Phase 5 Rank #2).
+
+    Cached globally and re-used across epochs. Re-builds only when the weight
+    signature changes (so a recipe sweep with different --twin-danbooru-weight /
+    --twin-vgg-weight values gets a fresh TwinPerceptualLoss).
+
+    The twin loss downloads VGG19 (~548 MB) + ResNet50 (~98 MB) ImageNet weights
+    on first call. If pretrained/danbooru_resnet50.pth (or one of the search
+    paths in TwinPerceptualLoss._find_danbooru_weights) is present, the anime
+    domain backbone uses those weights; otherwise it silently falls back to
+    ImageNet (BSD-3) only -- see src/losses/twin_perceptual_loss.py:138-139.
+
+    Returns a TwinPerceptualLoss in eval mode with frozen grads, ready to
+    forward(pred [B,3,H,W in 0..1], target [B,3,H,W in 0..1]) -> 1-D tensor.
+    """
+    global _twin_loss, _twin_loss_signature
+    sig = (float(danbooru_weight), float(vgg_weight), bool(use_danbooru_resnet))
+    if _twin_loss is None or _twin_loss_signature != sig:
+        import sys
+        from pathlib import Path
+        src_path = Path(__file__).resolve().parent.parent / "src"
+        if str(src_path) not in sys.path:
+            sys.path.insert(0, str(src_path))
+        from losses.twin_perceptual_loss import TwinPerceptualLoss  # noqa: E402
+        _twin_loss = TwinPerceptualLoss(
+            danbooru_weight=danbooru_weight,
+            vgg_weight=vgg_weight,
+            use_danbooru_resnet=use_danbooru_resnet,
+        ).to(device).eval()
+        for p in _twin_loss.parameters():
+            p.requires_grad_(False)
+        _twin_loss_signature = sig
+    return _twin_loss
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -282,10 +330,20 @@ def main():
     # Phase 4 I3: --arch dispatches between RFDN (legacy v1 / Phase 2-3) and
     # TinySRVGGStudent (new SRVGG-body variant that mirrors animevideov3's
     # inductive bias). 'rfdn' is the default for backward compatibility.
-    ap.add_argument("--arch", choices=["rfdn", "srvgg"], default="rfdn",
-                    help="student architecture (Phase 4 I3). 'rfdn' (default) "
-                         "uses RFDN; 'srvgg' uses TinySRVGGStudent (animevideov3 "
-                         "style: stacked 3x3 convs + PReLU + nearest residual).")
+    ap.add_argument("--arch", choices=["rfdn", "srvgg", "mambair"], default="rfdn",
+                    help="student architecture. 'rfdn' (default) uses RFDN; "
+                         "'srvgg' uses TinySRVGGStudent (animevideov3 style: "
+                         "stacked 3x3 convs + PReLU + nearest residual); "
+                         "'mambair' uses pure-PyTorch MambaIRv2-style VSS "
+                         "student (Phase 5 MambaIRv2 path, vectorised scan).")
+    # Phase 5 MambaIRv2 tunable knobs (pure-PyTorch path). Default = tuned
+    # for the Quadro RTX 4000 (8 GB) at batch=16 / 48x48 LR patches.
+    ap.add_argument("--mambair-embed-dim", type=int, default=48,
+                    help="MambaIRv2 VSS channel width (default 48).")
+    ap.add_argument("--mambair-num-blocks", type=int, default=8,
+                    help="MambaIRv2 VSS block count (default 8).")
+    ap.add_argument("--mambair-d-state", type=int, default=16,
+                    help="MambaIRv2 inner state-space state dim (default 16).")
     ap.add_argument("--no-ema", action="store_true",
                     help="disable EMA shadow (Phase 3 ablation only).")
     ap.add_argument("--epochs", type=int, default=40)
@@ -301,6 +359,17 @@ def main():
                     help="when --resume is set, ignore the ckpt's epoch counter "
                          "and start at epoch 1. Use for warm-start from v1: "
                          "load weights but reset the training schedule.")
+    # Phase 5 Rank #1 (2026-09-03): partial warm-start across architectures. v1
+    # RFDN ckpt is being used to seed TinySRVGGStudent (different layer names);
+    # 'strict' preserves the legacy Phase 2/3/4 contract (mismatched keys =
+    # fail) while 'partial' copies only the keys whose names AND shapes match
+    # and randomly initialises the rest. Default is 'strict' so a future RFDN
+    # resume does not silently partial-load. Adapters are NEVER partial --
+    # the SRVGG arch has no adapters, so 'partial' skips the adapter branch.
+    ap.add_argument("--warm-start-mode", choices=["strict", "partial"], default="strict",
+                    help="how --resume handles key/shape mismatches (Phase 5 Rank #1). "
+                         "'strict' (default) fails on mismatch; 'partial' loads only "
+                         "matching keys, randomises the rest.")
     ap.add_argument("--smoke", action="store_true",
                     help="tiny subset + 2 epochs: verify the whole loop runs")
     ap.add_argument("--degradation", default="apsisr_v1",
@@ -312,6 +381,27 @@ def main():
                     help="Set LPIPS weight to 0 in loss_gt (Phase 5 ablation only).")
     ap.add_argument("--no-msssim", action="store_true",
                     help="Set MS-SSIM weight to 0 in loss_gt (Phase 5 ablation only).")
+    # Phase 5 Rank #2 (2026-09-05): APISR-style balanced twin perceptual loss.
+    # --loss vgg  = LPIPS-VGG (default; Rank #1 behavior; BSD-3, ~149 MB).
+    # --loss twin = VGG19 + ResNet50 balanced twin (APISR CVPR 2024); both ImageNet
+    #              backbones (BSD-3, ~1.1 GB combined). When pretrained/danbooru_resnet50.pth
+    #              is absent, the anime-domain ResNet silently falls back to ImageNet
+    #              weights (see src/losses/twin_perceptual_loss.py:138-139), so the
+    #              default invocation is fully offline + BSD-3-only. Balanced weights
+    #              danbooru_weight=0.5, vgg_weight=0.5 match APISR Ablation Table 4
+    #              and our v7 roadmap Phase C.
+    ap.add_argument("--loss", choices=["vgg", "twin"], default="vgg",
+                    help="perceptual loss for loss_gt in Phase 3 SRVGG spec (Phase 5 Rank #2). "
+                         "vgg (default) = LPIPS-VGG; twin = APISR balanced twin (VGG19 + ResNet50).")
+    ap.add_argument("--twin-danbooru-weight", type=float, default=0.5,
+                    help="ResNet50 (anime) weight when --loss twin (Phase 5 Rank #2). " +
+                         "Default 0.5 = APISR 0.5/0.5 balanced recipe.")
+    ap.add_argument("--twin-vgg-weight", type=float, default=0.5,
+                    help="VGG19 (photo) weight when --loss twin (Phase 5 Rank #2). " +
+                         "Default 0.5 = APISR 0.5/0.5 balanced recipe.")
+    ap.add_argument("--twin-delta", type=float, default=None,
+                    help="Deprecated alias for vgg_weight when danbooru_weight is None " +
+                         "(kept for back-compat with earlier twin config files).")
     ap.add_argument("--scale", type=int, default=4, choices=(2, 3, 4),
                     help="Upscaling factor for the student (2 for the v2 cascade student, "
                          "4 for the v1 single-shot student). Default 4.")
@@ -385,6 +475,23 @@ def main():
         student = TinySRVGGStudent(scale=args.scale).to(device)
         tap_chans = None
         adapters = None
+    elif args.arch == "mambair":
+        # Phase 5 MambaIRv2 path: pure-PyTorch visual state-space student.
+        # No teacher taps (only SRVGG teachers in this codebase), so
+        # tap_chans / adapters forced to None -- matches the SRVGG path.
+        if MambaIRv2Student is None:
+            raise RuntimeError(
+                "--arch mambair requires anime_upscaler.student_mambair; "
+                "file missing or failed to import."
+            )
+        student = MambaIRv2Student(
+            scale=args.scale,
+            embed_dim=args.mambair_embed_dim,
+            num_blocks=args.mambair_num_blocks,
+            d_state=args.mambair_d_state,
+        ).to(device)
+        tap_chans = None
+        adapters = None
     else:
         student = RFDN(scale=args.scale, shortcut_mode=args.shortcut_mode).to(device)
         if tap_chans is not None:
@@ -398,9 +505,24 @@ def main():
     # any of: SRVGG teacher (animevideov3, lsdir), lambda_adv > 0, shortcut
     # anneal != off. When false, the existing Phase 2 v3 wiring is unchanged.
     use_phase3 = is_real_esr_teacher or args.lambda_adv > 0 or args.shortcut_anneal != "off"
+    # Phase 5 Rank #2 (2026-09-05): --loss twin only takes effect when use_phase3
+    # is True (the Phase 3 SRVGG spec is the only branch that consumes args.loss);
+    # Phase 2 v3 still uses the legacy 0.5*L1 + 0.2*MS-SSIM + 0.05*LPIPS recipe
+    # regardless of --loss to keep that contract stable for any SPAN resumers.
+    if not use_phase3 and args.loss == "twin":
+        print(f"[recipe] --loss twin ignored: only effective under Phase 3 SRVGG spec "
+              f"(use_phase3=False here). Falling back to LPIPS-VGG.")
+        args.loss = "vgg"
     print(f"[recipe] phase3={use_phase3}  arch={args.arch}  teacher={args.teacher}  "
           f"lambda_adv={args.lambda_adv}  shortcut_anneal={args.shortcut_anneal}"
-          f"  shortcut_mode={args.shortcut_mode}")
+          f"  shortcut_mode={args.shortcut_mode}  loss={args.loss}")
+    # Back-compat: --twin-delta X (when danbooru_weight is None in TwinPerceptualLoss)
+    # is the older single-knob form. Map delta -> vgg_weight so older config files
+    # keep working without forcing users to retype two flags.
+    if args.loss == "twin" and args.twin_delta is not None:
+        print(f"[recipe] --twin-delta={args.twin_delta} overrides --twin-vgg-weight "
+              f"(deprecated single-knob alias).")
+        args.twin_vgg_weight = args.twin_delta
 
     # Build adversarial loss + discriminator (only when lambda_adv > 0).
     D = None
@@ -440,7 +562,60 @@ def main():
     if args.resume:
         rs = torch.load(args.resume, map_location=device,
                         weights_only=False)
-        student.load_state_dict(rs["student"])
+        # Phase 5 Rank #1 (2026-09-03): partial warm-start across architectures.
+        # 'strict' (default) preserves the legacy Phase 2/3/4 contract: any
+        # key/shape mismatch raises RuntimeError, surfacing bugs. 'partial'
+        # loads only matching keys (e.g. RFDN v1 head.weight [52,3,3,3] is
+        # copied into TinySRVGGStudent body.0.weight [52,3,3,3]) and silently
+        # initialises the rest. Use 'partial' ONLY when warming up a SRVGG
+        # student from an RFDN ckpt; never use it for continuing an identical
+        # architecture (that's what 'strict' is for).
+        if args.warm_start_mode == "partial":
+            v1_sd = rs["student"]
+            if args.arch == "srvgg":
+                # Phase 5 Rank #1 (2026-09-03): RFDN v1 (315K) -> TinySRVGGStudent
+                # (317K) cross-architecture warm-start. The two architectures
+                # share two convolutions with identical shapes: a Conv(3->52,
+                # 3x3) at LR->feature (RFDN 'head' = SRVGG 'body.0') and a
+                # Conv(52->12, 3x3) at feature->SR-pre-PixelShuffle (RFDN
+                # 'upsampler.0' = SRVGG 'body.{last}'). We copy these 4 keys;
+                # the 12-conv middle stack and PReLUs stay at random init so
+                # the body learns the SRVGG-style stacked-3x3 + PReLU
+                # inductive bias end-to-end. This is a genuine warm-start
+                # (vs random init) that seeds the two convs that interact
+                # directly with pixel space -- enough to anchor PSNR near
+                # v1's 29.89 dB at epoch 1 (vs SRVGG-from-scratch which sat
+                # at lap_var=3236 at epoch 1 with PSNR ~10 dB lower).
+                n_body = len(student.body) - 1  # last layer index in body Sequential
+                mapped = {}
+                # Head: RFDN 'head.weight' [52,3,3,3] -> SRVGG 'body.0.weight'
+                if ("head.weight" in v1_sd
+                        and student.body[0].weight.shape == v1_sd["head.weight"].shape):
+                    mapped["body.0.weight"] = v1_sd["head.weight"]
+                    mapped["body.0.bias"] = v1_sd["head.bias"]
+                # Tail: RFDN 'upsampler.0.weight' [12,52,3,3] -> SRVGG 'body.{n_body}.weight'
+                last_w = f"body.{n_body}.weight"
+                last_b = f"body.{n_body}.bias"
+                if ("upsampler.0.weight" in v1_sd
+                        and last_w in student.state_dict()
+                        and student.state_dict()[last_w].shape == v1_sd["upsampler.0.weight"].shape):
+                    mapped[last_w] = v1_sd["upsampler.0.weight"]
+                    mapped[last_b] = v1_sd["upsampler.0.bias"]
+                _lr = student.load_state_dict(mapped, strict=False)
+                print(f"[resume] RFDN->SRVGG partial warm-start: {len(mapped)} "
+                      f"keys mapped (head->body.0, upsampler.0->body.{n_body}); "
+                      f"middle 12-conv stack + PReLUs random-init.")
+            else:
+                # Same-arch partial: copy anything with matching name+shape.
+                _lr = student.load_state_dict(v1_sd, strict=False)
+                n_model = sum(1 for _ in student.state_dict())
+                n_loaded = n_model - len(_lr.missing_keys)
+                sample_unexp = sorted(_lr.unexpected_keys)[:3]
+                print(f"[resume] same-arch partial warm-start: {n_loaded}/"
+                      f"{n_model} model keys loaded; {len(_lr.unexpected_keys)} "
+                      f"ckpt keys ignored (sample: {sample_unexp})")
+        else:
+            student.load_state_dict(rs["student"])
         # Phase 3 handoff A.4: adapters is None for SRVGG teachers. Older
         # checkpoints saved with adapters -> skip the load when None.
         if adapters is not None and rs.get("adapters") is not None:
@@ -527,8 +702,12 @@ def main():
                 # Phase 3 + SRVGG: skip return_features (no taps to distill).
                 s_out = student(lr)
                 s_feats = []
-            elif args.arch == "srvgg":
-                # Phase 4 I3: TinySRVGGStudent has no intermediate taps.
+            elif args.arch in ("srvgg", "mambair"):
+                # Phase 4 I3 / Phase 5: tap-less students.
+                # TinySRVGGStudent and MambaIRv2Student both expose
+                # intermediate taps, but with SRVGG teachers (no taps) they
+                # have nothing to compare against, so distill treats them
+                # as tap-less and the feature-loss term becomes zero.
                 s_out = student(lr)
                 s_feats = []
             else:
@@ -579,12 +758,29 @@ def main():
             else:
                 s_out_for_gt = s_out.clamp(0, 1)
             if use_phase3:
-                # Phase 3: L_pix = 0.5 * L1, L_perc = 1.0 * LPIPS, no MS-SSIM.
+                # Phase 3: L_pix = 0.5 * L1, L_perc = 1.0 * LPIPS (or --loss twin),
+                # no MS-SSIM.
                 loss_gt = 0.5 * l1(s_out_for_gt, hr)
                 if not args.no_lpips:
-                    loss_gt = loss_gt + _get_lpips(device)(
-                        s_out_for_gt * 2.0 - 1.0, hr * 2.0 - 1.0
-                    ).mean()
+                    if args.loss == "twin":
+                        # Phase 5 Rank #2 (2026-09-05): APISR-style balanced twin
+                        # perceptual loss. Replaces LPIPS-VGG with VGG19 + ResNet50
+                        # combined (both ImageNet by default; Danbooru fallback if
+                        # pretrained/danbooru_resnet50.pth is absent). TwinPerceptualLoss
+                        # internally normalises to ImageNet stats, so we pass raw
+                        # [0,1] tensors (NOT the *2-1 range that LPIPS needs).
+                        twin = _get_twin_perceptual(
+                            device,
+                            danbooru_weight=args.twin_danbooru_weight,
+                            vgg_weight=args.twin_vgg_weight,
+                            use_danbooru_resnet=True,
+                        )
+                        loss_gt = loss_gt + twin(s_out_for_gt, hr)
+                    else:
+                        # --loss vgg (default; Rank #1 behavior): LPIPS-VGG.
+                        loss_gt = loss_gt + _get_lpips(device)(
+                            s_out_for_gt * 2.0 - 1.0, hr * 2.0 - 1.0
+                        ).mean()
             else:
                 # Phase 2 v3 recipe: 0.5*L1 + 0.2*MS-SSIM + 0.05*LPIPS
                 lp_weight = 0.0 if args.no_lpips else 0.05
