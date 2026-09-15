@@ -178,8 +178,13 @@ def is_supported_kind(kind: str) -> bool:
     return archs.is_supported_kind(kind)
 
 
-# Back-compat alias (Phase A1).
-_is_supported_kind = is_supported_kind  # noqa: F822
+# Back-compat alias (Phase A1). Access emits a DeprecationWarning -- see
+# apps/anime_upscaler_gui/anime_upscaler_gui/_deprecation.py for the
+# removal timeline (currently 0.4.0).
+from ._deprecation import make_alias as _make_deprecated_alias
+_is_supported_kind = _make_deprecated_alias(
+    "is_supported_kind", is_supported_kind, removal_version="0.4.0",
+)  # noqa: F822
 
 
 def _detect_kind_from_state(state: dict) -> Optional[str]:
@@ -469,5 +474,10 @@ class ModelRegistry:
 
 # ----------------------------------------------------------------------------
 # Deprecated underscore aliases (back-compat with existing scripts).
+# Access emits a DeprecationWarning; see
+# apps/anime_upscaler_gui/anime_upscaler_gui/_deprecation.py for the
+# single-source-of-truth removal timeline (currently 0.4.0).
 # ----------------------------------------------------------------------------
-_ModelRegistry = ModelRegistry  # noqa: F822
+_ModelRegistry = _make_deprecated_alias(
+    "ModelRegistry", ModelRegistry, removal_version="0.4.0",
+)  # noqa: F822

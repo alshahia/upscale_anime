@@ -31,6 +31,8 @@ from typing import Any, Callable, List, Tuple
 import numpy as np
 import torch
 
+from .._deprecation import make_alias
+
 from ..archs import build, _save_sr, capabilities as _arch_caps
 
 log = logging.getLogger(__name__)
@@ -296,7 +298,9 @@ register_backend("PyTorch", _pytorch_predicate, _pytorch_factory)
 # ============================================================================ #
 # Backwards-compat: the old function name.
 # ============================================================================ #
-_make_backend = select_backend  # noqa: F822 -- preserved for Phase A1 contract
+_make_backend = make_alias(
+    "select_backend", select_backend, removal_version="0.4.0",
+)  # noqa: F822 -- preserved for Phase A1/B3 contract
 
 
 __all__ = [

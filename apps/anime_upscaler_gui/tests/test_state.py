@@ -105,10 +105,13 @@ def test_form_state_validates_tile_size():
 
 
 def test_defaults_extends_form_state():
-    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import _Defaults
+    # After Phase E, _Defaults is a DeprecatedAlias proxy; issubclass on
+    # an instance is not supported. We test against the public Defaults
+    # name (the migration we want users to follow):
+    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
     from apps.anime_upscaler_gui.anime_upscaler_gui.state import FormState
-    assert issubclass(_Defaults, FormState)
-    d = _Defaults()
+    assert issubclass(Defaults, FormState)
+    d = Defaults()
     assert d.outscale == 2.0
     assert d.batch_size == 1
     assert d.tile_size == 256

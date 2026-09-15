@@ -320,6 +320,8 @@ For recipes that walk through adding a model, setting, or backend, see
 
 ## 8. Backwards compatibility
 
+### 8.1 The underscore aliases
+
 The following underscore-prefixed names are aliases kept for older
 scripts (Phase A1):
 
@@ -336,5 +338,55 @@ _is_supported_kind -> is_supported_kind
 _make_backend    -> select_backend
 ```
 
-New code should use the public names. The aliases will continue to work
-as long as the audit's back-compat commitment holds.
+### 8.2 Soft deprecation (Phase E)
+
+Every alias in section 8.1 is wrapped by `DeprecatedAlias` from
+`apps/anime_upscaler_gui/anime_upscaler_gui/_deprecation.py`. The proxy
+behaves exactly like the underlying public name for every Python
+operation (construction, `isinstance`, `pickle`, dataclass introspection,
+attribute access, `setattr`/`delattr` for monkeypatching, equality,
+`repr`, etc.). The only side effect is a `DeprecationWarning`.
+
+The warning fires **on first use, not at import time**:
+
+- `_RunJob(...)` raises a `DeprecationWarning` whose message names the
+  public replacement and the removal milestone.
+- Subsequent uses from the same call site are silent (one-shot dedup
+  keyed by `(public_name, removal_version, caller_filename)`); this
+  prevents log spam even in long-lived sessions.
+- Importing the module that declares the alias is silent: only actual
+  attribute access / calls trigger the warning.
+- Dunder introspection (`__doc__`, `__module__`, `__hash__`, etc.) does
+  NOT warn so `isinstance(_RunJob(...), RunJob)`, `pickle`, dataclass
+  machinery, and debuggers continue to work.
+
+Code that needs the unwrapped object without warning can read
+`proxy.__wrapped__` (this is the documented escape hatch).
+
+### 8.3 Removal timeline (single source of truth)
+
+The removal milestone is declared once, in
+`apps/anime_upscaler_gui/anime_upscaler_gui/_deprecation.py`, and copied
+by each alias site:
+
+| Version    | Behavior                                                        |
+|------------|-----------------------------------------------------------------|
+| `0.2.x`    | `DeprecationWarning` emitted on first use (this release)        |
+| `0.3.x`    | same warning, escalated to `always` filter in CI (noisy build)   |
+| `0.4.0`    | aliases removed                                                 |
+
+New code should always use the public names from section 2. When
+`0.4.0` ships, every alias above will raise `AttributeError`. Migrate
+by replacing the underscore name with its public equivalent.
+
+To grep for the removal milestone (CI policy check):
+
+```bash
+grep -R 'removal_version="0.4.0"' apps/anime_upscaler_gui/anime_upscaler_gui
+```
+
+To grep for all alias sites:
+
+```bash
+grep -R '_make_deprecated_alias\|make_alias(' apps/anime_upscaler_gui/anime_upscaler_gui
+```

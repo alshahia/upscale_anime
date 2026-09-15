@@ -360,9 +360,14 @@ class QueueController:
 
 # ----------------------------------------------------------------------------
 # Deprecated underscore aliases (back-compat with existing scripts that
-# imported the private names). New code should use the public names.
+# imported the private names). Access emits a DeprecationWarning; see
+# apps/anime_upscaler_gui/anime_upscaler_gui/_deprecation.py for the
+# single-source-of-truth removal timeline (currently 0.4.0). New code
+# should import the public names directly.
 # ----------------------------------------------------------------------------
-_Defaults = Defaults  # noqa: F822
-_AppPaths = AppPaths  # noqa: F822
-_Settings = Settings  # noqa: F822
-_QueueController = QueueController  # noqa: F822
+from ._deprecation import make_alias as _make_deprecated_alias
+_REMOVAL_VERSION = "0.4.0"
+_Defaults = _make_deprecated_alias("Defaults", Defaults, _REMOVAL_VERSION)  # noqa: F822
+_AppPaths = _make_deprecated_alias("AppPaths", AppPaths, _REMOVAL_VERSION)  # noqa: F822
+_Settings = _make_deprecated_alias("Settings", Settings, _REMOVAL_VERSION)  # noqa: F822
+_QueueController = _make_deprecated_alias("QueueController", QueueController, _REMOVAL_VERSION)  # noqa: F822

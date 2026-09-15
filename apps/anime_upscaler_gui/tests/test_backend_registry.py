@@ -218,8 +218,35 @@ def test_backend_registry_is_frozen():
 
 
 def test_backwards_compat_make_backend_is_select_backend():
-    """Phase A1 contract: _make_backend and select_backend are the same callable."""
-    assert _make_backend is select_backend
+    """Phase A1/B3 contract: _make_backend wraps select_backend.
+
+    After Phase E the alias is a DeprecatedAlias proxy that emits a
+    DeprecationWarning on first use. The proxy __wrapped__ attribute is
+    the original function, so call semantics are preserved while
+    downstream callers get the soft-deprecation signal.
+    """
+    assert _make_backend.__wrapped__ is select_backend
+    assert callable(_make_backend)
+    # Calling the proxy must forward to the underlying function. We use a
+    # custom registry (no PyTorch factory needed) so the test does not depend
+    # on a real checkpoint on disk. We suppress the warning so the test
+    # output stays clean.
+    import warnings
+    fake_registry = [
+        BackendRegistry(
+            name="FakeBackend",
+            predicate=lambda c: True,
+            factory=lambda c: "ok",
+        ),
+    ]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        backend, name = _make_backend(
+            None, "/c", "k", torch.device("cpu"), False, False,
+            registry=fake_registry,
+        )
+    assert name == "FakeBackend"
+    assert backend == "ok"
 
 
 def test_default_registry_falls_back_to_pytorch_when_tta_or_no_trt(monkeypatch):

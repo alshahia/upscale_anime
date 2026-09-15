@@ -84,10 +84,15 @@ from ..decoders import (  # noqa: F401
 # Deprecated underscore aliases (back-compat with existing scripts/tests).
 # ----------------------------------------------------------------------------
 # Existing scripts and tests imported the private names directly. They keep
-# working with these aliases. New code should import the public names.
-_RunJob = RunJob          # noqa: F811,F822 -- intentional alias
-_JobEvent = JobEvent      # noqa: F811,F822 -- intentional alias
-_PipelineWorker = PipelineWorker  # noqa: F811,F822 -- intentional alias
+# working with these aliases but the access emits a DeprecationWarning -- see
+# apps/anime_upscaler_gui/anime_upscaler_gui/_deprecation.py for the
+# single-source-of-truth removal timeline (currently 0.4.0). New code should
+# import the public names directly.
+from .._deprecation import make_alias as _make_deprecated_alias
+_REMOVAL_VERSION = "0.4.0"
+_RunJob = _make_deprecated_alias("RunJob", RunJob, _REMOVAL_VERSION)  # noqa: F822
+_JobEvent = _make_deprecated_alias("JobEvent", JobEvent, _REMOVAL_VERSION)  # noqa: F822
+_PipelineWorker = _make_deprecated_alias("PipelineWorker", PipelineWorker, _REMOVAL_VERSION)  # noqa: F822
 
 __all__ = [
     # jobs
