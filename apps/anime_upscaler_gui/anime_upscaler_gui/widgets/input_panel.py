@@ -56,6 +56,27 @@ class _InputPanel(ttk.LabelFrame):
         self.queue_listbox = tk.Listbox(self, height=6, font=FONT_MONO,
                                         selectmode="extended", activestyle="dotbox")
         self.queue_listbox.pack(fill="both", expand=True, pady=(0, PAD_Y))
+        # Q2 (perf/queue-controls-gpu-codec): per-job Pause / Cancel /
+        # Resume buttons. Disabled by default; enabled by app._refresh_
+        # controls() based on the selected job's current status. The
+        # Cancel button is enabled for both Running and Paused jobs; the
+        # Pause button is enabled only for Running; Resume is enabled
+        # only for Paused. Clicking a button pushes a JobControlEvent
+        # to the worker via app._send_pause/_send_cancel/_send_resume.
+        ctl = ttk.Frame(self)
+        ctl.pack(fill="x", pady=(0, PAD_Y))
+        self.pause_btn = ttk.Button(ctl, text="❚❚ Pause",
+                                     command=lambda: app._send_pause(self._selected_job_id()),
+                                     state="disabled")
+        self.pause_btn.pack(side="left")
+        self.resume_btn = ttk.Button(ctl, text="▶ Resume",
+                                      command=lambda: app._send_resume(self._selected_job_id()),
+                                      state="disabled")
+        self.resume_btn.pack(side="left", padx=(PAD_X, PAD_X))
+        self.cancel_btn = ttk.Button(ctl, text="✕ Cancel",
+                                      command=lambda: app._send_cancel(self._selected_job_id()),
+                                      state="disabled")
+        self.cancel_btn.pack(side="left")
 
         # DnD-accurate empty-state subtitle. The text used to say "drop files
         # here when DnD is enabled" without DnD being wired up -- misleading.
@@ -181,3 +202,54 @@ class _InputPanel(ttk.LabelFrame):
         else:
             self._empty.pack_forget()
             self.queue_listbox.pack(fill="both", expand=True, pady=(0, PAD_Y))
+
+    # ---- Q2 (perf/queue-controls-gpu-codec): per-job control toolbar ----
+    def _selected_job_id(self) -> int:
+        """Return the job_id of the first selected listbox row, or 0 if none.
+
+        Used by the Pause / Cancel / Resume button commands. Returns 0
+        when nothing is selected; the App-level send methods treat 0 as
+        a no-op (the worker ignores events for unknown job_ids).
+        """
+        idxs = self.queue_listbox.curselection()
+        if not idxs:
+            return 0
+        # The listbox rows mirror self.app._jobs 1:1, so index == job index.
+        try:
+            return self.app._jobs[idxs[0]].id
+        except (IndexError, AttributeError):
+            return 0
+
+    def _refresh_controls(self):
+        """Enable/disable Pause/Resume/Cancel based on the selected job's status.
+
+        Called from app._refresh_queue_listbox() (which runs after every
+        listbox mutation or worker event) so the toolbar reflects the
+        current state without polling. The buttons are disabled when:
+
+          * no row is selected
+          * the selected job is in a terminal state (DONE/ERROR/CANCELLED)
+          * the queue mode is single (controls only apply in batch mode)
+        """
+        from ..state import JobStatus
+        # Default: everything disabled.
+        pause_state = "disabled"
+        resume_state = "disabled"
+        cancel_state = "disabled"
+        if self.queue_mode_var.get() == "batch":
+            idxs = self.queue_listbox.curselection()
+            if idxs:
+                try:
+                    j = self.app._jobs[idxs[0]]
+                except (IndexError, AttributeError):
+                    j = None
+                if j is not None:
+                    if j.status == JobStatus.RUNNING:
+                        pause_state = "normal"
+                        cancel_state = "normal"
+                    elif j.status == JobStatus.PAUSED:
+                        resume_state = "normal"
+                        cancel_state = "normal"
+        self.pause_btn.configure(state=pause_state)
+        self.resume_btn.configure(state=resume_state)
+        self.cancel_btn.configure(state=cancel_state)

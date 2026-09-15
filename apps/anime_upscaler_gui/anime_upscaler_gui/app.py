@@ -109,7 +109,14 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             self._job_counter = max(j.id for j in self._jobs)
         self._in_queue: "queue.Queue" = queue.Queue()
         self._evt_queue: "queue.Queue" = queue.Queue()
-        self._worker = PipelineWorker(self._in_queue, self._evt_queue)
+        # Q2 (perf/queue-controls-gpu-codec): GUI -> worker control channel
+        # for Pause / Cancel / Resume. Separate from in_queue (job
+        # dispatch) and out_queue (events) so a flood of progress events
+        # can't starve a Pause request. The worker drains this queue
+        # between frames.
+        self._ctl_queue: "queue.Queue" = queue.Queue()
+        self._worker = PipelineWorker(self._in_queue, self._evt_queue,
+                                       ctl_queue=self._ctl_queue)
         self._worker.start()
         self._running = False
         # Side-channel used by _wait_resume_action (worker thread -> GUI modal).
@@ -368,6 +375,9 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 self.input_panel.queue_listbox.itemconfig(i, fg=STATUS_COLORS.get(j.status, FG))
             except Exception:
                 pass
+        # Q2 (perf/queue-controls-gpu-codec): enable/disable Pause /
+        # Resume / Cancel based on the selected job's current status.
+        self.input_panel._refresh_controls()
 
     def _visible_jobs(self) -> List[Job]:
         flt = self.input_panel.filter_var.get()
@@ -407,6 +417,86 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         self._refresh_queue_listbox()
         self.input_panel._refresh_empty()
         self._persist_queue()
+
+    # ---- Q2 (perf/queue-controls-gpu-codec): pause/cancel/resume ----
+    def _send_pause(self, job_id: int) -> None:
+        """Push a pause control event for ``job_id`` to the worker.
+
+        The worker drains its control queue between frames; on the next
+        boundary it sets the per-job threading.Event so the loop blocks
+        until ``_send_resume`` arrives. We also flip the local status
+        immediately so the listbox + Pause/Resume buttons update without
+        waiting for the worker -- the worst case is one frame of visual
+        lag if the user pauses mid-frame.
+        """
+        if not job_id:
+            return
+        j = self._find_job(job_id)
+        if j is None or j.status != JobStatus.RUNNING:
+            return
+        from .pipeline.jobs import JobControlEvent
+        self._ctl_queue.put(JobControlEvent(kind="pause", job_id=job_id))
+        # Optimistic UI update: reflect "paused" right away. The worker
+        # emits a confirming log event when it actually blocks; we treat
+        # the optimistic state as authoritative so the toolbar is usable
+        # the instant the user clicks.
+        j.status = JobStatus.PAUSED
+        self._refresh_queue_listbox()
+        self.status_bar.status_var.set(f"Job #{job_id}: paused")
+
+    def _send_resume(self, job_id: int) -> None:
+        """Raise the per-job pause Event so the worker continues."""
+        if not job_id:
+            return
+        j = self._find_job(job_id)
+        if j is None or j.status != JobStatus.PAUSED:
+            return
+        from .pipeline.jobs import JobControlEvent
+        self._ctl_queue.put(JobControlEvent(kind="resume", job_id=job_id))
+        j.status = JobStatus.RUNNING
+        self._refresh_queue_listbox()
+        self.status_bar.status_var.set(f"Job #{job_id}: resumed")
+
+    def _send_cancel(self, job_id: int) -> None:
+        """Ask the worker to abort the job at the next frame boundary.
+
+        Confirmation dialog so an accidental click doesn't lose work;
+        the worker still waits for the current frame to finish writing
+        before closing the encoder pipe, so the partial output is
+        recoverable as a non-finalized file (the worker also deletes it
+        before emitting the 'cancelled' event -- see worker._run_one).
+        """
+        if not job_id:
+            return
+        j = self._find_job(job_id)
+        if j is None or j.status not in (JobStatus.RUNNING, JobStatus.PAUSED):
+            return
+        if not messagebox.askyesno(
+            "Cancel job",
+            f"Cancel job #{job_id} ({j.input.name})? The partial output "
+            "file will be deleted.",
+        ):
+            return
+        from .pipeline.jobs import JobControlEvent
+        self._ctl_queue.put(JobControlEvent(kind="cancel", job_id=job_id))
+        # Mark as "CANCELLED" optimistically; the worker will emit a
+        # confirming 'cancelled' JobEvent when it actually unwinds.
+        j.status = JobStatus.CANCELLED
+        j.error = "cancelled by user"
+        self._refresh_queue_listbox()
+        self.status_bar.status_var.set(f"Job #{job_id}: cancel requested")
+
+    def _find_job(self, job_id: int):
+        """Linear scan; the queue is small (< 100 entries typically).
+
+        Returns the Job dataclass or None. Used by the Pause / Resume /
+        Cancel send methods to flip local state immediately so the UI
+        doesn't lag behind the worker's drain cycle.
+        """
+        for j in self._jobs:
+            if j.id == job_id:
+                return j
+        return None
 
     def _pick_output_dir(self):
         path = filedialog.askdirectory(title="Select output folder",
@@ -828,6 +918,26 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             else:
                 self.start_btn.config(state="normal")
                 messagebox.showerror("Error", f"Job #{evt.job_id}: {evt.message}")
+        elif evt.kind == "cancelled":
+            # Q2 (perf/queue-controls-gpu-codec): user cancellation
+            # confirmed by the worker. The local state is already CANCELLED
+            # (set optimistically by _send_cancel), but the worker may have
+            # been mid-frame so we re-set + persist here for safety.
+            self.status_bar.status_var.set(f"Job #{evt.job_id}: cancelled")
+            if job_rec:
+                if job_rec.status != JobStatus.CANCELLED:
+                    job_rec.status = JobStatus.CANCELLED
+                if not job_rec.error:
+                    job_rec.error = "cancelled by user"
+                self._refresh_queue_listbox()
+                self._persist_queue()
+            # Continue the queue -- a cancelled job shouldn't block the rest.
+            qmode = self.input_panel.queue_mode_var.get()
+            if qmode == "batch" and self._running:
+                self._enqueue_next(self._jobs)
+                self._refresh_queue_listbox()
+            else:
+                self.start_btn.config(state="normal")
         elif evt.kind == "frame_error":
             # The modal blocks the GUI thread; the on_frame_error callback in the worker
             # is what actually waits. We don't need to do anything here beyond logging.
