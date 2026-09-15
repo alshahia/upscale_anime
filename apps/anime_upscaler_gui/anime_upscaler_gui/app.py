@@ -48,6 +48,11 @@ from .controllers import (
     resolve_kind_from_dropdown as _resolve_kind_from_dropdown,
     resolve_path_from_dropdown as _resolve_path_from_dropdown,
 )
+from .services import (
+    format_dropdown_label as _format_dropdown_label,
+    pick_default_index as _pick_default_index,
+    sort_trained_first as _sort_trained_first,
+)
 from .cut_window import _CutWindow
 from .preview import _PreviewPane
 from .downloader import ModelDownloader
@@ -408,51 +413,23 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             self.output_panel.output_dir_var.set(path)
 
     def _refresh_model_dropdown(self):
+        """Rebuild the Upscale tab's model dropdown from the registry.
+
+        Phase A4: thin wrapper around services.model_service -- the orchestrator's
+        only jobs here are (a) call registry.scan_installed(), (b) hand the
+        installed models to the pure helpers, (c) write the result back to the
+        widget. Sort/label/default-selection logic now lives in services/.
+        """
         self.registry.scan_installed()
-        # Put trained (in-house) models first so the user can find their own
-        # shipped RFDN at the top of the Upscale tab's model dropdown, with the
-        # rest of the installed community weights in their original scan order.
-        trained = [m for m in self.registry._installed if m.is_trained]
-        others = [m for m in self.registry._installed if not m.is_trained]
-        items = []
-        for m in trained + others:
-            tag = ""
-            if m.tainted:
-                tag = "  [TAINTED]"
-            elif m.is_trained:
-                # In-house trained artifact. Visual cue so the user can tell
-                # their shipped RFDN apart from downloaded presets in this dropdown
-                # (the Models tab dropdown already shows [TRAINED] / [unsupported]).
-                tag = "  [TRAINED]"
-            elif not m.supported:
-                tag = "  [unsupported]"
-            elif not is_supported_kind(m.kind or ""):
-                tag = "  [no arch]"
-            items.append(f"{m.filename}  ({m.kind or '?'}, {m.scale}x, {m.size_mb:.1f} MB){tag}")
+        sorted_models = _sort_trained_first(self.registry._installed)
+        items = [
+            _format_dropdown_label(m, supported_kind=is_supported_kind(m.kind or ""))
+            for m in sorted_models
+        ]
         self.model_panel.model_dropdown["values"] = items
         if not items:
             return
-        # Pick a default selection. Priority:
-        #   1. settings.last_model if it's still installed (substring match,
-        #      so it survives filename reformatting).
-        #   2. First trained model -- so a fresh launch with a trained artifact
-        #      on disk defaults to it (was: defaulted to first alphabetical,
-        #      which was 4xLSDIRCompactv2.pth -- confusing when RFDN is shipped).
-        #   3. First item (any installed model).
-        cur = self.settings.data.last_model
-        sel_idx = -1
-        if cur:
-            for i, it in enumerate(items):
-                if cur in it:
-                    sel_idx = i
-                    break
-        if sel_idx < 0 and trained:
-            for i, it in enumerate(items):
-                if "[TRAINED]" in it:
-                    sel_idx = i
-                    break
-        if sel_idx < 0:
-            sel_idx = 0
+        sel_idx = _pick_default_index(items, last_model=self.settings.data.last_model)
         self.model_panel.model_dropdown.current(sel_idx)
 
     def _on_start(self):
