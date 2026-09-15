@@ -335,3 +335,4 @@ The project is ready for production use and can be easily extended with addition
 **Completion**: 95%  
 **Next Major Release**: v2.1 (Performance Optimization)  
 **Last Updated**: May 7, 2026
+\n\n## GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec) — Q1 DONE\n\n- **Q1 Documentation (DONE)**: new section in PLAN.md, new ROADMAP\n  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md. Q2-Q5 PLANNED.\n- Full plan: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.\n
