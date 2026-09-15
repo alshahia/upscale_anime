@@ -98,10 +98,26 @@ def test_menu_bar_accelerators_match_readme():
 def test_readme_doc_links_resolve():
     text = _read(README)
     for slug in ("docs/onboarding.md", "docs/themes.md", "docs/dev/widgets.md",
-                 "docs/RESUME.md", "docs/plans/ui_ux_overhaul.md"):
+                 "docs/RESUME.md", "docs/plans/ui_ux_overhaul.md",
+                 # Phase C additions (cross-doc linkage to extension recipes
+                 # and public API reference):
+                 "docs/EXTENDING.md",
+                 "../../docs/PUBLIC_API.md",
+                 ):
         assert slug in text, f"README reference missing: {slug}"
-        target = ROOT / slug
-        assert target.exists(), f"README link broken: {target}"
+        # Resolve relative to README.md (README sits at apps/anime_upscaler_gui/).
+        target = (ROOT / slug).resolve()
+        # For ../../ paths the slug isn't under ROOT; resolve it manually:
+        if not target.exists():
+            target = (ROOT.parent.parent / slug.replace("../../", "")).resolve() \
+                if slug.startswith("../../") else target
+        assert target.exists(), f"README link broken: {target} (slug={slug})"
+        # Phase C: PUBLIC_API.md is added to top-level docs/, so verify the
+        # resolved path matches that location:
+        if slug.endswith("PUBLIC_API.md"):
+            assert (ROOT.parent.parent / "docs" / "PUBLIC_API.md").exists(), (
+                "docs/PUBLIC_API.md must live at the repo root docs/ folder"
+            )
 
 
 # ------- onboarding cross-link targets must resolve --------

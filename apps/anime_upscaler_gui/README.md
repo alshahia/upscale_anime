@@ -2,6 +2,14 @@
 
 Standalone Tkinter desktop app for running the vendored anime super-resolution models over images and videos. It can be copied out of the main repository and keeps settings outside the source tree.
 
+## Documentation
+
+- [`docs/EXTENDING.md`](docs/EXTENDING.md) -- recipes for adding a new model kind, setting, backend, or preset (no orchestrator edits required).
+- [`../../docs/PUBLIC_API.md`](../../docs/PUBLIC_API.md) -- stable public surface (`RunJob`, `JobEvent`, `PipelineWorker`, `Settings`, `ModelRegistry`, `build`, `register_arch`, `build_run_job`, `select_backend`, ...) for downstream scripts.
+- [`docs/onboarding.md`](docs/onboarding.md) -- first-time user walkthrough.
+- [`docs/themes.md`](docs/themes.md) -- theme tokens and accessibility.
+- [`docs/dev/widgets.md`](docs/dev/widgets.md) -- widget internals for contributors.
+
 ## Quick start
 
 From the repository root:
@@ -79,6 +87,11 @@ Two extension paths, both additive -- nothing existing is modified:
    declared on the spec, so `pipeline.py`, `trt_engine.py`, `registry.py`
    and the UI pick it up with no extra kind-string checks anywhere.
 
+For the full set of extension paths (model kind, settings panel entry,
+backend registry, and the preset-catalog shortcut), see
+[`docs/EXTENDING.md`](docs/EXTENDING.md). Each recipe ends with the
+one-line commit-message convention used in this repo.
+
 
 ## Settings and storage
 
@@ -112,7 +125,7 @@ Important defaults:
 
 The app includes **Light**, **Dark**, and **High contrast** themes. Theme tokens live in `anime_upscaler_gui/theme.py`; changing a theme rebuilds the UI so all widgets use the active palette. Status rows expose text, glyph, and color together. Focus outlines, dynamic wrapping, keyboard activation, and an 800x600 minimum window support keyboard and low-vision use.
 
-See [`docs/onboarding.md`](docs/onboarding.md), [`docs/themes.md`](docs/themes.md), and [`docs/dev/widgets.md`](docs/dev/widgets.md) for user and contributor guidance.
+See [`docs/onboarding.md`](docs/onboarding.md), [`docs/themes.md`](docs/themes.md), and [`docs/dev/widgets.md`](docs/dev/widgets.md) for user and contributor guidance. For extension recipes and the public API surface, see [`docs/EXTENDING.md`](docs/EXTENDING.md) and [`../../docs/PUBLIC_API.md`](../../docs/PUBLIC_API.md).
 
 ## GPU memory guard
 
