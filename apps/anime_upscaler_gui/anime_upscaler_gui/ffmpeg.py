@@ -14,6 +14,15 @@ from typing import Optional
 # --- NVENC support --------------------------------------------------------
 
 _NVENC_SUPPORTED: Optional[bool] = None  # None = not probed yet
+
+# --- libx264 memory guard (used only when NVENC is unavailable) ------------
+# x264 defaults spawn one worker thread per CPU core and keep a deep lookahead
+# queue per thread. At 4K on many-core machines that adds up to gigabytes of
+# committed RAM, full CPU and disk saturation without any visible quality
+# benefit at these sizes (CRF still governs quality).
+_X264_MAX_ENCODER_THREADS = 8     # encoder worker threads
+_X264_RC_LOOKAHEAD = 20           # buffered lookahead frames (default ~40)
+_X264_LOOKAHEAD_THREADS = 2       # lookahead analysis threads (default = cores)
 _NVENC_FALLBACK_WARNED = False
 _NVENC_PROBE_TIMEOUT = 15  # seconds (functional encode probe can take a few seconds)
 
@@ -103,6 +112,14 @@ def open_encoder(
             "-s", f"{w}x{h}", "-r", f"{fps:.3f}",
             "-i", "pipe:0",
             "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+            # RAM guard: x264 defaults scale thread count with CPU cores and
+            # buffer rc-lookahead frames per thread. On many-core machines at
+            # 4K that allocates gigabytes of committed RAM and pegs every core.
+            # Bounding threads and lookahead keeps encoder memory flat without
+            # visibly changing quality (CRF still governs rate).
+            "-x264-params", f"rc-lookahead={_X264_RC_LOOKAHEAD}:"
+                            f"lookahead-threads={_X264_LOOKAHEAD_THREADS}",
+            "-threads", str(_X264_MAX_ENCODER_THREADS),
             "-pix_fmt", "yuv420p", str(out_path),
         ]
     return subprocess.Popen(cmd, stdin=subprocess.PIPE)

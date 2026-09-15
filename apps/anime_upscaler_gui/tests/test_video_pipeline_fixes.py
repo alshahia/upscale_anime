@@ -116,3 +116,23 @@ def test_pipeline_uses_skip_first_frames_wrapper():
     # Regression: pipeline.py must import the skip wrapper (a NameError at
     # runtime surfaced in _run_video when decode=pyav).
     assert pipeline._SkipFirstFrames is decoders._SkipFirstFrames
+
+
+def test_open_encoder_bounds_x264_memory(monkeypatch):
+    """libx264 at 4K needs a threads/lookahead cap, or x264 defaults allocate
+       one working set per core (gigabytes of committed RAM on many-core
+       machines)."""
+    monkeypatch.setattr(ffmpeg, "ffmpeg_available", lambda: True)
+    probed = {}
+
+    def fake_popen(cmd, **kwargs):
+        probed["cmd"] = cmd
+        return object()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    ffmpeg.open_encoder("out.mp4", 24.0, 3840, 2160, use_nvenc=False)
+    cmd = probed["cmd"]
+    assert "-threads" in cmd, "encoder thread cap missing"
+    assert "-x264-params" in cmd, "lookahead cap missing"
+    params = " ".join(cmd)
+    assert "rc-lookahead=" in params and "lookahead-threads=" in params
