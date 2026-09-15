@@ -26,7 +26,8 @@ import torch.nn.functional as F
 
 from .archs import build, _save_sr
 from .archs import capabilities as _arch_caps
-from .decoders import _AsyncReader, _Cv2Reader, _PyAvReader, load_image_rgb, save_image_rgb
+from .decoders import (_AsyncReader, _Cv2Reader, _PyAvReader, _SkipFirstFrames,
+                       load_image_rgb, save_image_rgb)
 from .ffmpeg import open_encoder, extract_cut, ffmpeg_available
 log = logging.getLogger(__name__)
 

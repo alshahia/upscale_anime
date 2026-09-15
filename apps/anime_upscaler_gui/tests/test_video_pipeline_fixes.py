@@ -110,3 +110,9 @@ def test_skip_first_frames_skip_past_end_is_safe():
     r = FakeReader(2)
     wrapped = decoders._SkipFirstFrames(r, 99)
     assert list(wrapped) == []
+
+
+def test_pipeline_uses_skip_first_frames_wrapper():
+    # Regression: pipeline.py must import the skip wrapper (a NameError at
+    # runtime surfaced in _run_video when decode=pyav).
+    assert pipeline._SkipFirstFrames is decoders._SkipFirstFrames
