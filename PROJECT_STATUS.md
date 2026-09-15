@@ -335,4 +335,27 @@ The project is ready for production use and can be easily extended with addition
 **Completion**: 95%  
 **Next Major Release**: v2.1 (Performance Optimization)  
 **Last Updated**: May 7, 2026
-\n\n## GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec) — Q1 DONE\n\n- **Q1 Documentation (DONE)**: new section in PLAN.md, new ROADMAP\n  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md. Q2-Q5 PLANNED.\n- Full plan: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.\n
+\n\n## GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec) — Q1-Q5 DONE\n\n- **Q1 Documentation (DONE, `318b386`)**: PLAN.md appended, new ROADMAP
+  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md, handoff written.
+- **Q2 Pause/Cancel/Resume (DONE, `a06618f`)**: three new buttons in the
+  Input panel toolbar; worker drains a `JobControlEvent` queue at
+  every frame boundary; per-job pause via threading.Event; cancel
+  raises `_JobCancelled`, deletes the partial output, emits a clean
+  `JobEvent(kind='cancelled')`.
+- **Q3 NVDEC + NVENC (DONE, `459877a`)**: `_NvDecReader` + `_detect_nvdec_support`
+  probe; Decode combobox gains `auto` / `nvdec` choices (legacy `cv2` /
+  `pyav` preserved); `nvenc_qp` spinbox exposed; NVENC encoder argv
+  pinned by test.
+- **Q4 TF32 + async + telemetry (DONE, `5a575f1`)**: TF32 enabled for
+  matmul + cudnn; `Defaults.prefetch` now `'async'` by default; worker
+  emits `JobEvent(kind='gpu_util')` at 1 Hz which `_GPUMonitor`
+  consumes in parallel with its local pynvml poll.
+- **Q5 Final docs (DONE, `<this>`)**: phase table updated; measured
+  speedups recorded (7-8% wall-time on the 36-frame smoke from
+  async + NVDEC).
+- **Tests**: 325 passed, 13 warnings (was 292 / 13 at branch start;
+  +33 new across Q2/Q3/Q4). Full GUI sweep green.
+- **Smoke**: tmp/mid2s_job.py produces YiRenZhiXia_E02_mid2s_x4.mp4
+  (575701 bytes) unchanged. Wall time 95.6s on this branch vs 102.7s
+  at branch start.
+- Full plan: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.\n

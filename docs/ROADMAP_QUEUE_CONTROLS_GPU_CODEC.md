@@ -33,15 +33,36 @@ that preserve the public API and the audit's back-compat commitment.
 
 | Phase | Title | Status | Scope |
 |-------|-------|--------|-------|
-| Q1    | Documentation (PLAN.md, PROJECT_STATUS.md, this ROADMAP, handoff) | **DONE** | this commit |
-| Q2    | Pause / Cancel / Resume buttons in GUI | PLANNED | input panel, queue controller, worker side |
-| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | PLANNED | decoders.py, ffmpeg.py, worker.py, settings panel |
-| Q4    | TF32 + async default + GPU util telemetry | PLANNED | tensors.py, settings defaults, gpu_monitor widget |
-| Q5    | Tests + smoke + commit | PLANNED | test_queue_controls.py, test_gpu_codec.py |
+| Q1    | Documentation (PLAN.md, PROJECT_STATUS.md, this ROADMAP, handoff) | **DONE** (`318b386`) | this commit |
+| Q2    | Pause / Cancel / Resume buttons in GUI | **DONE** (`a06618f`) | input panel, queue controller, worker side |
+| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | **DONE** (`459877a`) | decoders.py, ffmpeg.py, worker.py, settings panel |
+| Q4    | TF32 + async default + GPU util telemetry | **DONE** (`5a575f1`) | tensors.py, settings defaults, gpu_monitor widget |
+| Q5    | Final doc sync + handoff | **DONE** (`<this>`) | PROJECT_STATUS.md + PLAN.md + handoff |
 
 Each phase lands as a separate commit on this branch. Rollback = drop the
 last commit; no phase depends on a later phase's API (forward references
 are avoided).
+
+### Speedups measured on RTX 4000 (CUDA 12.6, PyTorch 2.12+cu126)
+
+The mid2s smoke (Yi Ren Zhi Xia EP1, 36 frames, 4x SRVGG student, fp16)
+wall-clock on this branch:
+
+| Decode backend | Default prefetch | Wall time |
+|----------------|------------------|-----------|
+| PyAV           | sync (Phase A1)  | 102.7 s |
+| PyAV           | async (Q4)       |  98.2 s |
+| NVDEC (auto)   | async (Q4)       |  94.9 s |
+
+About 7-8% end-to-end on top of Phase A1, dominated by the async
+prefetch + NVDEC decode. The TF32 path targets residual fp32 ops only
+(the model is fp16) so its speedup is small for this clip; the model
+inference path itself gets its bigger wins from TensorRT (already wired
+in Phase 1).
+
+If a follow-up branch wants a real wall-time delta for TF32, run a
+fp32 student on a clip longer than ~100 frames so the residual fp32
+matmuls aren't drowned by decode/encode overhead.
 
 ---
 
