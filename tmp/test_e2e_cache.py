@@ -3,7 +3,7 @@ from pathlib import Path
 PROJECT = Path(r"E:\python projects\upscale_anime")
 sys.path.insert(0, str(PROJECT / "apps" / "anime_upscaler_gui"))
 from anime_upscaler_gui import pipeline as P
-from anime_upscaler_gui.pipeline import _PipelineWorker, _RunJob, _JobEvent
+from anime_upscaler_gui.pipeline import PipelineWorker, RunJob, JobEvent
 import queue
 
 INPUT = PROJECT / ".venv" / "test_4k_540p_input.mp4"
@@ -21,7 +21,7 @@ def run_once(label, build_engines=None):
             if e.exists():
                 print(f"  [{label}] deleting cache: {e.name}")
                 e.unlink()
-    job = _RunJob(
+    job = RunJob(
         job_id=1, input_path=INPUT, output_path=out, is_video=True,
         model_filename=str(MODEL), kind="rfdn_student", scale=4, outscale=4.0,
         fp16=True, device="cuda", batch_size=1,
@@ -32,7 +32,7 @@ def run_once(label, build_engines=None):
         on_frame_error=lambda idx, msg: "abort",
     )
     in_q, out_q = queue.Queue(), queue.Queue()
-    w = _PipelineWorker(in_q, out_q); w.start()
+    w = PipelineWorker(in_q, out_q); w.start()
     t0 = time.time()
     in_q.put(job)
     fps_samples = []

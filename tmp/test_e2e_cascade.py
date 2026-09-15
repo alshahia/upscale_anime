@@ -23,7 +23,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 sys.path.insert(0, str(PROJECT / "apps" / "anime_upscaler_gui"))
 
-from anime_upscaler_gui.pipeline import _RunJob, _JobEvent, _PipelineWorker
+from anime_upscaler_gui.pipeline import RunJob, JobEvent, PipelineWorker
 
 # --- Configs --------------------------------------------------------------- #
 # (label, batch_size, use_tensorrt, use_nvenc, tta, model_path, model_scale)
@@ -58,7 +58,7 @@ def run_job(label, batch_size, use_tensorrt, use_nvenc, tta,
             for f in cache_root.glob("*.engine"):
                 f.unlink()
 
-    job = _RunJob(
+    job = RunJob(
         job_id=1,
         input_path=INPUT,
         output_path=out_path,
@@ -91,7 +91,7 @@ def run_job(label, batch_size, use_tensorrt, use_nvenc, tta,
 
     in_q: "queue.Queue" = queue.Queue()
     out_q: "queue.Queue" = queue.Queue()
-    worker = _PipelineWorker(in_q, out_q)
+    worker = PipelineWorker(in_q, out_q)
     worker.start()
 
     print(f"  [{label}] starting: batch={batch_size} TRT={use_tensorrt} NVENC={use_nvenc} TTA={tta} model_scale={model_scale}")
@@ -105,7 +105,7 @@ def run_job(label, batch_size, use_tensorrt, use_nvenc, tta,
     rc = None
     while True:
         try:
-            evt: _JobEvent = out_q.get(timeout=300)
+            evt: JobEvent = out_q.get(timeout=300)
         except queue.Empty:
             print(f"  [{label}] FAIL: timed out")
             worker.stop(); worker.join(timeout=10)

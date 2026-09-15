@@ -7,7 +7,7 @@ os.makedirs(cache, exist_ok=True)
 
 import torch
 from anime_upscaler_gui.archs import build
-from anime_upscaler_gui.pipeline import _make_backend, _RunJob
+from anime_upscaler_gui.pipeline import _make_backend, RunJob
 
 device = torch.device("cuda")
 m4 = build("rfdn_student", "pretrained/RFDN_distill_v1_4x_student.pth").to(device).half().eval()

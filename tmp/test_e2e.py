@@ -1,7 +1,7 @@
 """
 P1.E2E end-to-end harness.
 
-Drives _PipelineWorker via queue.Queue, measures end-to-end fps for a video
+Drives PipelineWorker via queue.Queue, measures end-to-end fps for a video
 job. Supports multi-config comparison: TRT vs PyTorch, batch=1 vs batch=4,
 NVENC vs libx264.
 
@@ -21,7 +21,7 @@ sys.path.insert(0, str(PROJECT / "apps" / "anime_upscaler_gui"))
 
 from anime_upscaler_gui import pipeline as P
 from anime_upscaler_gui.pipeline import (
-    _PipelineWorker, _RunJob, _JobEvent,
+    PipelineWorker, RunJob, JobEvent,
 )
 
 # --- Configs ---------------------------------------------------------------
@@ -72,7 +72,7 @@ def run_job(label, batch_size, use_tensorrt, use_nvenc, tta,
                 f.unlink()
 
     # Build job
-    job = _RunJob(
+    job = RunJob(
         job_id=1,
         input_path=INPUT,
         output_path=out_path,
@@ -105,7 +105,7 @@ def run_job(label, batch_size, use_tensorrt, use_nvenc, tta,
 
     in_q: "queue.Queue" = queue.Queue()
     out_q: "queue.Queue" = queue.Queue()
-    worker = _PipelineWorker(in_q, out_q)
+    worker = PipelineWorker(in_q, out_q)
     worker.start()
 
     print(f"  [{label}] starting: batch={batch_size} TRT={use_tensorrt} NVENC={use_nvenc} TTA={tta}")
@@ -120,7 +120,7 @@ def run_job(label, batch_size, use_tensorrt, use_nvenc, tta,
     rc = None
     while True:
         try:
-            evt: _JobEvent = out_q.get(timeout=300)  # 5-min safety
+            evt: JobEvent = out_q.get(timeout=300)  # 5-min safety
         except queue.Empty:
             print(f"  [{label}] FAIL: timed out waiting for events")
             worker.stop(); worker.join(timeout=10)

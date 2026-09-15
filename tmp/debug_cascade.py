@@ -1,9 +1,9 @@
 import sys, queue, os, traceback
 sys.path.insert(0, "apps/anime_upscaler_gui")
 import cv2, torch
-from anime_upscaler_gui.pipeline import _RunJob, _JobEvent, _PipelineWorker
+from anime_upscaler_gui.pipeline import RunJob, JobEvent, PipelineWorker
 
-job = _RunJob(
+job = RunJob(
     job_id=1,
     input_path=__import__('pathlib').Path('E:/python projects/upscale_anime/.venv/test_4k_540p_input.mp4'),
     output_path=__import__('pathlib').Path('E:/python projects/upscale_anime/tmp/e2e_out/cascade_debug.mp4'),
@@ -33,7 +33,7 @@ job = _RunJob(
     nvenc_qp=18,
 )
 in_q = queue.Queue(); out_q = queue.Queue()
-w = _PipelineWorker(in_q, out_q); w.start()
+w = PipelineWorker(in_q, out_q); w.start()
 in_q.put(job)
 import time
 t0 = time.time()
