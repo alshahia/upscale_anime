@@ -39,11 +39,13 @@ from typing import List, Optional
 
 import torch
 
-from .pipeline import PipelineWorker, RunJob, JobEvent
+from .pipeline import PipelineWorker, JobEvent
 from .registry import ModelRegistry, is_supported_kind
 from .settings import AppPaths, QueueController, Settings
 from .controllers import (
+    build_run_job as _build_run_job,
     compute_output_path as _compute_output_path_ctrl,
+    make_panel_value_provider as _make_panel_value_provider,
     resolve_from_dropdown as _resolve_from_dropdown,
     resolve_kind_from_dropdown as _resolve_kind_from_dropdown,
     resolve_path_from_dropdown as _resolve_path_from_dropdown,
@@ -526,56 +528,35 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
     def _enqueue_next(self, jobs_to_run):
         """Push the next pending job onto the worker queue."""
         sp = self.settings_panel
+        # Phase B4: value_provider is the bridge from the live Tk settings
+        # panel into build_run_job. It reads each panel var via SETTING_SPECS
+        # (data-driven), so adding a new panel setting only requires appending
+        # one entry in widgets/settings_spec.py -- not editing this method.
+        get_panel_value = _make_panel_value_provider(sp)
         for j in jobs_to_run:
             if j.status in (JobStatus.PENDING, JobStatus.ERROR):
                 j.status = JobStatus.RUNNING
                 j.error = ""
                 j.output.parent.mkdir(parents=True, exist_ok=True)
-                is_video = j.is_video or self._is_video_path(j.input)
-                # Phase 1.C STATUS: batched video path is implemented in
-                # pipeline.py (_process_video_batch) and works correctly for
-                # the PyTorch backend, but the TensorRT backend has a stream
-                # synchronization bug (NaN/inf after 2-3 iterations when
-                # exec_ctx is reused across calls). Until that's resolved,
-                # force batch_size=1 for video so the well-tested per-frame
-                # path runs. Image jobs can still use the user's batch
-                # setting via _run_image's _to_tensor.
-                # See docs/plans/realtime_4k_plan.md "Phase 1.C status" for
-                # the full diagnosis and the conditions under which batching
-                # can be re-enabled (per-frame sync inside _TrtBackend, or
-                # per-call exec_ctx rebuild).
-                batch_size = 1 if is_video else int(sp.batch_var.get())
-                job = RunJob(
-                    job_id=j.id,
-                    input_path=j.input,
-                    output_path=j.output,
-                    is_video=is_video,
-                    model_filename=j.model_filename or self._resolve_model_path_from_dropdown(),
-                    kind=j.kind or self._resolve_kind_from_dropdown(),
-                    scale=j.scale or 4,
-                    outscale=float(sp.outscale_var.get()),
-                    fp16=bool(sp.fp16_var.get()) and sp.device_var.get() == "cuda",
-                    device=sp.device_var.get(),
-                    batch_size=batch_size,
-                    decode=sp.decode_var.get(),
-                    prefetch=sp.prefetch_var.get(),
-                    pin_memory="auto",
-                    downscale_max_edge=int(sp.downscale_var.get()),
-                    gpu_guard_mode=sp.gpu_guard_var.get(),
-                    tile_size=int(sp.tile_size_var.get()),
-                    tile_overlap=int(sp.tile_overlap_var.get()),
-                    tta=bool(sp.tta_var.get()),
-                    use_tensorrt=bool(sp.use_tensorrt_var.get()),
-                    use_nvenc=bool(sp.use_nvenc_var.get()),
-                    nvenc_preset=str(sp.nvenc_preset_var.get()),
-                    nvenc_qp=int(self.settings.data.nvenc_qp),
-                    # Phase 2 (Real-time 4K): auto from model scale (None = auto;
-                    # 2x -> cascade 2x2x, 4x -> single shot). Settings doesn't
-                    # expose this yet (advanced); power users can edit settings
-                    # JSON manually to force a depth.
-                    cascade_mode=self.settings.data.cascade_mode,
-                    cut_start_seconds=float(j.cut_start),
-                    cut_end_seconds=float(j.cut_end),
+                # Resolve is_video once. build_run_job uses it both for the
+                # RunJob.is_video field and to force batch_size=1 for video
+                # (Phase 1.C TRT stream-sync workaround). The path-based
+                # fallback handles jobs whose file extension alone tells us
+                # they're videos (e.g. when is_video wasn't recorded at drop).
+                j.is_video = bool(j.is_video) or self._is_video_path(j.input)
+                # Phase 1.C STATUS: batched video is forced to batch_size=1 by
+                # build_run_job when is_video is True. The long diagnosis lives
+                # in controllers/job_builder.py::build_run_job docstring; the
+                # short version: TensorRT exec_ctx has a stream-sync bug that
+                # produces NaN/inf after 2-3 reuse iterations. The per-frame
+                # path is the well-tested fallback until that's resolved.
+                # See docs/plans/realtime_4k_plan.md "Phase 1.C status".
+                job = _build_run_job(
+                    job=j,
+                    value_provider=get_panel_value,
+                    data=self.settings.data,
+                    resolve_model_path=self._resolve_model_path_from_dropdown,
+                    resolve_kind=self._resolve_kind_from_dropdown,
                     on_frame_error=lambda idx, msg: self._wait_resume_action(j.id, idx, msg),
                 )
                 self._in_queue.put(job)

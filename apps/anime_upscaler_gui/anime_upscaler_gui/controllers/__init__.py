@@ -7,7 +7,11 @@ event handling.
 
 Phase A3 of the GUI extensibility refactor (see docs/gui_audit.md).
 """
-from .job_builder import compute_output_path  # noqa: F401
+from .job_builder import (  # noqa: F401
+    build_run_job,
+    compute_output_path,
+    make_panel_value_provider,
+)
 from .model_resolver import (  # noqa: F401
     parse_dropdown_filename,
     resolve_from_dropdown,
@@ -16,7 +20,9 @@ from .model_resolver import (  # noqa: F401
 )
 
 __all__ = [
+    "build_run_job",
     "compute_output_path",
+    "make_panel_value_provider",
     "parse_dropdown_filename",
     "resolve_from_dropdown",
     "resolve_path_from_dropdown",
