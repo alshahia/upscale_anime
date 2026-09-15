@@ -12,7 +12,7 @@ Phase 5 additions:
 import tkinter as tk
 from tkinter import ttk
 
-from ..registry import _is_supported_kind
+from ..registry import is_supported_kind
 from ..ui_constants import FONT_MONO, GROUP_PAD, PAD_X, PAD_Y, TEXT_MUTED
 from .empty_state import _EmptyState
 
@@ -128,13 +128,13 @@ class _ModelsPanel(ttk.LabelFrame):
         if trained:
             items.append(_TRAINED_HEADER)
             for p in trained:
-                tag = "  [unsupported]" if not _is_supported_kind(p.kind) else ""
+                tag = "  [unsupported]" if not is_supported_kind(p.kind) else ""
                 label = p.display_name or p.id
                 items.append(f"{label}  ({p.kind}, {p.scale}x, {p.size_mb} MB, {p.license}){tag}")
         if community:
             items.append(_COMMUNITY_HEADER)
             for p in community:
-                tag = "  [unsupported]" if not _is_supported_kind(p.kind) else ""
+                tag = "  [unsupported]" if not is_supported_kind(p.kind) else ""
                 label = p.display_name or p.id
                 items.append(f"{label}  ({p.kind}, {p.scale}x, {p.size_mb} MB, {p.license}){tag}")
         self.preset_dropdown["values"] = items

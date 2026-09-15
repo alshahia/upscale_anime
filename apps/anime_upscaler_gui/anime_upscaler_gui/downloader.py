@@ -13,8 +13,8 @@ class _DownloadError(Exception):
     pass
 
 
-class _ModelDownloader:
-    """Thin wrapper around _ModelRegistry.download() with progress callbacks.
+class ModelDownloader:
+    """Thin wrapper around ModelRegistry.download() with progress callbacks.
 
     The GUI polls this from a thread and updates a ttk.Progressbar.
     """

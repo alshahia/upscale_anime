@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Baseline catalog (shipped with the package). Extendable WITHOUT code edits:
-# _ModelRegistry also loads extra presets from a registry.json file -- see
+# ModelRegistry also loads extra presets from a registry.json file -- see
 # _load_preset_catalog below. Each entry may set:
 # Each entry may set:
 #   source        "trained" | "community" (defaults to "community")
@@ -173,9 +173,13 @@ def is_trained_filename(filename: str) -> bool:
 # Kind detection / support live in archs.py now -- one detector + loader per
 # registered ArchSpec. These two names stay as the stable registry API used
 # by app.py, widgets/models_panel.py and tests.
-def _is_supported_kind(kind: str) -> bool:
+def is_supported_kind(kind: str) -> bool:
     """Return True if the arch registry knows how to instantiate `kind`."""
     return archs.is_supported_kind(kind)
+
+
+# Back-compat alias (Phase A1).
+_is_supported_kind = is_supported_kind  # noqa: F822
 
 
 def _detect_kind_from_state(state: dict) -> Optional[str]:
@@ -319,7 +323,7 @@ def _load_preset_catalog(explicit_path: Optional[Path] = None) -> List[PresetEnt
     return [by_id[i] for i in order]
 
 
-class _ModelRegistry:
+class ModelRegistry:
     """Combines on-disk scan (pretrained/) with the preset catalog (baseline
     PRESET_CATALOG plus any registry.json extension file)."""
 
@@ -368,7 +372,7 @@ class _ModelRegistry:
                     state = ck
                 kind = _detect_kind_from_state(state)
                 if kind:
-                    supported = _is_supported_kind(kind)
+                    supported = is_supported_kind(kind)
                     spec = archs.spec_of(kind)
                     if spec is not None:
                         scale = spec.default_scale
@@ -461,3 +465,9 @@ class _ModelRegistry:
                 if on_progress and total:
                     on_progress(written, total)
         return dest
+
+
+# ----------------------------------------------------------------------------
+# Deprecated underscore aliases (back-compat with existing scripts).
+# ----------------------------------------------------------------------------
+_ModelRegistry = ModelRegistry  # noqa: F822

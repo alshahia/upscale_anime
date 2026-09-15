@@ -1,13 +1,18 @@
 """Inference pipeline: job dataclass, PyTorch + ONNX backends, worker thread.
 
 Single module owns:
-  - _RunJob           : one input file with all settings needed to process it
-  - _JobEvent         : progress / error / frame-error event for the GUI queue
+  - RunJob            : one input file with all settings needed to process it
+  - JobEvent          : progress / error / frame-error event for the GUI queue
   - _ResumeEvent      : action to take when a video frame fails (skip/retry/abort)
   - _PyTorchBackend   : wraps a built model in a no_grad callable
   - _OnnxBackend      : optional onnxruntime backend (auto-export if .onnx missing)
-  - _PipelineWorker   : threading.Thread that processes jobs from a queue
+  - PipelineWorker    : threading.Thread that processes jobs from a queue
   - _to_tensor / _tensor_to_bgr : shared pre/post helpers
+
+Public API: RunJob, JobEvent, PipelineWorker (and SKIP_FRAME/SKIP_REST/
+ABORT_JOB/RETRY_FRAME constants). The previous private underscore names
+(_RunJob, _JobEvent, _PipelineWorker) are kept as deprecated aliases
+for backwards compatibility with existing scripts.
 """
 import logging
 import os
@@ -85,8 +90,13 @@ def _cascade_count(model) -> int:
 # Job + event dataclasses
 # ============================================================================ #
 @dataclass
-class _RunJob:
-    """One unit of work. Created by the GUI when 'Start' is pressed."""
+class RunJob:
+    """One unit of work. Created by the GUI when 'Start' is pressed.
+
+    Public alias for the previous private name ``RunJob``. Existing
+    scripts that imported ``RunJob`` keep working; that name is kept
+    as a deprecated alias (see ``__init__.py`` for the warning policy).
+    """
     job_id: int
     input_path: Path
     output_path: Path
@@ -136,8 +146,13 @@ class _RunJob:
 
 
 @dataclass
-class _JobEvent:
-    """Worker -> GUI signal."""
+class JobEvent:
+    """Worker -> GUI signal.
+
+    Public alias for the previous private name ``JobEvent``. Existing
+    scripts that imported ``JobEvent`` keep working; that name is kept
+    as a deprecated alias.
+    """
     kind: str  # "progress" | "started" | "finished" | "error" | "frame_error" | "log" | "fatal_error"
     job_id: int = 0
     message: str = ""
@@ -465,8 +480,12 @@ def _encode_write(pipe, sr_bgr: "np.ndarray") -> None:
 # ============================================================================ #
 # Pipeline worker (threaded, drives one job at a time from the in_queue)
 # ============================================================================ #
-class _PipelineWorker(threading.Thread):
-    """Consumes _RunJob objects from in_queue, emits _JobEvent to out_queue.
+class PipelineWorker(threading.Thread):
+    """Consumes RunJob objects from in_queue, emits JobEvent to out_queue.
+
+    Public alias for the previous private name ``_PipelineWorker``.
+    Existing scripts that imported ``_PipelineWorker`` keep working; that
+    name is kept as a deprecated alias.
 
     Lifecycle:
         start()  -> thread begins polling in_queue
@@ -484,7 +503,7 @@ class _PipelineWorker(threading.Thread):
         self._shutdown = True
         self.in_queue.put(None)
 
-    def emit(self, evt: _JobEvent):
+    def emit(self, evt: JobEvent):
         self.out_queue.put(evt)
 
     def run(self):
@@ -496,7 +515,7 @@ class _PipelineWorker(threading.Thread):
                 try:
                     self._run_one(job)
                 except Exception as e:
-                    self.emit(_JobEvent(kind="error", job_id=job.job_id,
+                    self.emit(JobEvent(kind="error", job_id=job.job_id,
                                         message=f"worker crashed: {e}",
                                         exc=e))
                     traceback.print_exc()
@@ -504,15 +523,15 @@ class _PipelineWorker(threading.Thread):
             # Worker thread itself died (e.g. out_queue.put crashed, in_queue
             # unusable). Surface a fatal_error so the GUI can show a banner
             # instead of silently going dark.
-            self.emit(_JobEvent(kind="fatal_error", job_id=0,
+            self.emit(JobEvent(kind="fatal_error", job_id=0,
                                 message=f"worker thread died: {e}",
                                 exc=e))
             traceback.print_exc()
 
     # --- per-job dispatcher ---
-    def _run_one(self, job: _RunJob):
+    def _run_one(self, job: RunJob):
         if not job.input_path.exists():
-            self.emit(_JobEvent(kind="error", job_id=job.job_id,
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"input not found: {job.input_path}"))
             return
         if job.is_video:
@@ -521,8 +540,8 @@ class _PipelineWorker(threading.Thread):
             self._run_image(job)
 
     # --- image ---
-    def _run_image(self, job: _RunJob):
-        self.emit(_JobEvent(kind="started", job_id=job.job_id,
+    def _run_image(self, job: RunJob):
+        self.emit(JobEvent(kind="started", job_id=job.job_id,
                             message=f"image: {job.input_path.name}"))
         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
         ckpt_path = _find_ckpt(job)
@@ -531,7 +550,7 @@ class _PipelineWorker(threading.Thread):
             if job.fp16:
                 torch_model = torch_model.half()
         except Exception as e:
-            self.emit(_JobEvent(kind="error", job_id=job.job_id,
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"load failed: {e}", exc=e))
             return
         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta)
@@ -542,7 +561,7 @@ class _PipelineWorker(threading.Thread):
 
         rgb = load_image_rgb(job.input_path)
         if rgb is None:
-            self.emit(_JobEvent(kind="error", job_id=job.job_id,
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"cv2 failed to read: {job.input_path}"))
             return
         rgb = _downscale_if_needed(rgb, job.downscale_max_edge)
@@ -577,7 +596,7 @@ class _PipelineWorker(threading.Thread):
                 torch.cuda.synchronize()
             dt_ms = (time.perf_counter() - t0) * 1000.0
         except Exception as e:
-            self.emit(_JobEvent(kind="error", job_id=job.job_id,
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"inference failed: {e}", exc=e))
             return
         om = _arch_caps(job.kind).out_multiple
@@ -598,16 +617,16 @@ class _PipelineWorker(threading.Thread):
         target_w = int(round(w0 * job.outscale))
         sr_bgr = _resize_keep_ar(sr_bgr, target_h, target_w)
         if save_image_rgb(cv2.cvtColor(sr_bgr, cv2.COLOR_BGR2RGB), job.output_path):
-            self.emit(_JobEvent(kind="finished", job_id=job.job_id,
+            self.emit(JobEvent(kind="finished", job_id=job.job_id,
                                 message=f"-> {job.output_path.name} ({dt_ms:.1f} ms)",
                                 infer_ms=dt_ms, progress=1.0))
         else:
-            self.emit(_JobEvent(kind="error", job_id=job.job_id,
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"save failed: {job.output_path}"))
 
     # --- video ---
-    def _run_video(self, job: _RunJob):
-        self.emit(_JobEvent(kind="started", job_id=job.job_id,
+    def _run_video(self, job: RunJob):
+        self.emit(JobEvent(kind="started", job_id=job.job_id,
                             message=f"video: {job.input_path.name}"))
         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
         ckpt_path = _find_ckpt(job)
@@ -616,7 +635,7 @@ class _PipelineWorker(threading.Thread):
             if job.fp16:
                 torch_model = torch_model.half()
         except Exception as e:
-            self.emit(_JobEvent(kind="error", job_id=job.job_id,
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"load failed: {e}", exc=e))
             return
         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta, batch_size=job.batch_size)
@@ -647,7 +666,7 @@ class _PipelineWorker(threading.Thread):
         else:
             end_frame = -1  # unbounded: run to EOF
         if end_frame >= 0 and end_frame <= start_frame:
-            self.emit(_JobEvent(kind="error", job_id=job.job_id,
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message="cut window is empty (end <= start)"
                                         if end_frame == start_frame
                                         else f"cut range exceeds video (fps={fps:g}, frames={total})"))
@@ -697,7 +716,7 @@ class _PipelineWorker(threading.Thread):
             writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"),
                                      fps, (target_w, target_h))
             if not writer.isOpened():
-                self.emit(_JobEvent(kind="error", job_id=job.job_id, message="no encoder (ffmpeg/cv2)"))
+                self.emit(JobEvent(kind="error", job_id=job.job_id, message="no encoder (ffmpeg/cv2)"))
                 sync_reader.release()
                 return
 
@@ -773,7 +792,7 @@ class _PipelineWorker(threading.Thread):
                         y = y.float()
                 except Exception as e:
                     # Per-frame failure: ask GUI how to proceed (image jobs don't do this).
-                    self.emit(_JobEvent(kind="frame_error", job_id=job.job_id,
+                    self.emit(JobEvent(kind="frame_error", job_id=job.job_id,
                                         message=str(e), frame_idx=src_idx, exc=e))
                     if job.on_frame_error:
                         try:
@@ -809,7 +828,7 @@ class _PipelineWorker(threading.Thread):
                 if now - last_emit > 0.5:
                     elapsed = now - t_wall
                     fps_a = proc / max(elapsed, 1e-6)
-                    self.emit(_JobEvent(kind="progress", job_id=job.job_id,
+                    self.emit(JobEvent(kind="progress", job_id=job.job_id,
                                         progress=(proc / limit) if limit > 0 else -1.0, fps=fps_a,
                                         infer_ms=dt_ms, frame_idx=src_idx))
                     last_emit = now
@@ -823,7 +842,7 @@ class _PipelineWorker(threading.Thread):
 
         wall = time.perf_counter() - t_wall
         avg_fps = proc / max(wall, 1e-6)
-        self.emit(_JobEvent(kind="finished", job_id=job.job_id,
+        self.emit(JobEvent(kind="finished", job_id=job.job_id,
                             message=f"-> {out_path.name} ({proc} frames, {avg_fps:.2f} fps)",
                             fps=avg_fps, progress=1.0))
 
@@ -834,7 +853,7 @@ class _PipelineWorker(threading.Thread):
             ok = extract_cut(out_path, cut_path,
                              0.0, job.cut_end_seconds - job.cut_start_seconds)
             if ok:
-                self.emit(_JobEvent(kind="log", job_id=job.job_id,
+                self.emit(JobEvent(kind="log", job_id=job.job_id,
                                     message=f"cut: {cut_path.name}"))
 
     # --- batched video path (Phase 1.C) ---
@@ -881,7 +900,7 @@ class _PipelineWorker(threading.Thread):
         try:
             x = _to_tensor_batch(rgbs_in, device, job.fp16, pinned_in=pinned_in)
         except Exception as e:
-            self.emit(_JobEvent(kind="frame_error", job_id=job.job_id,
+            self.emit(JobEvent(kind="frame_error", job_id=job.job_id,
                                 message=f"batch stack failed: {e}",
                                 frame_idx=src_idx_start, exc=e))
             skip_remaining_ref[0] = True
@@ -905,7 +924,7 @@ class _PipelineWorker(threading.Thread):
             if job.fp16:
                 y = y.float()
         except Exception as e:
-            self.emit(_JobEvent(kind="frame_error", job_id=job.job_id,
+            self.emit(JobEvent(kind="frame_error", job_id=job.job_id,
                                 message=str(e), frame_idx=src_idx_start, exc=e))
             if job.on_frame_error:
                 try:
@@ -933,7 +952,7 @@ class _PipelineWorker(threading.Thread):
             if now - last_emit_ref[0] > 0.5:
                 elapsed = now - t_wall
                 fps_a = proc_ref[0] / max(elapsed, 1e-6)
-                self.emit(_JobEvent(kind="progress", job_id=job.job_id,
+                self.emit(JobEvent(kind="progress", job_id=job.job_id,
                                     progress=(proc_ref[0] / limit) if limit > 0 else -1.0, fps=fps_a,
                                     infer_ms=dt_ms, frame_idx=src_idx_start + i))
                 last_emit_ref[0] = now
@@ -961,7 +980,7 @@ class _PipelineWorker(threading.Thread):
                 if job.fp16:
                     y = y.float()
             except Exception as e:
-                self.emit(_JobEvent(kind="frame_error", job_id=job.job_id,
+                self.emit(JobEvent(kind="frame_error", job_id=job.job_id,
                                     message=str(e),
                                     frame_idx=src_idx_start + i, exc=e))
                 continue
@@ -993,10 +1012,23 @@ def _batched(it, batch_size: int, limit: int):
             break
 
 
-def _find_ckpt(job: _RunJob) -> Path:
+def _find_ckpt(job: RunJob) -> Path:
     """The pipeline doesn't know where pretrained/ lives; the GUI passes the absolute
     path as model_filename via a side channel. We reconstruct it here by stashing
     the directory on the first call. For MVP we look next to the package + the
     settings-declared pretrained_dir."""
     # The GUI is expected to write the absolute path into job.model_filename.
     return Path(job.model_filename)
+
+
+# ----------------------------------------------------------------------------
+# Deprecated underscore aliases.
+#
+# Existing scripts (tmp/mid2s_job.py, tmp/srvgg_distill_*.py,
+# scripts/step2_video_test.py, scripts/step2_visual_pair.py,
+# scripts/step3_*.py) imported the private names directly. They keep
+# working with these aliases. New code should import the public names.
+# ----------------------------------------------------------------------------
+_RunJob = RunJob  # noqa: F822 -- intentional backwards-compat alias
+_JobEvent = JobEvent  # noqa: F822 -- intentional backwards-compat alias
+_PipelineWorker = PipelineWorker  # noqa: F822 -- intentional backwards-compat alias

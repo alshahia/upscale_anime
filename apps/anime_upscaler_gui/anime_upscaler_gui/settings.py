@@ -60,7 +60,7 @@ def _atomic_dump_json(path: Path, payload: dict) -> None:
 
 
 @dataclass
-class _Defaults(FormState):
+class Defaults(FormState):
     # Schema version for future JSON migrations.
     version: int = 1
     # Paths
@@ -113,17 +113,17 @@ class _Defaults(FormState):
     locale: str = "en"
 
 
-DEFAULTS = _Defaults()
+DEFAULTS = Defaults()
 
 
-def _coerce(d: dict) -> _Defaults:
+def _coerce(d: dict) -> Defaults:
     """Merge saved dict onto defaults; coerce types so an old file doesn't crash.
 
     Values that can't be coerced (e.g. an int field with the string "wat") are
-    silently dropped — the field keeps its default. This makes _Settings robust
+    silently dropped — the field keeps its default. This makes Settings robust
     to hand-edited or partially-corrupt settings files.
     """
-    out = _Defaults()
+    out = Defaults()
     for k, v in d.items():
         if hasattr(out, k):
             cur = getattr(out, k)
@@ -144,7 +144,7 @@ def _coerce(d: dict) -> _Defaults:
     return out
 
 
-class _AppPaths:
+class AppPaths:
     """Resolved paths for settings + cache."""
 
     def __init__(self, app_dir: Optional[Path] = None):
@@ -176,12 +176,12 @@ class _AppPaths:
         self.registry_path = new_dir / REGISTRY_FILE
 
 
-class _Settings:
+class Settings:
     """JSON-backed user settings with on-disk layout above."""
 
-    def __init__(self, paths: _AppPaths):
+    def __init__(self, paths: AppPaths):
         self.paths = paths
-        self.data: _Defaults = _Defaults()
+        self.data: Defaults = Defaults()
         self.corrupt: bool = False  # set True when settings file was unparseable
         if paths.settings_path.exists():
             try:
@@ -223,7 +223,7 @@ class _Settings:
         """
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         new = _coerce(raw)
-        for f in fields(_Defaults):
+        for f in fields(Defaults):
             if hasattr(new, f.name):
                 setattr(self.data, f.name, getattr(new, f.name))
         self.save()
@@ -313,7 +313,7 @@ def _dict_to_job(d: dict) -> Optional[Job]:
         return None
 
 
-class _QueueController:
+class QueueController:
     """In-memory queue + atomic persistence to `queue.json`.
 
     `persist(jobs)` rewrites the full queue atomically. The file is small
@@ -322,7 +322,7 @@ class _QueueController:
     are silently dropped so a half-corrupt file doesn't crash the GUI.
     """
 
-    def __init__(self, paths: _AppPaths):
+    def __init__(self, paths: AppPaths):
         self.paths = paths
         self.queue_path = paths.app_dir / QUEUE_FILE
 
@@ -356,3 +356,13 @@ class _QueueController:
             pass
         except OSError:
             pass
+
+
+# ----------------------------------------------------------------------------
+# Deprecated underscore aliases (back-compat with existing scripts that
+# imported the private names). New code should use the public names.
+# ----------------------------------------------------------------------------
+_Defaults = Defaults  # noqa: F822
+_AppPaths = AppPaths  # noqa: F822
+_Settings = Settings  # noqa: F822
+_QueueController = QueueController  # noqa: F822

@@ -39,12 +39,12 @@ from typing import List, Optional
 
 import torch
 
-from .pipeline import _PipelineWorker, _RunJob, _JobEvent
-from .registry import _ModelRegistry, _is_supported_kind
-from .settings import _AppPaths, _QueueController, _Settings
+from .pipeline import PipelineWorker, RunJob, JobEvent
+from .registry import ModelRegistry, is_supported_kind
+from .settings import AppPaths, QueueController, Settings
 from .cut_window import _CutWindow
 from .preview import _PreviewPane
-from .downloader import _ModelDownloader
+from .downloader import ModelDownloader
 from .state import Job, JobStatus
 from .ui_constants import (ACCENT, BG, DISABLED, ERROR, FG, FONT_BASE, FONT_HEADING,
                             FONT_MONO, OK, PAD_X, PAD_Y, GROUP_PAD, WARN, STATUS_COLORS)
@@ -71,11 +71,11 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         self._set_window_icon()
 
         # Paths + settings
-        self.paths = _AppPaths()
-        self.settings = _Settings(self.paths)
-        self.registry = _ModelRegistry(self.settings.pretrained_dir_path(),
+        self.paths = AppPaths()
+        self.settings = Settings(self.paths)
+        self.registry = ModelRegistry(self.settings.pretrained_dir_path(),
                                        presets_path=self.paths.registry_path)
-        self.queue_ctrl = _QueueController(self.paths)
+        self.queue_ctrl = QueueController(self.paths)
 
         # If settings were corrupt, queue a one-shot notification after the UI
         # is built (messagebox needs a live root).
@@ -96,7 +96,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             self._job_counter = max(j.id for j in self._jobs)
         self._in_queue: "queue.Queue" = queue.Queue()
         self._evt_queue: "queue.Queue" = queue.Queue()
-        self._worker = _PipelineWorker(self._in_queue, self._evt_queue)
+        self._worker = PipelineWorker(self._in_queue, self._evt_queue)
         self._worker.start()
         self._running = False
         # Side-channel used by _wait_resume_action (worker thread -> GUI modal).
@@ -415,7 +415,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 tag = "  [TRAINED]"
             elif not m.supported:
                 tag = "  [unsupported]"
-            elif not _is_supported_kind(m.kind or ""):
+            elif not is_supported_kind(m.kind or ""):
                 tag = "  [no arch]"
             items.append(f"{m.filename}  ({m.kind or '?'}, {m.scale}x, {m.size_mb:.1f} MB){tag}")
         self.model_panel.model_dropdown["values"] = items
@@ -470,7 +470,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 f"{filename} has the warm-start taint signature (bias_mean ~0.43).\n"
                 "Output will be flat-blue. Continue anyway?"):
                 return
-        if not chosen.supported or not _is_supported_kind(chosen.kind or ""):
+        if not chosen.supported or not is_supported_kind(chosen.kind or ""):
             messagebox.showerror("Unsupported arch",
                 f"{filename} is kind={chosen.kind!r}; not supported in this MVP.")
             return
@@ -557,7 +557,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 # can be re-enabled (per-frame sync inside _TrtBackend, or
                 # per-call exec_ctx rebuild).
                 batch_size = 1 if is_video else int(sp.batch_var.get())
-                job = _RunJob(
+                job = RunJob(
                     job_id=j.id,
                     input_path=j.input,
                     output_path=j.output,
@@ -688,7 +688,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         p = self.registry.preset_by_id(pid)
         if not p:
             return
-        if not _is_supported_kind(p.kind):
+        if not is_supported_kind(p.kind):
             messagebox.showwarning("Unsupported", f"{pid} is kind={p.kind!r}; not enabled in this MVP.")
             return
         self._start_download(p.url, p.filename, p.description)
@@ -711,7 +711,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         self.models_panel.dl_eta_var.set("")
         self.models_panel.dl_cancel_btn.pack(fill="x", pady=(PAD_Y, 0))
         self._dl_state = {"start": _time.monotonic(), "last_written": 0, "last_t": _time.monotonic()}
-        dl = _ModelDownloader(self.registry)
+        dl = ModelDownloader(self.registry)
 
         def _progress(written, total):
             self.models_panel.dl_progress_var.set(written / total * 100.0)
@@ -774,7 +774,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         if not path:
             return
         self.models_panel.dl_status_var.set(f"Importing {Path(path).name}...")
-        dl = _ModelDownloader(self.registry)
+        dl = ModelDownloader(self.registry)
         dl.import_local(
             Path(path),
             on_done=lambda m: self._after_import(m),
@@ -794,7 +794,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
     def _poll_events(self):
         try:
             while True:
-                evt: _JobEvent = self._evt_queue.get_nowait()
+                evt: JobEvent = self._evt_queue.get_nowait()
                 try:
                     self._handle_event(evt)
                 except tk.TclError:
@@ -807,7 +807,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         except tk.TclError:
             pass
 
-    def _handle_event(self, evt: _JobEvent):
+    def _handle_event(self, evt: JobEvent):
         # Find the job record by id
         job_rec = next((j for j in self._jobs if j.id == evt.job_id), None)
         if evt.kind == "started":
