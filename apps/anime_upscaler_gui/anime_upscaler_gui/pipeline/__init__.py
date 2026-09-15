@@ -43,6 +43,9 @@ from .tensors import (  # noqa: F401
 
 # --- backends --- (inference engines + selection policy)
 from .backends import (  # noqa: F401
+    REGISTRY,
+    BackendRegistry,
+    BackendSelectionCtx,
     _HAS_ORT,
     _HAS_TRT,
     _OnnxBackend,
@@ -50,6 +53,8 @@ from .backends import (  # noqa: F401
     _cascade_count,
     _make_backend,
     _tta_forward,
+    register_backend,
+    select_backend,
 )
 
 # --- encoder --- (ffmpeg pipe guard)
@@ -91,7 +96,9 @@ __all__ = [
     "_PinnedPool", "_pinned", "_to_tensor", "_to_tensor_batch",
     "_tensor_to_bgr", "_tensor_to_bgr_batch", "_resize_keep_ar",
     "_downscale_if_needed",
-    # backends
+    # backends (Phase B3 adds the registry)
+    "BackendRegistry", "BackendSelectionCtx", "REGISTRY",
+    "register_backend", "select_backend",
     "_HAS_ORT", "_HAS_TRT", "_PyTorchBackend", "_OnnxBackend",
     "_make_backend", "_cascade_count", "_tta_forward",
     # encoder
