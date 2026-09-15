@@ -944,6 +944,15 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             pass
         elif evt.kind == "log":
             self.status_bar.status_var.set(f"Job #{evt.job_id}: {evt.message}")
+        elif evt.kind == "gpu_util":
+            # Q4 (perf/queue-controls-gpu-codec): worker emits gpu_util at
+            # most once per second. Push to the GPU monitor widget if it
+            # exists; the widget also polls pynvml locally, but the
+            # worker's emission carries the load that's actually on the
+            # GPU right now (rather than the global pynvml counter).
+            gpu_monitor = getattr(self, "gpu_monitor", None)
+            if gpu_monitor is not None:
+                gpu_monitor.apply_event(evt)
         elif evt.kind == "fatal_error":
             # Worker thread itself died. Surface a banner; re-enable Start so
             # the user can retry (a new worker will be spun up by next Start).

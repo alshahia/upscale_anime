@@ -65,6 +65,88 @@ class _JobCancelled(Exception):
     """Raised internally by the worker when a cancel control arrives."""
 
 
+# Q4 (perf/queue-controls-gpu-codec): light-weight GPU util probe used
+# by the worker to emit ``JobEvent(kind="gpu_util")`` once per second.
+# We prefer pynvml (the canonical NVIDIA System Management Interface)
+# because it gives util / VRAM / temperature with no CUDA runtime cost.
+# Falls back to a torch.cuda.memory_allocated snapshot when pynvml is
+# missing (common on Windows test boxes); util% is reported as 0 in that
+# case because PyTorch itself has no CUDA utilisation counter.
+_GPU_UTIL_PROBE: Optional[dict] = None  # lazy probe cache
+_GPU_UTIL_MIN_INTERVAL_S = 1.0           # worker emits gpu_util at most 1Hz
+
+
+def _read_gpu_util() -> Optional[dict]:
+    """Return ``{util, mem_used_mb, mem_total_mb, temp_c}`` or None.
+
+    Process-cached: the first call probes pynvml + opens the device
+    handle; subsequent calls reuse the same handle until the process
+    ends. Returns None when neither pynvml nor torch.cuda is available.
+    """
+    global _GPU_UTIL_PROBE
+    if _GPU_UTIL_PROBE is not None:
+        return _GPU_UTIL_PROBE
+    probe: Optional[dict] = None
+    try:
+        import pynvml  # type: ignore
+        try:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
+            temp = pynvml.nvmlDeviceGetTemperature(handle, 0)
+            probe = {
+                "util": int(util),
+                "mem_used_mb": int(mem.used) // (1024 * 1024),
+                "mem_total_mb": int(mem.total) // (1024 * 1024),
+                "temp_c": int(temp),
+                "_handle": handle,
+                "_pynvml": pynvml,
+            }
+        except Exception:
+            probe = None
+    except Exception:
+        probe = None
+    if probe is None:
+        try:
+            import torch as _torch
+            if _torch.cuda.is_available():
+                free, total = _torch.cuda.mem_get_info()
+                probe = {
+                    "util": 0,
+                    "mem_used_mb": (total - free) // (1024 * 1024),
+                    "mem_total_mb": total // (1024 * 1024),
+                    "temp_c": 0,
+                }
+        except Exception:
+            probe = None
+    _GPU_UTIL_PROBE = probe if probe is not None else {}
+    return _GPU_UTIL_PROBE or None
+
+
+def _maybe_emit_gpu_util(emit_fn, job_id: int, last_emit_ref: list) -> None:
+    """Emit a gpu_util JobEvent at most once per second.
+
+    ``last_emit_ref`` is a single-element list so the closure can mutate
+    the caller's timestamp (Python 3 lacks the ``nonlocal`` workaround
+    that's needed when state lives on the worker instance only).
+    """
+    now = time.perf_counter()
+    if now - last_emit_ref[0] < _GPU_UTIL_MIN_INTERVAL_S:
+        return
+    info = _read_gpu_util()
+    if not info:
+        return
+    emit_fn(JobEvent(
+        kind="gpu_util",
+        job_id=job_id,
+        message=f"util={info['util']}% mem={info['mem_used_mb']}/"
+                f"{info['mem_total_mb']}MB t={info['temp_c']}C",
+        fps=float(info["util"]),
+    ))
+    last_emit_ref[0] = now
+
+
 # Q2: sentinel events used to wake a paused worker between frames.
 # Keyed by job_id so multiple jobs can have independent pause state.
 # The worker creates the Event on first pause, clears it on resume,
@@ -568,6 +650,12 @@ class PipelineWorker(threading.Thread):
                     self.emit(JobEvent(kind="progress", job_id=job.job_id,
                                         progress=(proc / limit) if limit > 0 else -1.0, fps=fps_a,
                                         infer_ms=dt_ms, frame_idx=src_idx))
+                    # Q4 (perf/queue-controls-gpu-codec): piggy-back a
+                    # gpu_util emission on the existing 2 Hz progress
+                    # tick so the GUI can show util/VRAM/temp without
+                    # spinning up a second polling thread. The helper
+                    # rate-limits itself to 1 Hz internally.
+                    _maybe_emit_gpu_util(self.emit, job.job_id, [last_emit])
                     last_emit = now
         finally:
             if use_pipe:
@@ -692,6 +780,12 @@ class PipelineWorker(threading.Thread):
                 self.emit(JobEvent(kind="progress", job_id=job.job_id,
                                     progress=(proc_ref[0] / limit) if limit > 0 else -1.0, fps=fps_a,
                                     infer_ms=dt_ms, frame_idx=src_idx_start + i))
+                # Q4 (perf/queue-controls-gpu-codec): see site a; the
+                # ref-list pattern is the same here -- last_emit_ref[0]
+                # is mutated by the helper to remember the last gpu_util
+                # emission time, which is independent from the 2 Hz
+                # progress tick so a long pause won't suppress util.
+                _maybe_emit_gpu_util(self.emit, job.job_id, last_emit_ref)
                 last_emit_ref[0] = now
 
     def _process_video_batch_fallback(
