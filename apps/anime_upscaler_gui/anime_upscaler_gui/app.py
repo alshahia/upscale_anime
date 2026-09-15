@@ -42,6 +42,12 @@ import torch
 from .pipeline import PipelineWorker, RunJob, JobEvent
 from .registry import ModelRegistry, is_supported_kind
 from .settings import AppPaths, QueueController, Settings
+from .controllers import (
+    compute_output_path as _compute_output_path_ctrl,
+    resolve_from_dropdown as _resolve_from_dropdown,
+    resolve_kind_from_dropdown as _resolve_kind_from_dropdown,
+    resolve_path_from_dropdown as _resolve_path_from_dropdown,
+)
 from .cut_window import _CutWindow
 from .preview import _PreviewPane
 from .downloader import ModelDownloader
@@ -307,15 +313,20 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             self.cut_window.hide()
 
     def _compute_output_path(self, input_path: Path) -> Path:
-        """Pick an output path based on settings.output_mode + suffix."""
-        mode = self.settings.data.output_mode
-        suffix = self.settings.data.single_file_suffix
-        if mode == "same_folder":
-            # Multi-file uses batch_folder_name inside the input folder.
-            out_dir = input_path.parent / self.settings.data.batch_folder_name
-        else:
-            out_dir = Path(self.output_panel.output_dir_var.get())
-        return out_dir / f"{input_path.stem}{suffix}{input_path.suffix}"
+        """Pick an output path based on settings.output_mode + suffix.
+
+        Phase A3: thin wrapper around controllers.job_builder.compute_output_path --
+        the orchestrator's only job here is to read settings + widget state and
+        pass them as primitives to the pure helper.
+        """
+        d = self.settings.data
+        return _compute_output_path_ctrl(
+            input_path,
+            output_mode=d.output_mode,
+            single_file_suffix=d.single_file_suffix,
+            batch_folder_name=d.batch_folder_name,
+            custom_output_dir=self.output_panel.output_dir_var.get(),
+        )
 
     def _next_job_id(self) -> int:
         self._job_counter += 1
@@ -665,20 +676,18 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         return result_box.get("action", SKIP_FRAME)
 
     def _resolve_model_path_from_dropdown(self) -> str:
-        sel = self.model_panel.model_dropdown.get()
-        if not sel:
-            return ""
-        filename = sel.split()[0]
-        m = next((x for x in self.registry._installed if x.filename == filename), None)
-        return str(m.path.resolve()) if m else ""
+        """Phase A3: delegates to controllers.model_resolver."""
+        return _resolve_path_from_dropdown(
+            self.model_panel.model_dropdown.get(),
+            self.registry,
+        )
 
     def _resolve_kind_from_dropdown(self) -> str:
-        sel = self.model_panel.model_dropdown.get()
-        if not sel:
-            return ""
-        filename = sel.split()[0]
-        m = next((x for x in self.registry._installed if x.filename == filename), None)
-        return m.kind if m and m.kind else ""
+        """Phase A3: delegates to controllers.model_resolver."""
+        return _resolve_kind_from_dropdown(
+            self.model_panel.model_dropdown.get(),
+            self.registry,
+        )
 
     def _download_preset(self):
         sel = self.models_panel.preset_dropdown.get()
