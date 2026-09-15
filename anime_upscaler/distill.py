@@ -62,6 +62,69 @@ def _charbonnier(x, y, eps=1e-3):
     return torch.sqrt((x - y) ** 2 + eps ** 2).mean()
 
 
+def _freq_magnitude_loss_hf(s_out, hr, cutoff_frac=0.25):
+    """High-frequency magnitude L1 loss (Phase 5#3 FRAMER-style, simplified).
+
+    Additive frequency-domain distillation term inspired by FRAMER
+    (Frequency-Aligned Self-Distillation with Adaptive Modulation, Dec 2025,
+    https://www.alphaxiv.org/abs/2512.01390). The full FRAMER formulation
+    combines FFT decomposition + IntraCL/InterCL contrastive losses on
+    diffusion U-Net/DiT intermediate features + FAW/FAM adaptive gating
+    -- designed for diffusion-model feature hierarchies, not single-stage
+    SR student/teacher pairs.
+
+    We keep the core insight (decompose SR output into LF/HF bands, then
+    constrain HF against GT) and drop the diffusion-specific machinery:
+    the input here is just the student's final SR output + HR GT, both in
+    [0,1]. The HF mask zeros out a central circular region of the
+    fftshifted magnitude spectrum; everything outside is the HF annulus.
+    L1 on those HF magnitudes anchors the student's HF generation to GT,
+    directly addressing the SRVGG-body structural sharpness bias
+    (lap_var 306+ at default training).
+
+    Because it's added on top of the existing loss_gt (which already has
+    pixel L1 + LPIPS/twin perceptual), the term is purely complementary
+    and cannot regress below v1 baseline: LF fidelity is already covered
+    by the pixel/perceptual anchors, and HF over-amplification is the
+    specific failure mode this term fixes.
+
+    Args:
+        s_out: student SR output (B, C, H, W) in [0, 1] (clamped inside).
+        hr:    HR ground-truth target (B, C, H, W) in [0, 1].
+        cutoff_frac: fraction of max radius below which frequencies are
+                     treated as LF (zeroed in the mask). 0.25 means the
+                     central 6.25% of the spectrum (by area) is LF; the
+                     rest (93.75%) is HF. Higher = stricter HF band
+                     (only the highest frequencies count).
+
+    Returns:
+        Scalar L1 distance between student and GT HF magnitudes. Units
+        are magnitude per channel (same as `torch.abs(fft2(x))`).
+    """
+    a = s_out.clamp(0, 1)
+    b = hr.clamp(0, 1)
+    # Full 2D FFT (complex); fftshift so DC component is at center.
+    # Magnitude spectrum is symmetric under shift, so abs() makes the
+    # result invariant to which quadrant we mask.
+    A = torch.fft.fftshift(torch.fft.fft2(a, norm="ortho"), dim=(-2, -1))
+    B = torch.fft.fftshift(torch.fft.fft2(b, norm="ortho"), dim=(-2, -1))
+    mag_a = torch.abs(A)
+    mag_b = torch.abs(B)
+    _, _, H, W = mag_a.shape
+    # Radial coordinate centered at DC (geometric center after fftshift).
+    # Use float center so the mask is correctly aligned for both even and
+    # odd spatial dims (typical SR outputs are even-sized, but be safe).
+    yy = torch.arange(H, device=mag_a.device).float() - (H - 1) / 2.0
+    xx = torch.arange(W, device=mag_a.device).float() - (W - 1) / 2.0
+    yy, xx = torch.meshgrid(yy, xx, indexing="ij")
+    rr = torch.sqrt(yy ** 2 + xx ** 2)
+    r_max = rr.max().clamp(min=1.0)
+    # HF mask: 1 outside the central LF disk, 0 inside. Broadcasts over
+    # (B, C).
+    hf_mask = (rr > cutoff_frac * r_max).to(mag_a.dtype)
+    return (mag_a * hf_mask - mag_b * hf_mask).abs().mean()
+
+
 _lpips_net = None
 
 
@@ -405,6 +468,23 @@ def main():
     ap.add_argument("--scale", type=int, default=4, choices=(2, 3, 4),
                     help="Upscaling factor for the student (2 for the v2 cascade student, "
                          "4 for the v1 single-shot student). Default 4.")
+    # Phase 5#3 (2026-09-06): FRAMER-style frequency-domain distillation
+    # (additive). --lambda-freq is the weight on the HF magnitude L1 term;
+    # default 0.0 keeps the loss additive-free and preserves all prior
+    # recipe behavior (Phase 2 v3 / Phase 3 / Phase 4 / Phase 5#1/#2/#2b/#6
+    # all unchanged). Set to 0.05-0.2 for the new additive anchor.
+    # --freq-cutoff-frac controls the LF/HF split: 0.25 means the central
+    # 6.25% of the FFT magnitude spectrum is treated as LF (masked out);
+    # the outer 93.75% is HF and contributes to the loss. Smaller = HF
+    # band starts at lower frequencies (more permissive); larger = only
+    # the very highest frequencies count (stricter).
+    ap.add_argument("--lambda-freq", type=float, default=0.0,
+                    help="Weight on HF magnitude L1 loss (Phase 5#3 FRAMER-style). "
+                         "Default 0.0 = disabled; additive on top of loss_gt in both "
+                         "Phase 2 v3 and Phase 3 spec recipes.")
+    ap.add_argument("--freq-cutoff-frac", type=float, default=0.25,
+                    help="LF/HF split radius as fraction of max FFT radius (Phase 5#3). "
+                         "0.25 = central 6.25% of spectrum is LF (masked); default.")
     args = ap.parse_args()
 
     if args.smoke:
@@ -420,6 +500,12 @@ def main():
 
     set_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        # Training shapes are fixed (crop-driven); cudnn autotuner cuts conv
+        # latency meaningfully on+turing. Harmless for fp32 and fp16 paths.
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -515,7 +601,8 @@ def main():
         args.loss = "vgg"
     print(f"[recipe] phase3={use_phase3}  arch={args.arch}  teacher={args.teacher}  "
           f"lambda_adv={args.lambda_adv}  shortcut_anneal={args.shortcut_anneal}"
-          f"  shortcut_mode={args.shortcut_mode}  loss={args.loss}")
+          f"  shortcut_mode={args.shortcut_mode}  loss={args.loss}"
+          f"  lambda_freq={args.lambda_freq}  freq_cutoff_frac={args.freq_cutoff_frac}")
     # Back-compat: --twin-delta X (when danbooru_weight is None in TwinPerceptualLoss)
     # is the older single-knob form. Map delta -> vgg_weight so older config files
     # keep working without forcing users to retype two flags.
@@ -661,22 +748,42 @@ def main():
     mse = nn.MSELoss()
 
     log_path = out_dir / "train_log.csv"
-    with open(log_path, "w", newline="") as f:
+    # Append when resuming so prior epochs' history survives a mid-run restart.
+    # If the file is externally locked (AV/indexer), fall back to a new side
+    # log after a short retry loop instead of losing the whole run.
+    log_append = args.resume and log_path.exists()
+    for _try in range(4):
+        try:
+            _probe = open(log_path, "a", newline="")
+            _probe.close()
+            break
+        except PermissionError:
+            if _try == 3:
+                log_path = out_dir / "train_log_second.csv"
+                log_append = False
+                print("[warn] train_log.csv locked by another process; "
+                      "writing side log", log_path.name)
+            else:
+                time.sleep(2.0)
+    with open(log_path, "a" if log_append else "w", newline="") as f:
         # Phase 3 columns: loss_adv, loss_grad for adversarial + edge terms.
-        csv.writer(f).writerow(
-            ["epoch", "lr", "loss_response", "loss_feature", "loss_gt",
-             "loss_adv", "loss_grad", "loss_total",
-             "val_psnr_bicubic", "val_psnr_student",
-             "val_psnr_student_ema", "val_psnr_teacher", "val_ssim_student",
-             "seconds", "teacher_ms_per_iter"])
+        # Phase 5#3: loss_freq for the FRAMER-style HF magnitude term (0 when
+        # --lambda-freq=0, the default).
+        if not log_append:
+            csv.writer(f).writerow(
+                ["epoch", "lr", "loss_response", "loss_feature", "loss_gt",
+                 "loss_freq", "loss_adv", "loss_grad", "loss_total",
+                 "val_psnr_bicubic", "val_psnr_student",
+                 "val_psnr_student_ema", "val_psnr_teacher", "val_ssim_student",
+                 "seconds", "teacher_ms_per_iter"])
 
     for epoch in range(resume_from, args.epochs + 1):
         t0 = time.time()
         student.train()
         if D is not None:
             D.train()
-        agg = {"resp": 0.0, "feat": 0.0, "gt": 0.0, "adv": 0.0, "grad": 0.0,
-               "total": 0.0}
+        agg = {"resp": 0.0, "feat": 0.0, "gt": 0.0, "freq": 0.0,
+               "adv": 0.0, "grad": 0.0, "total": 0.0}
         n_iter = 0
         teacher_ms_total = 0.0
         for lr_n, hr_n in train_dl:
@@ -801,6 +908,21 @@ def main():
                 else:
                     loss_gt = 0.5 * l1(s_out_for_gt, hr)
 
+            # ---- Frequency-domain HF loss (Phase 5#3, FRAMER-style additive) ----
+            # Decomposes student SR + HR GT into FFT magnitudes, masks out the
+            # low-frequency band (central disk) and keeps only the high-frequency
+            # annulus. L1 on HF magnitudes anchors the student's HF generation
+            # to GT HF, directly addressing the SRVGG-body structural sharpness
+            # bias (lap_var 306+ at default training, see Phase 5#6 result doc).
+            # Additive: applied in BOTH Phase 2 v3 and Phase 3 spec recipes
+            # below. The existing L1 + LPIPS/twin anchors in loss_gt already
+            # cover low-frequency fidelity, so HF-MSE complements rather than
+            # competes with them. Default --lambda-freq=0 keeps this disabled.
+            loss_freq = torch.tensor(0.0, device=device)
+            if args.lambda_freq > 0:
+                loss_freq = _freq_magnitude_loss_hf(
+                    s_out_for_gt, hr, cutoff_frac=args.freq_cutoff_frac)
+
             # ---- Edge loss (Phase 3 only) ----
             loss_edge = torch.tensor(0.0, device=device)
             if use_phase3 and edge_loss is not None:
@@ -808,10 +930,12 @@ def main():
 
             # ---- Total G loss (Phase 3 spec or Phase 2 v3 spec) ----
             if use_phase3:
-                # L = L_distill + L_gt + L_grad + (later) L_adv
-                loss = loss_distill + loss_gt + loss_edge
+                # L = L_distill + L_gt + L_grad + L_freq + (later) L_adv
+                loss = (loss_distill + loss_gt + loss_edge
+                        + args.lambda_freq * loss_freq)
             else:
-                loss = 0.3 * loss_distill + 0.5 * loss_feat + 1.0 * loss_gt
+                loss = (0.3 * loss_distill + 0.5 * loss_feat + 1.0 * loss_gt
+                        + args.lambda_freq * loss_freq)
 
             # ---- D step (Phase 3 only; standard ESRGAN pattern) ----
             loss_adv_g = torch.tensor(0.0, device=device)
@@ -852,6 +976,7 @@ def main():
             agg["resp"] += loss_distill.item()
             agg["feat"] += loss_feat.item()
             agg["gt"] += loss_gt.item()
+            agg["freq"] += loss_freq.item()
             agg["adv"] += loss_adv_g.item()
             agg["grad"] += loss_edge.item()
             agg["total"] += loss.item()
@@ -888,8 +1013,23 @@ def main():
                metrics_ema["student"][0], metrics["teacher"][0],
                metrics["student"][1], round(dt, 1),
                round(teacher_ms_total / max(n_iter, 1), 1)]
-        with open(log_path, "a", newline="") as f:
-            csv.writer(f).writerow(row)
+        _open_retry = 0
+        while True:
+            try:
+                fh = open(log_path, "a", newline="")
+                break
+            except PermissionError as _pe:
+                _open_retry += 1
+                if _open_retry >= 4:
+                    # Never lose an epoch row: escape to a side file if the
+                    # main log is persistently held by an external process.
+                    fh = open(log_path.with_name(log_path.stem + "_overflow.csv"),
+                              "a", newline="")
+                    break
+                time.sleep(2.0 * _open_retry)  # AV/indexer transient lock on CSV
+        with fh:
+            fhwriter = csv.writer(fh)
+            fhwriter.writerow(row)
         print(f"[ep {epoch:03d}/{args.epochs}] loss={row[7]:.4f} "
               f"(resp {row[2]:.4f} feat {row[3]:.4f} gt {row[4]:.4f} "
               f"adv {row[5]:.4f} grad {row[6]:.4f}) "

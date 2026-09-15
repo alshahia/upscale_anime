@@ -1081,7 +1081,9 @@ Three sequential experiments to break the RFDN+anneal ceiling established in Pha
 | PASS | PASS | PASS | I3 (most novel) |
 | FAIL | FAIL | FAIL | animevideov3 baseline only (already shipped) |
 
-**Current state (2026-09-03, post-I3 — PHASE 4 CLOSED)**: I1 row = D.1 FAIL, I2 row = D.2 FAIL (both sub-runs), I3 row = D.1 FAIL + H6 triggered. Per matrix "FAIL FAIL FAIL → ship animevideov3 baseline only". **No new student shipped**. Production GUI options remain v1 RFDN (real-time, 21.0 lap_var) and animevideov3 SRVGG (quality, 58.1 lap_var). Phase 5 candidates are documented in the I3 result doc §4.4 but are NOT planned.
+**Current state (2026-09-03, post-I3 — PHASE 4 CLOSED)**: I1 row = D.1 FAIL, I2 row = D.2 FAIL (both sub-runs), I3 row = D.1 FAIL + H6 triggered. Per matrix "FAIL FAIL FAIL → ship animevideov3 baseline only". **No new student shipped**. Production GUI options remain v1 RFDN (real-time, 21.0 lap_var) and animevideov3 SRVGG (quality, 58.1 lap_var).
+
+**Phase 5 research survey (2026-09-03)**: 15 Exa /search queries documenting the latest anime SR landscape (MambaIRv2 CVPR 2025, OSEDiff NeurIPS 2024, FiDeSR CVPR 2026, APISR CVPR 2024, etc.). Full report at docs/research/anime_sr_2026/ (REPORT.md 358 lines + SOURCES.md 447 lines). 9 candidate Phase 5 experiments in REPORT.md section 9 decision matrix — awaiting user direction. NO code changes; pure documentation. Security: Exa API key was typed in chat; recommend rotation.
 
 ### Rollback (if all fail)
 

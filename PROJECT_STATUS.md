@@ -56,7 +56,28 @@
    - Solution: Fixed YAML structure and data section configuration
    - Result: Successful dataset loading and training
 
-### 📈 Training Results
+### 📈 Training Results (Step-2 rebase — current, supersedes the historical block below)
+
+```
+✅ Real-time student ACCEPTED: runs/step2_srvgg_hfa_v1/student_best.pt
+   (TinySRVGG 317K params, 4x; teacher 4xHFA2k_ludvae_realplksr_dysample;
+   50 epochs on data/anime_fullframes — 4,372 dedup 1080p source frames)
+✅ Test-split fidelity: student 33.55 dB / 0.9146 SSIM
+   vs bicubic 33.05/0.9039 vs teacher 32.60/0.9296
+✅ Real degraded-frame perception: NIQE 7.38 (best of all tested models);
+   visual check clean (1-second video + pair stills, no hallucination)
+✅ 1-second video test: results/step2_video_test_pair.mp4
+   (3.7 fps eager fp16 at 960x540 -> 4K output; TensorRT export pending
+   for the 25 fps goal — eager will not reach it, as measured)
+✅ 50/50 epochs without NaN; best+last+rotating auto-save verified across
+   three crash-free resumes (--resume latest.pt; CSV-lock fallback added)
+```
+
+From-scratch SPAN/Mamba teacher models and the old RFDN student (29.46 dB ≈
+bicubic on their split, below bicubic CLIPIQA on real frames) are retired.
+Full evidence trail and measurements: docs/ROADMAP_REALTIME_QUALITY.md.
+
+### 📈 Training Results (historical, superseded)
 
 ```
 ✅ NaN-safe training completed successfully

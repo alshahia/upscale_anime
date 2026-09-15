@@ -2,6 +2,27 @@
 
 A PyTorch implementation supporting NTIRE-winning SPAN architecture with MTKD+FAKD distillation, and Mamba-PAN with directional scanning.
 
+## Current Best Model (Step-2 REBASE, ACCEPTED — see docs/ROADMAP_REALTIME_QUALITY.md)
+
+The active production candidate is NOT the early from-scratch SPAN/Mamba
+ensemble line — those were diagnosed as teacher/data limited and retired.
+Current champion (real-time class, 317K params):
+
+| | PSNR / SSIM (438-img test split) | NIQE (degraded real frames) | eager fps 640x360 LR -> 1440p |
+|---|---|---|---|
+| bicubic | 33.05 / 0.9039 | 9.11 | - |
+| TinySRVGG student (runs/step2_srvgg_hfa_v1/student_best.pt) | **33.55 / 0.9146** | **7.38** | 8.2 (3.7 @ 960x540) |
+| teacher 4xHFA2k_ludvae_realplksr_dysample | 32.60 / 0.9296 | 9.21 | - |
+
+Recipe: TinySRVGGStudent distilled from 4xHFA2k_ludvae_realplksr_dysample.pth
+(via spandrel, fp16 teacher) on data/anime_fullframes (4,372 dedup 1080p
+frames extracted from the source episodes; see scripts/extract_frames.py),
+50 epochs, batch 32, twin perceptual loss, v3 distillation loss + EMA.
+Training logs: runs/step2_srvgg_hfa_v1/train_log*.csv. Visual evidence:
+results/step2_visual_pair.png; 1-second video test:
+results/step2_video_test_pair.mp4. Deploy target: ONNX -> TensorRT fp16,
+>= 25 fps at 1080p-class output (next task).
+
 ## Features
 
 - **Model A (NTIRE)**: SPAN-Tiny with parameter-free attention + ConvLoRA + MTKD + FAKD
