@@ -134,6 +134,17 @@ def build_run_job(
     device = value_provider("device")
     fp16 = bool(value_provider("fp16")) and device == "cuda"
 
+    # Q3 (perf/queue-controls-gpu-codec): nvenc_qp is now on the panel,
+    # so we honour the user's live choice when available. Older
+    # callers (and the test suite, which uses a dict-shaped panel)
+    # still get the dataclass default. The panel-wins / data-falls-
+    # back pattern keeps the public API additive and avoids
+    # touching every test in the repo.
+    try:
+        nvenc_qp = int(value_provider("nvenc_qp"))
+    except (KeyError, AttributeError):
+        nvenc_qp = int(getattr(data, "nvenc_qp", 18))
+
     return RunJob(
         job_id=job.id,
         input_path=job.input,
@@ -158,8 +169,7 @@ def build_run_job(
         use_tensorrt=bool(value_provider("use_tensorrt")),
         use_nvenc=bool(value_provider("use_nvenc")),
         nvenc_preset=str(value_provider("nvenc_preset")),
-        # Advanced fields read directly from the Defaults dataclass.
-        nvenc_qp=int(data.nvenc_qp),
+        nvenc_qp=nvenc_qp,
         cascade_mode=data.cascade_mode,
         cut_start_seconds=float(job.cut_start),
         cut_end_seconds=float(job.cut_end),

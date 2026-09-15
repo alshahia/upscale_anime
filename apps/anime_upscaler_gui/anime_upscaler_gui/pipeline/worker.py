@@ -33,7 +33,7 @@ import torch.nn.functional as F
 
 from ..archs import build
 from ..archs import capabilities as _arch_caps
-from ..decoders import (_AsyncReader, _Cv2Reader, _PyAvReader, _SkipFirstFrames,
+from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
                         load_image_rgb, save_image_rgb)
 from ..ffmpeg import extract_cut, ffmpeg_available, open_encoder
 
@@ -342,8 +342,23 @@ class PipelineWorker(threading.Thread):
             return
         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta, batch_size=job.batch_size)
 
-        if job.decode == "pyav":
+        if job.decode == "nvdec":
+            # Q3: explicit NVDEC selection. _NvDecReader raises if the
+            # probe said NVDEC is unavailable so the user gets a clean
+            # error instead of a silent CPU fallback.
+            sync = _NvDecReader(job.input_path)
+        elif job.decode == "pyav":
             sync = _PyAvReader(job.input_path)
+        elif job.decode == "auto":
+            # Q3: prefer NVDEC when available; same dispatch as the
+            # open_reader() factory.
+            from ..decoders import _detect_nvdec_support, _HAS_PYAV
+            if _detect_nvdec_support():
+                sync = _NvDecReader(job.input_path)
+            elif _HAS_PYAV:
+                sync = _PyAvReader(job.input_path)
+            else:
+                sync = _Cv2Reader(job.input_path)
         else:
             sync = _Cv2Reader(job.input_path)
         fps, total, w, h = sync.fps, sync.total, sync.w, sync.h
@@ -381,8 +396,20 @@ class PipelineWorker(threading.Thread):
         # always re-opened with cv2, silently ignoring decode=pyav; use the
         # reader factory so the selected decode backend actually decodes.
         sync.release()
-        if job.decode == "pyav":
+        if job.decode == "nvdec":
+            new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
+            async_inner = new_sync_reader
+        elif job.decode == "pyav":
             new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+            async_inner = new_sync_reader
+        elif job.decode == "auto":
+            from ..decoders import _detect_nvdec_support, _HAS_PYAV
+            if _detect_nvdec_support():
+                new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
+            elif _HAS_PYAV:
+                new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+            else:
+                new_sync_reader = _SkipFirstFrames(_Cv2Reader(job.input_path), start_frame)
             async_inner = new_sync_reader
         else:
             cap = cv2.VideoCapture(str(job.input_path))
