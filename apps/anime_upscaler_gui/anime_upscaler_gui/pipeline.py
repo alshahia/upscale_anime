@@ -447,6 +447,19 @@ class _OnnxBackend:
         if n_recurrent:
             out = out[:, out.shape[1] // 2]
         return torch.from_numpy(out).to(self.device)
+F_ENC_DIED = "video encoder process died mid-stream: "
+
+
+# --- encoder write guard --------------------------------------------------- #
+# When the ffmpeg encoder dies mid-stream (driver failure, NVENC session loss),
+# Python surfaces it as a bare OSError [Errno 22] from the dead pipe. Wrap it
+# into a one-line, actionable error for the GUI queue instead of a raw dump.
+def _encode_write(pipe, sr_bgr: "np.ndarray") -> None:
+    try:
+        pipe.stdin.write(sr_bgr.tobytes())
+    except (OSError, ValueError) as e:
+        _m = F_ENC_DIED + repr(e)
+        raise RuntimeError(_m) from e
 
 
 # ============================================================================ #
@@ -788,7 +801,7 @@ class _PipelineWorker(threading.Thread):
                 sr_bgr = _tensor_to_bgr(y, pinned_out=pinned_out)
                 sr_bgr = _resize_keep_ar(sr_bgr, target_h, target_w)
                 if use_pipe:
-                    pipe.stdin.write(sr_bgr.tobytes())
+                    _encode_write(pipe, sr_bgr)
                 else:
                     writer.write(sr_bgr)
                 proc += 1
@@ -912,7 +925,7 @@ class _PipelineWorker(threading.Thread):
                                         target_h=target_h, target_w=target_w)
         for i, sr_bgr in enumerate(sr_bgrs):
             if use_pipe:
-                pipe.stdin.write(sr_bgr.tobytes())
+                _encode_write(pipe, sr_bgr)
             else:
                 writer.write(sr_bgr)
             proc_ref[0] += 1
@@ -957,7 +970,7 @@ class _PipelineWorker(threading.Thread):
             sr_bgr = _tensor_to_bgr(y, pinned_out=pinned_out)
             sr_bgr = _resize_keep_ar(sr_bgr, target_h, target_w)
             if use_pipe:
-                pipe.stdin.write(sr_bgr.tobytes())
+                _encode_write(pipe, sr_bgr)
             else:
                 writer.write(sr_bgr)
             proc_ref[0] += 1

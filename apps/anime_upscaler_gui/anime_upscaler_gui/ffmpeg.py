@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,11 @@ _X264_RC_LOOKAHEAD = 20           # buffered lookahead frames (default ~40)
 _X264_LOOKAHEAD_THREADS = 2       # lookahead analysis threads (default = cores)
 _NVENC_FALLBACK_WARNED = False
 _NVENC_PROBE_TIMEOUT = 15  # seconds (functional encode probe can take a few seconds)
+# How long to watch a freshly spawned h264_nvenc ffmpeg for synchronous init
+# failure. A healthy encoder sits alive waiting for stdin frames, so a poll
+# that sees an exit code means the encoder never opened. Near-zero cost
+# when NVENC works.
+_NVENC_INIT_GRACE_S = 1.5
 
 
 def _detect_nvenc_support() -> bool:
@@ -108,8 +114,28 @@ def open_encoder(
             "-rc", "constqp", "-qp", str(nvenc_qp),
             "-pix_fmt", "yuv420p", str(out_path),
         ]
-    else:
-        cmd = [
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        # NVENC session creation is synchronous: if it fails ("No capable
+        # devices found" under mid-run conditions, driver hiccup, sessions
+        # exhausted), ffmpeg exits on its own before any frame is written.
+        # Detect that here and fall back to libx264 instead of crashing the
+        # pipeline at the first stdin.write with OSError [Errno 22].
+        t0 = time.time()
+        dead = False
+        while time.time() - t0 < _NVENC_INIT_GRACE_S:
+            if proc.poll() is not None:
+                print(
+                    f"[ffmpeg] h264_nvenc exited during init "
+                    f"(code {proc.poll()}); falling back to libx264.",
+                    file=sys.stderr, flush=True,
+                )
+                dead = True
+                break
+            time.sleep(0.02)
+        if not dead:
+            return proc
+        # fall through to libx264
+    cmd = [
             "ffmpeg", "-y", "-loglevel", "error",
             "-f", "rawvideo", "-pix_fmt", "bgr24",
             "-s", f"{w}x{h}", "-r", f"{fps:.3f}",
