@@ -717,6 +717,10 @@ class Capability:
     pad_multiple: int = 0
     # >0: crop the SR output back to input_h * this after padded inference.
     out_multiple: int = 0
+    # TTA compatibility: the D4 augmentation wrapper feeds the model plain
+    # (B, C, H, W) tensors; kinds that need a different input shape (e.g.
+    # recurrent (B, N, C, H, W) models) must gate TTA off at registration.
+    tta: bool = True
 
 
 @dataclass(frozen=True)
@@ -1010,7 +1014,7 @@ def _register_builtin_archs() -> None:
                            loader=_load_animesr, default_scale=4,
                            capability=Capability(
                                tiled=False, tensorrt=False,
-                               batch_video=False, recurrent_frames=3,
+                               batch_video=False, recurrent_frames=3, tta=False,
                                pad_multiple=4, out_multiple=4)))
     register_arch(ArchSpec(kind="rfdn_student", detect=_detect_rfdn_student,
                            loader=_load_rfdn_student, default_scale=4))

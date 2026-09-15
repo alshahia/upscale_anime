@@ -46,7 +46,10 @@ def _detect_nvenc_support() -> bool:
         r = subprocess.run(
             [
                 "ffmpeg", "-hide_banner", "-v", "error",
-                "-f", "lavfi", "-i", "color=black:s=64x64:d=0.125",
+                # 256x256: NVENC has a minimum supported frame size (~145px);
+                # probing at 64x64 falsely reports "no capable devices" on
+                # perfectly capable GPUs (e.g. Quadro RTX 4000).
+                "-f", "lavfi", "-i", "color=black:s=256x256:d=0.125",
                 "-frames:v", "3",
                 "-c:v", "h264_nvenc", "-preset", "p1",
                 "-rc", "constqp", "-qp", "28",

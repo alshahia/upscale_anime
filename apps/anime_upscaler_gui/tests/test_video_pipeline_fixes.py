@@ -67,7 +67,17 @@ def test_open_encoder_falls_back_to_libx264_when_nvenc_unavailable(
     handle = ffmpeg.open_encoder("out.mp4", 24.0, 64, 48, use_nvenc=True)
     assert handle is not None
     assert "libx264" in probed["cmd"]
-
+def test_nvenc_probe_uses_gpu_min_frame_size():
+    # NVENC rejects frames below its minimum supported dimension (~145px),
+    # so the probe must use a frame size NVENC actually accepts -- probing
+    # at 64x64 falsely disabled NVENC on capable GPUs (Quadro RTX 4000).
+    import re
+    from pathlib import Path
+    src = Path(ffmpeg.__file__).read_text(encoding="utf-8")
+    m = re.search(r"color=black:s=(\d+)x(\d+)", src)
+    assert m, "probe lavfi size not found"
+    w, h = int(m.group(1)), int(m.group(2))
+    assert min(w, h) >= 145
 
 # --------------------------------------------------------------------------- #
 # Unknown-length video handling (PyAV stream.frames == None -> total 0)

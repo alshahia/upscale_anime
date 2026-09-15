@@ -41,6 +41,7 @@ def test_animesr_capabilities():
     assert caps.recurrent_frames == 3
     assert caps.pad_multiple == 4
     assert caps.out_multiple == 4
+    assert caps.tta is False  # recurrent model: D4 TTA wrapper is incompatible
 
 
 def test_build_unknown_kind_raises_with_registered_kinds():

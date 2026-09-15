@@ -523,6 +523,10 @@ class _PipelineWorker(threading.Thread):
             return
         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta)
 
+        # TTA honors the arch's Capability: recurrent kinds (animesr) take a
+        # 5-D (B, N, C, H, W) input the D4 TTA wrapper does not produce.
+        use_tta = job.tta and _arch_caps(job.kind).tta
+
         rgb = load_image_rgb(job.input_path)
         if rgb is None:
             self.emit(_JobEvent(kind="error", job_id=job.job_id,
@@ -552,7 +556,7 @@ class _PipelineWorker(threading.Thread):
                              else _cascade_count(backend.model))
                 y = x
                 for _ in range(n_cascade):
-                    if job.tta:
+                    if use_tta:
                         y, _n_aug, _names = _tta_forward(backend.model, y)
                     else:
                         y = backend(y)
@@ -739,11 +743,13 @@ class _PipelineWorker(threading.Thread):
                     t0 = time.perf_counter()
                     with torch.no_grad():
                         # Cascade: 2x model applied twice -> 4x; 4x model once.
+                        # TTA honors arch Capability (see use_tta in _run_image).
+                        use_tta = job.tta and _arch_caps(job.kind).tta
                         n_cascade = (job.cascade_mode if job.cascade_mode is not None
                                      else _cascade_count(backend.model))
                         y = x
                         for _ in range(n_cascade):
-                            if job.tta:
+                            if use_tta:
                                 y, _n_aug, _names = _tta_forward(backend.model, y)
                             else:
                                 y = backend(y)

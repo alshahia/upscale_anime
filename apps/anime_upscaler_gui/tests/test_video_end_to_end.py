@@ -74,7 +74,7 @@ def _run_worker(video_path: Path, out_path: Path, decode: str):
         gpu_guard_mode="off",
         tile_size=0,
         tile_overlap=0,
-        tta=False,
+        tta=True,  # deliberately ON: animesr must gate it via Capability.tta
         use_tensorrt=False,
         use_nvenc=True,   # functional probe falls back to libx264 when unusable
         video_crf=23,
