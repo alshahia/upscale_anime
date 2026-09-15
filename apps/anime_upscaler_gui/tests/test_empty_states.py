@@ -179,12 +179,19 @@ def test_preflight_rejects_unwritable_output(tmp_path, root):
     from apps.anime_upscaler_gui.anime_upscaler_gui.state import Job
     paths = _AppPaths(tmp_path)
     s = _Settings(paths)
-    app = UpscaleGUI.__new__(UpscaleGUI)
-    tk.Tk.__init__(app)
-    app.title("t")
+    # Reuse the session-scoped root fixture via Toplevel. Calling tk.Tk() a
+    # second time in the same process fails on Windows with
+    # "invalid command name 'tcl_findLibrary'" once the first Tk has been
+    # destroyed (see conftest.py header). We don't need a fresh Tk for this
+    # test -- _preflight_check only reads self.paths, self.settings,
+    # self.settings_panel.
+    app = tk.Toplevel(root)
     app.paths = paths
     app.settings = s
     app.settings_panel = type("SP", (), {"device_var": tk.StringVar(value="cpu")})()
+    # Bind _preflight_check as a method on the Toplevel so the same code path
+    # runs as in production.
+    app._preflight_check = UpscaleGUI._preflight_check.__get__(app)
     try:
         # An output path under a read-only directory on Windows can be created
         # via a non-existent parent whose ancestor is a file. Easiest: an
