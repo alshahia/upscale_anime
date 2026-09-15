@@ -20,9 +20,8 @@ UI structure (Phase 2):
   download flow, queue mutation).
 """
 import logging
-import os
 import queue
-import sys
+
 
 # Phase 5: try to enable real drag-and-drop via tkinterdnd2. Falls back to plain
 # tk.Tk() if not installed (the input panel quietly disables DnD binding).
@@ -59,9 +58,11 @@ from .widgets import (
     _OutputPanel, _ModelsPanel, _SettingsPanel, _StatusBar, Toast,
 )
 from .icons import app_256 as _app_256, load as _load_icon
+from .app_settings_io import SettingsIOMixin
+from .app_window_chrome import WindowChromeMixin
 
 
-class UpscaleGUI(_TK_BASE):
+class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
     def __init__(self):
         super().__init__()
         self.title("Anime Upscaler")
@@ -72,7 +73,8 @@ class UpscaleGUI(_TK_BASE):
         # Paths + settings
         self.paths = _AppPaths()
         self.settings = _Settings(self.paths)
-        self.registry = _ModelRegistry(self.settings.pretrained_dir_path())
+        self.registry = _ModelRegistry(self.settings.pretrained_dir_path(),
+                                       presets_path=self.paths.registry_path)
         self.queue_ctrl = _QueueController(self.paths)
 
         # If settings were corrupt, queue a one-shot notification after the UI
@@ -785,207 +787,6 @@ class UpscaleGUI(_TK_BASE):
         self.models_panel.refresh_listbox()
         self._refresh_model_dropdown()
 
-    def _save_settings(self):
-        s = self.settings.data
-        sp = self.settings_panel
-        op = self.output_panel
-        s.device = sp.device_var.get()
-        s.fp16 = bool(sp.fp16_var.get())
-        s.outscale = float(sp.outscale_var.get())
-        s.batch_size = int(sp.batch_var.get())
-        s.decode = sp.decode_var.get()
-        s.prefetch = sp.prefetch_var.get()
-        s.downscale_max_edge = int(sp.downscale_var.get())
-        s.output_mode = op.output_mode_var.get()
-        s.output_dir = op.output_dir_var.get()
-        s.single_file_suffix = op.suffix_var.get()
-        s.batch_folder_name = op.batch_folder_var.get() or "anime_upscaler_gui"
-        s.queue_mode = self.input_panel.queue_mode_var.get()
-        s.theme = sp.theme_var.get()
-        s.tta = bool(sp.tta_var.get())
-        s.use_tensorrt = bool(sp.use_tensorrt_var.get())
-        s.use_nvenc = bool(sp.use_nvenc_var.get())
-        s.nvenc_preset = sp.nvenc_preset_var.get()
-        s.nvenc_qp = int(getattr(s, "nvenc_qp", 18))  # no GUI yet; persist default
-        s.cascade_mode = getattr(s, "cascade_mode", None)  # None=auto-from-model-scale
-        sel = self.model_panel.model_dropdown.get()
-        if sel:
-            s.last_model = sel.split()[0]
-        self.settings.save()
-        self.status_bar.status_var.set("Settings saved.")
-
-    def _on_theme_change(self):
-        """User picked a new theme in the SettingsPanel radio row.
-
-        Apply the theme to the `ui_constants` module, then rebuild the UI so
-        every widget reflects the new palette. Persist the choice so the
-        next launch opens with the same theme.
-        """
-        name = self.settings_panel.theme_var.get()
-        try:
-            _apply_theme(_theme_by_name(name))
-        except KeyError as e:
-            messagebox.showerror("Unknown theme", str(e))
-            return
-        self.settings.data.theme = name
-        self.settings.save()
-        self._build_ui()
-        self._refresh_model_dropdown()
-        self.models_panel.refresh_listbox()
-
-    def _reset_settings(self):
-        if not self._confirm_destructive("Reset", "Reset all settings to defaults?"):
-            return
-        from .settings import _Defaults
-        self.settings.data = _Defaults()
-        self.settings.save()
-        self._build_ui()  # simplest: rebuild the UI from defaults
-
-    def _open_settings_folder(self):
-        path = self.paths.app_dir
-        path.mkdir(parents=True, exist_ok=True)
-        try:
-            if sys.platform == "win32":
-                os.startfile(str(path))  # noqa
-            elif sys.platform == "darwin":
-                os.system(f"open '{path}'")
-            else:
-                os.system(f"xdg-open '{path}'")
-        except Exception as e:
-            messagebox.showerror("Cannot open", str(e))
-
-    def _export_settings(self):
-        path = filedialog.asksaveasfilename(
-            title="Export settings to...",
-            defaultextension=".json",
-            initialfile="anime_upscaler_settings.json",
-            filetypes=[("JSON", "*.json"), ("All", "*.*")],
-        )
-        if not path:
-            return
-        try:
-            self.settings.export(Path(path))
-            self.status_bar.status_var.set(f"Settings exported to {Path(path).name}")
-        except Exception as e:
-            messagebox.showerror("Export failed", str(e))
-
-    def _import_settings(self):
-        path = filedialog.askopenfilename(
-            title="Import settings from...",
-            filetypes=[("JSON", "*.json"), ("All", "*.*")],
-        )
-        if not path:
-            return
-        if not messagebox.askyesno(
-            "Import settings",
-            f"Replace current settings with the contents of:\n{path}\n\n"
-            f"Unknown fields will be ignored; missing fields keep their current values.",
-        ):
-            return
-        try:
-            self.settings.import_file(Path(path))
-            self._build_ui()  # refresh widget values from new settings
-            self.status_bar.status_var.set(f"Settings imported from {Path(path).name}")
-        except Exception as e:
-            messagebox.showerror("Import failed", _humanize_error(e))
-
-    def _move_app_data(self):
-        new_dir = filedialog.askdirectory(title="Move app data to...",
-                                          initialdir=str(self.paths.app_dir))
-        if not new_dir:
-            return
-        new_dir = Path(new_dir)
-        if new_dir.resolve() == self.paths.app_dir.resolve():
-            return
-        if not messagebox.askyesno(
-            "Move app data",
-            f"Move all app data to:\n{new_dir}\n\n"
-            f"Files at the old location ({self.paths.app_dir}) will be removed.",
-        ):
-            return
-        try:
-            self.paths.move_to(new_dir)
-        except Exception as e:
-            messagebox.showerror("Move failed", str(e))
-            return
-        # Update settings to reflect the new location; re-create paths/registry.
-        self.settings.data.app_dir = str(new_dir)
-        self.settings.save()
-        self.registry = _ModelRegistry(self.settings.pretrained_dir_path())
-        self._refresh_model_dropdown()
-        self.models_panel.refresh_listbox()
-        self.status_bar.status_var.set(f"App data moved to: {new_dir}")
-
-    def _on_close(self):
-        try:
-            self._save_settings()
-        except Exception:
-            pass
-        try:
-            self._worker.stop()
-            self._worker.join(timeout=2)
-        except Exception:
-            pass
-        self.destroy()
-
-    # ============================================================================ #
-    # Menu bar / shortcuts / helpers
-    # ============================================================================ #
-    def _bind_shortcuts(self) -> None:
-        """Bind global keyboard shortcuts. These work regardless of focus."""
-        bindings = {
-            "<Control-o>": self._add_files,
-            "<Control-s>": self._save_settings,
-            "<Control-Return>": self._on_start,
-            "<Delete>": self._remove_selected,
-            "<F5>": self._refresh_model_dropdown,
-            "<Control-q>": self._on_close,
-            "<Control-r>": self._reset_settings,
-            "<Control-Shift-L>": self._toggle_locale,
-        }
-        for seq, cb in bindings.items():
-            self.bind(seq, lambda e, fn=cb: fn())
-
-    def _toggle_locale(self) -> None:
-        """Switch between EN and AR. Save, log, and report which locale became active.
-        Rebuilds the UI so rebuilt buttons pick up new languages next render.
-        Ponytail: don't try to live-translate every existing widget — rebuild,
-        same pattern as _on_theme_change.
-        """
-        next_locale = "ar" if _i18n.active_locale() == "en" else "en"
-        _i18n.set_locale(next_locale)
-        self.settings.data.locale = next_locale
-        self.settings.save()
-        self.logger.info("locale switched to %s", next_locale)
-        self._build_ui()
-        self._refresh_model_dropdown()
-        self.models_panel.refresh_listbox()
-
-    def _confirm_destructive(self, title: str, message: str) -> bool:
-        """Show a yes/no confirmation for a destructive action.
-
-        Wraps `messagebox.askyesno` so future enhancements (logging,
-        telemetry, do-not-ask-again) live in one place.
-        """
-        return bool(messagebox.askyesno(title, message))
-
-    def _show_about(self) -> None:
-        messagebox.showinfo(
-            "About Anime Upscaler GUI",
-            "Anime Upscaler GUI\n\n"
-            "Tkinter desktop front-end for the upscale_anime toolkit.\n"
-            "See docs/onboarding.md for usage and docs/themes.md for theming.",
-        )
-
-    def _set_window_icon(self) -> None:
-        """Set the OS window/taskbar icon from the duotone asset. No-op if missing."""
-        from .icons import load as _il
-        for sz in (256, 128, 64, 48, 32):
-            ic = _il("app", sz)
-            if ic is not None:
-                self.iconphoto(True, ic)
-                self._app_icon_ref = ic  # keep ref so GC doesn't drop it
-                return
 
     # ============================================================================ #
     # Event polling
@@ -1016,10 +817,17 @@ class UpscaleGUI(_TK_BASE):
                 self._refresh_queue_listbox()
                 self._persist_queue()
         elif evt.kind == "progress":
-            self.status_bar.progress_var.set(evt.progress * 100.0)
+            # progress < 0 means the total frame count is unknown (e.g. PyAV
+            # cannot always report stream.frames): show indeterminate instead
+            # of a negative percentage.
+            indeterminate = evt.progress < 0
+            p = max(0.0, min(1.0, evt.progress))
+            self.status_bar.progress_var.set(p * 100.0)
             self.status_bar.status_var.set(
-                f"Job #{evt.job_id}: {evt.progress * 100:.1f}%  "
-                f"{evt.fps:.2f} fps  {evt.infer_ms:.1f} ms/frame  frame {evt.frame_idx}"
+                f"Job #{evt.job_id}: "
+                + ("(running)" if indeterminate else f"{p * 100:.1f}%")
+                + f"  {evt.fps:.2f} fps  {evt.infer_ms:.1f} ms/frame"
+                + ("" if evt.frame_idx < 0 else f"  frame {evt.frame_idx}")
             )
             if job_rec:
                 job_rec.fps = evt.fps

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anime-upscaler-gui"
+version = "0.1.0"
+description = "Tk GUI wrapper around vendored anime super-resolution models (Real-ESRGAN compact, SPAN, ERANet, AnimeSR)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "opencv-python>=4.8",
+    "numpy>=1.24",
+    "Pillow>=9.0",
+    "pyav>=10.0",
+]
+
+[project.scripts]
+anime-upscaler-gui = "anime_upscaler_gui.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["anime_upscaler_gui*"]
+
+[tool.setuptools.package-data]
+anime_upscaler_gui = ["../data/registry.json"]

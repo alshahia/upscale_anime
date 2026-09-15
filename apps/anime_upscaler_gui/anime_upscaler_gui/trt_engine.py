@@ -28,6 +28,8 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
+from .archs import capabilities as _arch_caps
+
 log = logging.getLogger(__name__)
 
 try:
@@ -144,6 +146,9 @@ class _TrtEngineCache:
                 raise RuntimeError("TensorRT failed to parse ONNX")
         config = builder.create_builder_config()
         config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)
+        # TRT 11: there is no BuilderFlag.FP16; precision follows the ONNX graph
+        # (fp16 weights -> fp16 kernels). Building for gp32 ONNX produces
+        # 200-450 MB engines with ~1 TFLOPS throughput -- always export fp16.
         profile = builder.create_optimization_profile()
         shape = (batch, 3, h, w)
         profile.set_shape("lr", shape, shape, shape)
@@ -227,8 +232,9 @@ class _TrtBackend:
             raise RuntimeError("TensorRT not available")
         if device.type != "cuda":
             raise RuntimeError("TensorRT backend requires CUDA device")
-        if kind == "animesr":
-            raise RuntimeError("TensorRT backend does not support animesr kind")
+        if not _arch_caps(kind).tensorrt:
+            raise RuntimeError(
+                f"TensorRT backend unsupported for kind {kind!r}")
         onnx_path = Path(cache_dir) / "_trt_model.onnx"
         # ONNX export: dummy uses batch=1 since dynamic_axes marks batch as
         # dynamic. TRT will get the actual batch via the optimization profile.

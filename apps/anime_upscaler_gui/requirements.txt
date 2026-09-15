@@ -1,0 +1,12 @@
+torch>=2.0
+torchvision>=0.15
+opencv-python>=4.8
+numpy>=1.24
+Pillow>=9.0
+pyav>=10.0
+# onnxruntime is optional; auto-detected at runtime
+# onnxruntime-gpu>=1.17
+# Drag-and-drop support (TkinterDnD wraps Tk to enable file drop on input panel).
+# Without this the GUI falls back to file-picker-only and the input panel
+# shows a hint telling the user how to enable it.
+tkinterdnd2-universal>=1.7 ; sys_platform != "linux" or python_version >= "3.10"

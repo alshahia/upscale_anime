@@ -15,14 +15,17 @@ from typing import Optional
 
 _NVENC_SUPPORTED: Optional[bool] = None  # None = not probed yet
 _NVENC_FALLBACK_WARNED = False
-_NVENC_PROBE_TIMEOUT = 5  # seconds
+_NVENC_PROBE_TIMEOUT = 15  # seconds (functional encode probe can take a few seconds)
 
 
 def _detect_nvenc_support() -> bool:
-    """Probe ffmpeg for h264_nvenc. Cached after first call.
+    """Functionally probe ffmpeg for h264_nvenc. Cached after first call.
 
-    Returns True iff `ffmpeg -hide_banner -encoders` lists 'h264_nvenc'.
-    Returns False if ffmpeg is missing or the probe fails.
+    A build can list h264_nvenc among its encoders yet fail to open it at
+    runtime (driver mismatch, no capable GPU device, laptop hybrid graphics).
+    So we actually encode 3 black test frames through h264_nvenc and only
+    treat that as "available" when it exits cleanly. Returns False when
+    ffmpeg is missing or the probe fails/times out.
     """
     global _NVENC_SUPPORTED
     if _NVENC_SUPPORTED is not None:
@@ -32,10 +35,17 @@ def _detect_nvenc_support() -> bool:
         return False
     try:
         r = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
+            [
+                "ffmpeg", "-hide_banner", "-v", "error",
+                "-f", "lavfi", "-i", "color=black:s=64x64:d=0.125",
+                "-frames:v", "3",
+                "-c:v", "h264_nvenc", "-preset", "p1",
+                "-rc", "constqp", "-qp", "28",
+                "-f", "null", "-",
+            ],
             capture_output=True, text=True, timeout=_NVENC_PROBE_TIMEOUT,
         )
-        _NVENC_SUPPORTED = "h264_nvenc" in r.stdout
+        _NVENC_SUPPORTED = (r.returncode == 0)
     except (subprocess.TimeoutExpired, OSError):
         _NVENC_SUPPORTED = False
     return _NVENC_SUPPORTED

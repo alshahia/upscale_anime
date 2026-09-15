@@ -25,6 +25,7 @@ import torch
 import torch.nn.functional as F
 
 from .archs import build, _save_sr
+from .archs import capabilities as _arch_caps
 from .decoders import _AsyncReader, _Cv2Reader, _PyAvReader, load_image_rgb, save_image_rgb
 from .ffmpeg import open_encoder, extract_cut, ffmpeg_available
 log = logging.getLogger(__name__)
@@ -378,7 +379,7 @@ def _make_backend(model, ckpt_path, kind, device, fp16, use_tensorrt, tta=False,
         * tta=True (TTA bypasses the backend and needs backend.model)
         * TRT backend construction fails for any reason
     """
-    if (not tta) and use_tensorrt and _HAS_TRT and device.type == "cuda" and fp16 and kind != "animesr":
+    if (not tta) and use_tensorrt and _HAS_TRT and device.type == "cuda" and fp16 and _arch_caps(kind).tensorrt:
         try:
             cache_dir = Path(os.environ.get("APPDATA", str(Path.home()))) / "anime_upscaler_gui" / "cache" / "trt"
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -405,9 +406,11 @@ class _PyTorchBackend:
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
-            if self.kind == "animesr":
-                # x is (B, 3, H, W); animesr wants (B, N, 3, H, W); repeat center frame 3 times.
-                x = x.unsqueeze(1).expand(-1, 3, -1, -1, -1).contiguous()
+            n_recurrent = _arch_caps(self.kind).recurrent_frames
+            if n_recurrent:
+                # x is (B, 3, H, W); a recurrent model wants (B, N, 3, H, W);
+                # the frame is repeated N times, output's center frame taken.
+                x = x.unsqueeze(1).expand(-1, n_recurrent, -1, -1, -1).contiguous()
                 y = self.model(x)
                 y = y[:, y.shape[1] // 2]
             else:
@@ -436,10 +439,11 @@ class _OnnxBackend:
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
             inp = x.detach().cpu().numpy().astype(self.np_dtype)
-        if self.kind == "animesr":
-            inp = np.repeat(inp[:, None], 3, axis=1)
+        n_recurrent = _arch_caps(self.kind).recurrent_frames
+        if n_recurrent:
+            inp = np.repeat(inp[:, None], n_recurrent, axis=1)
         out = self.sess.run(None, {"input": inp})[0]
-        if self.kind == "animesr":
+        if n_recurrent:
             out = out[:, out.shape[1] // 2]
         return torch.from_numpy(out).to(self.device)
 
@@ -531,10 +535,10 @@ class _PipelineWorker(threading.Thread):
         # per-frame pageable->pinned staging). Only used when on CUDA.
         pinned_in = _pinned.get_input(h0, w0) if device.type == "cuda" else None
         x = _to_tensor(rgb, device, job.fp16, fp16_pin=False, pinned_in=pinned_in)
-        if job.kind == "animesr":
-            # pad to multiple of 4 (animesr has 2 stride-2 stages)
-            ph = (4 - h0 % 4) % 4
-            pw = (4 - w0 % 4) % 4
+        pm = _arch_caps(job.kind).pad_multiple
+        if pm:
+            ph = (pm - h0 % pm) % pm
+            pw = (pm - w0 % pm) % pm
             if ph or pw:
                 x = F.pad(x, (0, pw, 0, ph), mode="reflect")
         try:
@@ -558,8 +562,9 @@ class _PipelineWorker(threading.Thread):
             self.emit(_JobEvent(kind="error", job_id=job.job_id,
                                 message=f"inference failed: {e}", exc=e))
             return
-        if job.kind == "animesr":
-            y = y[..., :h0 * 4, :w0 * 4]
+        om = _arch_caps(job.kind).out_multiple
+        if om:
+            y = y[..., :h0 * om, :w0 * om]
         if job.fp16:
             y = y.float()
 
@@ -606,37 +611,57 @@ class _PipelineWorker(threading.Thread):
         target_w = int(round(w * job.outscale))
         target_h = int(round(h * job.outscale))
 
-        # Cut window: total range and start..end frame indices
-        start_frame = int(round(job.cut_start_seconds * fps))
-        end_frame = total if job.cut_end_seconds <= 0 else min(total, int(round(job.cut_end_seconds * fps)))
-        if end_frame <= start_frame:
+        # Cut window: total range and start..end frame indices. total == 0 or
+        # fps <= 0 means unknown metadata (PyAV cannot always report
+        # stream.frames), so treat it as "run to EOF" instead of failing with
+        # "cut window is empty".
+        unknown_meta = (fps <= 0 or total <= 0)
+        if fps > 0:
+            start_frame = int(round(job.cut_start_seconds * fps))
+        else:
+            start_frame = 0
+        if job.cut_end_seconds > 0 and fps > 0:
+            end_frame = int(round(job.cut_end_seconds * fps))
+            if total > 0:
+                end_frame = min(end_frame, total)
+        elif total > 0:
+            end_frame = total
+        else:
+            end_frame = -1  # unbounded: run to EOF
+        if end_frame >= 0 and end_frame <= start_frame:
             self.emit(_JobEvent(kind="error", job_id=job.job_id,
-                                message="cut window is empty (end <= start)"))
+                                message="cut window is empty (end <= start)"
+                                        if end_frame == start_frame
+                                        else f"cut range exceeds video (fps={fps:g}, frames={total})"))
             sync.release()
             return
 
-        # Frame stride / limit
-        limit = end_frame - start_frame
-        sync_reader = _AsyncReader(sync, prefetch=8) if job.prefetch == "async" else sync
-
-        # Skip to start_frame by consuming frames (cv2 supports set; simpler: just consume).
-        # For simplicity we re-open and skip via CAP_PROP_POS_FRAMES.
+        # Frame stride / limit (limit == 0 means unbounded: run to EOF)
+        limit = max(end_frame - start_frame, 0) if end_frame > 0 else 0
+        # Re-open the *selected* decoder and skip to start_frame. The old code
+        # always re-opened with cv2, silently ignoring decode=pyav; use the
+        # reader factory so the selected decode backend actually decodes.
         sync.release()
-        cap = cv2.VideoCapture(str(job.input_path))
-        if start_frame > 0:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        new_sync = _Cv2Reader.__new__(_Cv2Reader)
-        new_sync.path = str(job.input_path)
-        new_sync.cap = cap
-        new_sync.fps = fps
-        new_sync.total = total
-        new_sync.w = w
-        new_sync.h = h
+        if job.decode == "pyav":
+            new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+            async_inner = new_sync_reader
+        else:
+            cap = cv2.VideoCapture(str(job.input_path))
+            if start_frame > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            new_sync_reader = _Cv2Reader.__new__(_Cv2Reader)
+            new_sync_reader.path = str(job.input_path)
+            new_sync_reader.cap = cap
+            new_sync_reader.fps = fps
+            new_sync_reader.total = total
+            new_sync_reader.w = w
+            new_sync_reader.h = h
+            async_inner = new_sync_reader
         if job.prefetch == "async":
-            sync_reader = _AsyncReader(new_sync, prefetch=8)
+            sync_reader = _AsyncReader(async_inner, prefetch=8)
             sync_reader.start(max_frames=limit)
         else:
-            sync_reader = new_sync
+            sync_reader = new_sync_reader
 
         out_path = job.output_path
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -668,7 +693,7 @@ class _PipelineWorker(threading.Thread):
         use_batch = (
             job.batch_size > 1
             and not job.tta
-            and job.kind != "animesr"
+            and _arch_caps(job.kind).batch_video
             and device.type == "cuda"
         )
         try:
@@ -765,7 +790,7 @@ class _PipelineWorker(threading.Thread):
                     elapsed = now - t_wall
                     fps_a = proc / max(elapsed, 1e-6)
                     self.emit(_JobEvent(kind="progress", job_id=job.job_id,
-                                        progress=proc / limit, fps=fps_a,
+                                        progress=(proc / limit) if limit > 0 else -1.0, fps=fps_a,
                                         infer_ms=dt_ms, frame_idx=src_idx))
                     last_emit = now
         finally:
@@ -889,7 +914,7 @@ class _PipelineWorker(threading.Thread):
                 elapsed = now - t_wall
                 fps_a = proc_ref[0] / max(elapsed, 1e-6)
                 self.emit(_JobEvent(kind="progress", job_id=job.job_id,
-                                    progress=proc_ref[0] / limit, fps=fps_a,
+                                    progress=(proc_ref[0] / limit) if limit > 0 else -1.0, fps=fps_a,
                                     infer_ms=dt_ms, frame_idx=src_idx_start + i))
                 last_emit_ref[0] = now
 

@@ -1,0 +1,4 @@
+{
+  "_comment": "Optional preset-catalog extension file. Entries here are merged with the built-in PRESET_CATALOG in registry.py: an entry with the same id overrides the built-in one, and malformed entries are skipped with a warning. Required keys per entry: id, filename, scale, kind, license, size_mb, description. Optional keys: url, notes, source (trained or community), display_name.",
+  "models": []
+}

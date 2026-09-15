@@ -19,9 +19,13 @@ MambaSPAB class requires mamba-ssm which is Linux-only and only relevant for
 finetuning. Inference on a conv3xc checkpoint is the supported path here.
 """
 import cv2
+import re
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional
 
 
 # ============================================================================ #
@@ -683,104 +687,336 @@ def _save_sr(out, path):
     cv2.imwrite(str(path), arr)
 
 
+# ============================================================================ #
+# Extensible architecture registry
+# ---------------------------------------------------------------------------- #
+# Adding a new model kind is a single registration point: build an ArchSpec
+# and call register_arch(). Nothing else in the codebase needs to change --
+# pipeline.py, trt_engine.py, registry.py and the GUI all query the spec
+# table instead of hard-coding kind-string checks.
+# ============================================================================ #
+
+
+@dataclass(frozen=True)
+class Capability:
+    """Runtime abilities the pipeline / TRT / VRAM-guard layers query.
+
+    Defaults describe the common case (plain feed-forward 2D CNN: tiling,
+    TensorRT, and video batching all allowed). Models with unusual behavior
+    override fields at registration time so downstream code never needs a
+    kind-string check.
+    """
+
+    tiled: bool = True
+    tensorrt: bool = True
+    batch_video: bool = True
+    # >0: the model wants a (B, N, 3, H, W) input built by repeating the
+    # frame N times; the backend takes the center frame of the output.
+    recurrent_frames: int = 0
+    # Pad the input H/W to this pixel multiple (0 = no padding needed).
+    pad_multiple: int = 0
+    # >0: crop the SR output back to input_h * this after padded inference.
+    out_multiple: int = 0
+
+
+@dataclass(frozen=True)
+class ArchSpec:
+    """How to build, detect and query one architecture kind.
+
+    detect: takes a state_dict, returns a kind string or None for a
+        different kind. Mutually precise: a spec only claims checkpoints
+        it recognizes.
+    loader: takes a checkpoint path, returns an eval-ready nn.Module.
+    """
+
+    kind: str
+    detect: Callable[[dict], Optional[str]]
+    loader: Callable[[str], nn.Module]
+    default_scale: int = 4
+    capability: Capability = Capability()
+
+
+_REGISTRY: Dict[str, ArchSpec] = {}
+
+
+def register_arch(spec: ArchSpec) -> ArchSpec:
+    """Register (or replace) an architecture spec. Last registration wins."""
+    _REGISTRY[str(spec.kind)] = spec
+    return spec
+
+
+def unregister_arch(kind: str) -> None:
+    """Remove a registered kind (mainly for tests/experiments)."""
+    _REGISTRY.pop(str(kind), None)
+
+
+def registered_kinds() -> List[str]:
+    """Kinds currently registered, in registration order."""
+    return list(_REGISTRY)
+
+
+def spec_of(kind: str) -> Optional[ArchSpec]:
+    """Look up the spec for `kind`, or None."""
+    return _REGISTRY.get(str(kind))
+
+
+def capabilities(kind: str) -> Capability:
+    """Capability flags for `kind`; unknown kinds get the safe defaults."""
+    s = spec_of(kind)
+    return s.capability if s else Capability()
+
+
+def is_supported_kind(kind: str) -> bool:
+    """True when the registry knows how to build this kind."""
+    return str(kind) in _REGISTRY
+
+
+def detect_kind_from_state(state: dict) -> Optional[str]:
+    """Sniff the state_dict to identify the architecture.
+
+    Registered in order; the baseline detectors are mutually precise, so
+    ordering is not load-bearing. Detection never raises regardless of the
+    state dict content.
+    """
+    if not isinstance(state, dict):
+        return None
+    for s in _REGISTRY.values():
+        try:
+            if s.detect(state):
+                return s.kind
+        except Exception:
+            continue
+    return None
+
+
 def build(kind: str, ckpt_path) -> nn.Module:
     """Build + load + set eval() on the right architecture.
 
-    kind: 'srvgg' | 'srvgg_student' | 'span' | 'era' | 'animesr' | 'rfdn_student'
-    ckpt_path: path to .pth
-
-    Phase 4 I1 update: 'rfdn_student' auto-sniffs shortcut_mode from the
-    ckpt's saved args (so the GUI honors nearest-shortcut v3+ students
-    without the user having to pick the mode manually).
-    Phase 4 I3 update: 'srvgg_student' dispatches to TinySRVGGStudent for
-    the new SRVGG-body student distilled in Phase 4 I3.
+    kind identifiers live entirely in the registry: registering a new
+    ArchSpec (see _register_builtin_archs below) is the only change needed
+    to support a new checkpoint family.
     """
-    ckpt_path = str(ckpt_path)
-    if kind == 'span':
-        m = create_neosr_span({'type': 'neosr_span', 'scale': 4})
-        m.load_neosr_weights(ckpt_path, strict=False)
-    elif kind == 'srvgg':
-        sd = _load_state_dict(ckpt_path)
-        m = SRVGGNetCompact()
-        m.load_state_dict(sd, strict=False)
-    elif kind == 'srvgg_student':
-        # Phase 4 I3: SRVGG-body distilled student. We sniff num_feat from
-        # body.0.weight (input conv) and num_conv from counting the conv
-        # layers in body. Scale is sniffed from the last body conv's out_ch
-        # (= num_out_ch * scale * scale). Defaults match the production run
-        # (num_feat=52, num_conv=12, scale=4).
-        sd = _load_state_dict(ckpt_path)
-        import math
-        num_feat = 52
-        first_w = sd.get('body.0.weight') if isinstance(sd, dict) else None
-        if first_w is not None and hasattr(first_w, 'shape') and len(first_w.shape) == 4:
-            num_feat = int(first_w.shape[0])
-        # body.<i>.weight keys: even i are conv weights (0, 2, 4, ..., 2*(num_conv+1))
-        body_conv_keys = sorted([k for k in sd.keys()
-                                 if k.startswith('body.') and k.endswith('.weight')
-                                 and (k.split('.')[1].isdigit()
-                                      and int(k.split('.')[1]) % 2 == 0)],
-                                key=lambda k: int(k.split('.')[1]))
-        # First is head, last is the upsample pre-shuffle conv; the middle
-        # `len(body_conv_keys) - 2` are the internal body convs.
-        num_conv = max(len(body_conv_keys) - 2, 1)
-        scale = 4
-        if len(body_conv_keys) >= 2:
-            last_w = sd[body_conv_keys[-1]]
-            if hasattr(last_w, 'shape') and len(last_w.shape) == 4:
-                out_ch = int(last_w.shape[0])
-                ratio = out_ch // 3
-                sq = int(round(math.sqrt(max(ratio, 1))))
-                if sq * sq == ratio and sq in (2, 3, 4, 8):
-                    scale = sq
-        m = TinySRVGGStudent(num_feat=num_feat, num_conv=num_conv, scale=scale)
-        m.load_state_dict(sd, strict=False)
-    elif kind == 'era':
-        sd = _load_state_dict(ckpt_path)
-        m = ERANet(scale=2, C=32, N=12)
-        m.load_state_dict(sd, strict=False)
-    elif kind == 'animesr':
-        sd = _load_state_dict(ckpt_path)
-        m = MSRSWVSR()
-        m.load_state_dict(sd, strict=False)
-    elif kind == 'rfdn_student':
-        sd = _load_state_dict(ckpt_path)
-        # Phase 4 I1: sniff shortcut_mode from the full ckpt's saved args
-        # (default bicubic for backward compat with v1 ckpts that have no
-        # args dict). This makes the GUI correctly honor nearest-shortcut
-        # ckpts (Phase 4 I1+) without manual mode selection.
-        shortcut_mode = "bicubic"
-        try:
-            full = torch.load(ckpt_path, map_location='cpu', weights_only=False)
-            if isinstance(full, dict) and isinstance(full.get('args'), dict):
-                sm = full['args'].get('shortcut_mode')
-                if sm in ('bicubic', 'nearest'):
-                    shortcut_mode = sm
-        except Exception:
-            pass
-        # Sniff scale from the upsampler's conv weight shape:
-        #   scale=2 -> out_ch = 3*4  = 12   (conv.weight shape: [12, nf, 3, 3])
-        #   scale=4 -> out_ch = 3*16 = 48   (matches v1_4x ckpt in the repo)
-        #   scale=3 -> out_ch = 3*9  = 27   (not used today but legal)
-        # Use sqrt(out_ch / num_out_ch) so future scales (e.g. 8x) also work.
-        import math
-        num_out_ch = 3
-        ups_w = sd.get('upsampler.0.weight') if isinstance(sd, dict) else None
-        if ups_w is not None and hasattr(ups_w, 'shape') and len(ups_w.shape) == 4:
-            out_ch = int(ups_w.shape[0])
-            ratio = out_ch // num_out_ch
-            scale_sqrt = int(round(math.sqrt(max(ratio, 1))))
-            if scale_sqrt * scale_sqrt == ratio and scale_sqrt in (2, 3, 4, 8):
-                m = RFDN(scale=scale_sqrt, shortcut_mode=shortcut_mode)
-            else:
-                m = RFDN(shortcut_mode=shortcut_mode)  # defaults to 4
-        else:
-            m = RFDN(shortcut_mode=shortcut_mode)  # weight-shape sniff failed
-        m.load_state_dict(sd, strict=False)
-    else:
-        raise ValueError(f"unsupported arch kind: {kind!r}")
+    s = spec_of(kind)
+    if s is None:
+        raise ValueError("unsupported arch kind: %r. registered kinds: %s"
+                         % (kind, ", ".join(sorted(_REGISTRY))))
+    m = s.loader(str(ckpt_path))
     m.eval()
     return m
+
+
+# ---- per-kind detection helpers (moved verbatim from registry.py) -------- #
+
+def _detect_span(state: dict) -> Optional[str]:
+    # SPAN: conv_1 / conv_2 / block_1..6 / upsampler
+    keys = list(state.keys())
+    keyset = set(keys)
+    if "conv_1.sk.weight" in keyset and "upsampler.0.weight" in keyset:
+        return "span"
+    return None
+
+
+def _detect_srvgg(state: dict) -> Optional[str]:
+    keys = list(state.keys())
+    keyset = set(keys)
+    # SRVGGNetCompact: body.0.weight ... body.34.weight. The PixelShuffle
+    # upsampler has no parameters so it never shows in the state_dict.
+    if any(k == "body.0.weight" for k in keys) and "body.34.weight" in keyset:
+        return "srvgg"
+    return None
+
+
+
+def _load_srvgg(ckpt_path: str) -> nn.Module:
+    m = SRVGGNetCompact()
+    m.load_state_dict(_load_state_dict(ckpt_path), strict=False)
+    return m
+
+
+def _load_srvgg_student(ckpt_path: str) -> nn.Module:
+    """SRVGG-body distilled student (Phase 4 I3).
+
+    We sniff num_feat from body.0.weight (input conv) and num_conv from
+    counting the conv layers in body. Scale is sniffed from the last body
+    conv's out_ch (= num_out_ch * scale * scale). Defaults match the
+    production run (num_feat=52, num_conv=12, scale=4).
+    """
+    import math
+    sd = _load_state_dict(ckpt_path)
+    num_feat = 52
+    first_w = sd.get('body.0.weight') if isinstance(sd, dict) else None
+    if first_w is not None and hasattr(first_w, 'shape') and len(first_w.shape) == 4:
+        num_feat = int(first_w.shape[0])
+    # body.<i>.weight keys: even i are conv weights (0, 2, 4, ..., 2*(num_conv+1))
+    body_conv_keys = sorted([k for k in sd.keys()
+                             if k.startswith('body.') and k.endswith('.weight')
+                             and (k.split('.')[1].isdigit()
+                                  and int(k.split('.')[1]) % 2 == 0)],
+                            key=lambda k: int(k.split('.')[1]))
+    # First is head, last is the upsample pre-shuffle conv; the middle
+    # [len(body_conv_keys) - 2] are the internal body convs.
+    num_conv = max(len(body_conv_keys) - 2, 1)
+    scale = 4
+    if len(body_conv_keys) >= 2:
+        last_w = sd[body_conv_keys[-1]]
+        if hasattr(last_w, 'shape') and len(last_w.shape) == 4:
+            out_ch = int(last_w.shape[0])
+            ratio = out_ch // 3
+            sq = int(round(math.sqrt(max(ratio, 1))))
+            if sq * sq == ratio and sq in (2, 3, 4, 8):
+                scale = sq
+    m = TinySRVGGStudent(num_feat=num_feat, num_conv=num_conv, scale=scale)
+    m.load_state_dict(sd, strict=False)
+    return m
+
+
+def _load_era(ckpt_path: str) -> nn.Module:
+    m = ERANet(scale=2, C=32, N=12)
+    m.load_state_dict(_load_state_dict(ckpt_path), strict=False)
+    return m
+
+
+def _load_animesr(ckpt_path: str) -> nn.Module:
+    m = MSRSWVSR()
+    m.load_state_dict(_load_state_dict(ckpt_path), strict=False)
+    return m
+
+
+def _load_rfdn_student(ckpt_path: str) -> nn.Module:
+    """RFDN teacher-distilled student (Phase 4 I1).
+
+    Sniff shortcut_mode from the full ckpt's saved args (default bicubic for
+    backward compat with v1 ckpts that have no args dict), and scale from the
+    upsampler's conv weight shape: scale=2 -> out_ch = 3*4 = 12; scale=4 ->
+    48 (the v1_4x ckpt in the repo); scale=3 -> 27 (legal). Uses
+    sqrt(out_ch / num_out_ch) so future scales (e.g. 8x) also work.
+    """
+    import math
+    shortcut_mode = "bicubic"
+    try:
+        full = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+        if isinstance(full, dict) and isinstance(full.get('args'), dict):
+            sm = full['args'].get('shortcut_mode')
+            if sm in ('bicubic', 'nearest'):
+                shortcut_mode = sm
+    except Exception:
+        pass
+    sd = _load_state_dict(ckpt_path)
+    num_out_ch = 3
+    ups_w = sd.get('upsampler.0.weight') if isinstance(sd, dict) else None
+    if ups_w is not None and hasattr(ups_w, 'shape') and len(ups_w.shape) == 4:
+        out_ch = int(ups_w.shape[0])
+        ratio = out_ch // num_out_ch
+        scale_sqrt = int(round(math.sqrt(max(ratio, 1))))
+        if scale_sqrt * scale_sqrt == ratio and scale_sqrt in (2, 3, 4, 8):
+            m = RFDN(scale=scale_sqrt, shortcut_mode=shortcut_mode)
+        else:
+            m = RFDN(shortcut_mode=shortcut_mode)  # defaults to 4
+    else:
+        m = RFDN(shortcut_mode=shortcut_mode)  # weight-shape sniff failed
+    m.load_state_dict(sd, strict=False)
+    return m
+
+
+def _load_span(ckpt_path: str) -> nn.Module:
+    m = create_neosr_span({'type': 'neosr_span', 'scale': 4})
+    m.load_neosr_weights(ckpt_path, strict=False)
+    return m
+
+
+def _detect_era(state: dict) -> Optional[str]:
+    # ERANet: head/body.N.conv.{ek,sk,core,eval_conv}/tail
+    keys = list(state.keys())
+    keyset = set(keys)
+    if "head.weight" in keyset and "tail.weight" in keyset and any(
+        k.startswith("body.") and ".conv.ek" in k for k in keys
+    ):
+        return "era"
+    return None
+
+
+def _detect_animesr(state: dict) -> Optional[str]:
+    # AnimeSR (MSRSWVSR): recurrent_cell, body_sN_first, fusion
+    keys = list(state.keys())
+    keyset = set(keys)
+    if "recurrent_cell.conv_s1_first.0.weight" in keyset or any(
+        k.startswith("recurrent_cell.") for k in keys
+    ):
+        return "animesr"
+    return None
+
+
+def _detect_rfdn_student(state: dict) -> Optional[str]:
+    """RFDN student (anime_upscaler.student.RFDN): head.* ->
+    blocks.N.{d1,r1,d2,r2,fuse,pa}*, body_tail.*, pa.pa_conv.*, upsampler.0.*.
+    The blocks.<N>.pa.pa_conv pattern is unique to our RFDN (vs. SPAN's
+    block_<N>.c1_r.*) so it is safe to detect.
+    """
+    keys = list(state.keys())
+    keyset = set(keys)
+    if (
+        "head.weight" in keyset
+        and "body_tail.weight" in keyset
+        and "pa.pa_conv.weight" in keyset
+        and "upsampler.0.weight" in keyset
+        and any(
+            k.startswith("blocks.") and ".d1.weight" in k for k in keys
+        )
+    ):
+        return "rfdn_student"
+    return None
+
+
+def _detect_srvgg_student(state: dict) -> Optional[str]:
+    """TinySRVGGStudent (anime_upscaler/student.py) shares the SRVGG
+    Sequential-body layout but with a different depth, so it never has
+    body.34.weight. Convs sit at even body indices; the final conv is the
+    last even index with out_ch = 3 * scale^2 (scale in 2/3/4/8). Detected
+    structurally (even-index convs, no body.34); the srvgg spec above catches
+    num_conv=16 SRVGG (which has body.34).
+    """
+    keys = list(state.keys())
+    keyset = set(keys)
+    if "body.0.weight" in keyset and "body.34.weight" not in keyset:
+        even_w = [k for k in keys if re.fullmatch(r"body\.\d+\.weight", k)
+                  and int(k.split(".")[1]) % 2 == 0]
+        body_last = max((int(k.split(".")[1]) for k in keys if k.startswith("body."))
+                        if any(k.startswith("body.") for k in keys) else [],
+                        default=-1)
+        if (len(even_w) >= 2 and even_w[-1].split(".")[1] == str(body_last)
+                and body_last % 2 == 0):
+            return "srvgg_student"
+    return None
+
+
+def _register_builtin_archs() -> None:
+    """Register the kinds shipped with the GUI. Registration order is the
+    detection order; the detectors are mutually precise so ordering is not
+    load-bearing.
+
+    How to add a model family: write a _load_x / _detect_x pair and register
+    an ArchSpec here -- no other module needs touching. Extension modules can
+    also register kinds at their own import time via register_arch().
+    """
+    register_arch(ArchSpec(kind="span", detect=_detect_span,
+                           loader=_load_span, default_scale=4))
+    register_arch(ArchSpec(kind="srvgg", detect=_detect_srvgg,
+                           loader=_load_srvgg, default_scale=4))
+    register_arch(ArchSpec(kind="srvgg_student", detect=_detect_srvgg_student,
+                           loader=_load_srvgg_student, default_scale=4))
+    register_arch(ArchSpec(kind="era", detect=_detect_era,
+                           loader=_load_era, default_scale=2))
+    register_arch(ArchSpec(kind="animesr", detect=_detect_animesr,
+                           loader=_load_animesr, default_scale=4,
+                           capability=Capability(
+                               tiled=False, tensorrt=False,
+                               batch_video=False, recurrent_frames=3,
+                               pad_multiple=4, out_multiple=4)))
+    register_arch(ArchSpec(kind="rfdn_student", detect=_detect_rfdn_student,
+                           loader=_load_rfdn_student, default_scale=4))
+
+
+_register_builtin_archs()
 
 
 # Public surface
@@ -788,4 +1024,7 @@ __all__ = [
     "SRVGGNetCompact", "MSRSWVSR", "ERANet", "NeosrSPAN", "Conv3XC", "SPAB",
     "RFDN", "TinySRVGGStudent",
     "create_neosr_span", "build", "_save_sr", "_load_state_dict",
+    "ArchSpec", "Capability", "register_arch", "unregister_arch",
+    "registered_kinds", "spec_of", "capabilities", "is_supported_kind",
+    "detect_kind_from_state",
 ]

@@ -25,6 +25,9 @@ from .state import FormState, Job, JobStatus
 
 APP_DIR_NAME = "anime_upscaler_gui"
 SETTINGS_FILE = "settings.json"
+# Optional preset-catalog extension in the app-data folder (same schema as the
+# bundled apps/anime_upscaler_gui/data/registry.json; entries override by id).
+REGISTRY_FILE = "registry.json"
 
 
 def _default_app_dir() -> Path:
@@ -148,6 +151,7 @@ class _AppPaths:
         self.app_dir = Path(app_dir) if app_dir else _default_app_dir()
         self.app_dir.mkdir(parents=True, exist_ok=True)
         self.settings_path = self.app_dir / SETTINGS_FILE
+        self.registry_path = self.app_dir / REGISTRY_FILE
         self.cache_dir = self.app_dir / "cache"
         self.cache_dir.mkdir(exist_ok=True)
         self.logs_dir = self.app_dir / "logs"
@@ -165,8 +169,11 @@ class _AppPaths:
                 shutil.move(str(src), str(new_dir / sub))
         if self.settings_path.exists():
             shutil.move(str(self.settings_path), str(new_dir / SETTINGS_FILE))
+        if self.registry_path.exists():
+            shutil.move(str(self.registry_path), str(new_dir / REGISTRY_FILE))
         self.app_dir = new_dir
         self.settings_path = new_dir / SETTINGS_FILE
+        self.registry_path = new_dir / REGISTRY_FILE
 
 
 class _Settings:
