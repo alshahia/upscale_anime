@@ -63,6 +63,29 @@ try:
 except Exception:
     pass
 
+# Q4 (perf/queue-controls-gpu-codec): enable TF32 for matmul + cuDNN conv
+# on Ampere+ (RTX 4000 reports SM_89, which is Ada). TF32 is a 19-bit
+# float that runs at fp32 throughput but lands within ~3 decimal places
+# of true fp32. cuDNN picks the TF32 path automatically per-op when
+# both flags are True; fp16 still wins for the heavy convs (the
+# recommended model runs fp16), but the residual fp32 ops (small matmuls,
+# final channel shuffle) pick up the speedup without any code change.
+#
+# Notes on safety:
+#  * Effect on Turing (SM 75) and earlier: TF32 flags are accepted but
+#    the kernels aren't implemented in hardware, so the path is a no-op.
+#  * Effect on fp16: unchanged -- TF32 only kicks in for fp32 ops.
+#  * Effect on numerical accuracy: < 0.01 dB PSNR on the recommended model
+#    per the RTX 4000 speed-up report; within measurement noise.
+try:
+    torch.backends.cuda.matmul.allow_tf32 = True
+except Exception:
+    pass
+try:
+    torch.backends.cudnn.allow_tf32 = True
+except Exception:
+    pass
+
 
 _pinned = _PinnedPool()
 

@@ -22,6 +22,12 @@ class JobStatus(str, Enum):
     ERROR = "error"
     SKIPPED = "skipped"
     CANCELLED = "cancelled"
+    # Q2 (perf/queue-controls-gpu-codec): user-visible pause state. Set when
+    # the GUI pushes a JobControlEvent(kind="pause") and the worker has
+    # drained its in-flight frame and is now blocked on the per-job
+    # _pause_events[job_id]. Cleared when JobControlEvent(kind="resume")
+    # raises the event.
+    PAUSED = "paused"
 
     def __str__(self) -> str:
         # Default Enum.__str__ returns "JobStatus.PENDING"; override so format strings

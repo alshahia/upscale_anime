@@ -47,6 +47,10 @@ STATUS_BG_DONE = "#d1fae5"
 STATUS_BG_ERROR = "#fee2e2"
 STATUS_BG_SKIPPED = "#e5e7eb"
 STATUS_BG_CANCELLED = "#fef3c7"
+# Q2 (perf/queue-controls-gpu-codec): paused jobs render with a calm
+# indigo/blue-grey tint so users can tell "paused" apart from "running"
+# at a glance without reading the status text.
+STATUS_BG_PAUSED = "#e0e7ff"
 
 
 # ---- Fonts (use platform defaults; explicit family avoids surprises on Windows) ----
@@ -71,6 +75,7 @@ STATUS_COLORS = {
     JobStatus.ERROR: ERROR,
     JobStatus.SKIPPED: DISABLED,
     JobStatus.CANCELLED: WARN,
+    JobStatus.PAUSED: "#4338ca",  # indigo-700: distinguishable from running blue
 }
 
 STATUS_BG_COLORS = {
@@ -80,4 +85,5 @@ STATUS_BG_COLORS = {
     JobStatus.ERROR: STATUS_BG_ERROR,
     JobStatus.SKIPPED: STATUS_BG_SKIPPED,
     JobStatus.CANCELLED: STATUS_BG_CANCELLED,
+    JobStatus.PAUSED: STATUS_BG_PAUSED,
 }

@@ -25,6 +25,13 @@ _DEFAULT_COLORS = {
     JobStatus.ERROR: "#B91C1C",
     JobStatus.SKIPPED: "#B45309",
     JobStatus.CANCELLED: "#57534E",
+    # Q2 (perf/queue-controls-gpu-codec): paused jobs render in indigo so
+    # users can tell "paused" apart from "running" without reading the
+    # status text. The a11y foreground is used by the status triplet when
+    # the theme hasn't supplied an explicit override (status_color() falls
+    # back to _DEFAULT_COLORS). ui_constants.STATUS_COLORS[PAUSED] holds
+    # the runtime foreground; theme.py does not yet override it.
+    JobStatus.PAUSED: "#4338CA",
 }
 
 _STATUS_GLYPHS: dict = {
@@ -34,6 +41,10 @@ _STATUS_GLYPHS: dict = {
     JobStatus.ERROR: ("✕", "Error"),
     JobStatus.SKIPPED: ("◌", "Skipped"),
     JobStatus.CANCELLED: ("◌", "Cancelled"),
+    # Q2: pause uses a different glyph ("❚❚") from "running" (◐) so the
+    # queue row remains readable in pure-text contexts (screen readers,
+    # log greps). Distinct from cancelled (◌) by direction.
+    JobStatus.PAUSED: ("❚❚", "Paused"),
 }
 
 

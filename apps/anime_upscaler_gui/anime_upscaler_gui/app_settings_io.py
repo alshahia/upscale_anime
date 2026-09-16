@@ -43,7 +43,7 @@ class SettingsIOMixin:
         s.use_tensorrt = bool(sp.use_tensorrt_var.get())
         s.use_nvenc = bool(sp.use_nvenc_var.get())
         s.nvenc_preset = sp.nvenc_preset_var.get()
-        s.nvenc_qp = int(getattr(s, "nvenc_qp", 18))  # no GUI yet; persist default
+        s.nvenc_qp = int(sp.nvenc_qp_var.get())
         s.cascade_mode = getattr(s, "cascade_mode", None)  # None=auto-from-model-scale
         sel = self.model_panel.model_dropdown.get()
         if sel:

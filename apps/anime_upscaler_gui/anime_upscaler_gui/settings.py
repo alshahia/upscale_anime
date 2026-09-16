@@ -75,8 +75,16 @@ class Defaults(FormState):
     device: str = "cuda"   # cuda | cpu
     fp16: bool = True
     # outscale, batch_size, tile_size: inherited from FormState with validators
-    decode: str = "cv2"    # cv2 | pyav
-    prefetch: str = "sync" # sync | async
+    decode: str = "cv2"    # cv2 | pyav | nvdec | auto
+    # Q4 (perf/queue-controls-gpu-codec): switch the default prefetch from
+    # "sync" to "async". The async reader wraps the decode backend on a
+    # background daemon thread and pushes into a bounded queue (maxsize=8
+    # by default), giving the GPU-side model compute a steady stream of
+    # frames while the CPU-side decoder runs in parallel. sync was the
+    # legacy default; async is the right choice for any modern multi-core
+    # host and adds no cost on single-core machines (the queue just sits
+    # empty most of the time).
+    prefetch: str = "async" # sync | async
     pin_memory: str = "auto"  # auto | on | off
     downscale_max_edge: int = 2560  # 0 = disabled
     # GPU guard

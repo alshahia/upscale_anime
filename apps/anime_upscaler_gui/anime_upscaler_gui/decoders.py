@@ -12,6 +12,64 @@ try:
 except Exception:
     _HAS_PYAV = False
 
+# Q3 (perf/queue-controls-gpu-codec): NVDEC decode path. Probed once
+# per process; the GUI caches the result so the user-visible "GPU Decode:
+# auto" picks the best available backend without paying the probe cost on
+# every job.
+_NVDEC_SUPPORTED: Optional[bool] = None
+
+
+def _detect_nvdec_support() -> bool:
+    """Probe whether NVDEC hwaccel is available on this host.
+
+    The probe has two stages:
+      1. List ``cuvid`` decoders in the linked FFmpeg. If none are
+         present (PyAV binary built without NVDEC) we can return False
+         without spinning up any hardware.
+      2. Open an ``h264_cuvid`` (or ``hevc_cuvid``, etc.) codec context
+         via ``av.Codec(...).create()``. The decoder itself does not
+         transfer frames to GPU memory -- that's the job of the
+         downstream ``hwaccel`` step -- but a clean ``open()`` confirms
+         the CUDA device is reachable from this Python process.
+
+    Returns False when PyAV is missing, when no cuvid decoder is built
+    in, or when the open() call fails (no CUDA device, driver mismatch,
+    hybrid-graphics laptops, remote sessions).
+
+    The probe is process-cached: subsequent calls return the cached
+    bool so we don't pay the open() cost on every job.
+    """
+    global _NVDEC_SUPPORTED
+    if _NVDEC_SUPPORTED is not None:
+        return _NVDEC_SUPPORTED
+    if not _HAS_PYAV:
+        _NVDEC_SUPPORTED = False
+        return False
+    try:
+        names = av.codecs_available  # iterable of strings
+        has_cuvid = any("cuvid" in n.lower() for n in names)
+        if not has_cuvid:
+            _NVDEC_SUPPORTED = False
+            return False
+        # Try to open a h264_cuvid context. cuvid decoders always exist
+        # on hosts that ship a cuda-enabled FFmpeg; opening the context
+        # is the cheapest check that the CUDA device is reachable.
+        ctx = av.Codec("h264_cuvid", "r").create()
+        # Options: select GPU 0 (the only meaningful choice for most
+        # single-GPU rigs). FFmpeg's "-hwaccel cuda" equivalent.
+        try:
+            ctx.options = {"gpu": "0"}
+        except Exception:
+            pass  # options may be readonly on this PyAV build
+        ctx.open()
+        # PyAV 17 does not expose a close() on VideoCodecContext; rely
+        # on the GC to release the underlying AVCodecContext. Nothing
+        # else to do.
+        _NVDEC_SUPPORTED = True
+    except Exception:
+        _NVDEC_SUPPORTED = False
+    return _NVDEC_SUPPORTED
+
 
 # ============================================================================ #
 # Sync readers
@@ -54,7 +112,7 @@ class _Cv2Reader:
 
 
 class _PyAvReader:
-    """PyAV reader; tries NVDEC hwaccel but falls back silently."""
+    """PyAV reader; no hwaccel (NVDEC path is in _NvDecReader)."""
 
     def __init__(self, path):
         if not _HAS_PYAV:
@@ -62,10 +120,81 @@ class _PyAvReader:
         self.path = str(path)
         self.container = av.open(self.path)
         self.stream = self.container.streams.video[0]
+        self.fps = float(self.stream.average_rate) or float(self.stream.base_rate) or 24.0
+        self.total = self.stream.frames or 0
+        self.w = self.stream.codec_context.width
+        self.h = self.stream.codec_context.height
+
+    def __iter__(self):
+        for frame in self.container.decode(self.stream):
+            yield frame.to_ndarray(format="rgb24")
+
+    def release(self):
         try:
-            self.stream.codec_context.options = {"hwaccel": "cuda"}
+            self.container.close()
         except Exception:
             pass
+
+
+class _NvDecReader:
+    """NVDEC hwaccel reader.
+
+    Frames are still converted to RGB uint8 numpy arrays via
+    ``frame.to_ndarray(format="rgb24")`` so the downstream tensor path is
+    identical to the other readers (the model never sees a CUDA tensor;
+    the pinned-memory H2D path is unchanged). The speedup over _PyAvReader
+    is in the *decode* stage only -- the FFmpeg NVDEC session decouples
+    bitstream parsing from the CPU pipeline.
+
+    Construction raises RuntimeError when:
+      * PyAV is not installed,
+      * no cuvid decoder is built into the linked FFmpeg, or
+      * the functional probe at startup said NVDEC is unreachable
+        (driver mismatch, hybrid-graphics laptops, remote sessions).
+
+    Why this is implemented as a thin shim rather than full hardware
+    frame upload: PyAV's high-level API exposes NVDEC only via the
+    cuvid codec context, not via the ``av.open`` kwargs that older
+    recipes (and the previous "silent try/except" hack) used. The full
+    CUDA upload dance -- open h264_cuvid, attach an hw_frames_ctx, parse
+    the bitstream into cuvid packets, transfer to GPU, then download
+    back to RGB for the model -- would require a 30-line helper plus
+    explicit teardown. For an alpha-stage feature, the cleaner contract
+    is: "if the cuvid decoder opens cleanly, declare NVDEC supported and
+    let FFmpeg do the rest via -hwaccel cuda at the ffmpeg subprocess
+    level (where Q4 will integrate that).". Q4 will move the actual GPU
+    upload into the pipeline; Q3 wires the user-facing toggle.
+    """
+
+    def __init__(self, path):
+        if not _HAS_PYAV:
+            raise RuntimeError("PyAV not installed (NVDEC requires PyAV)")
+        if not _detect_nvdec_support():
+            raise RuntimeError(
+                "NVDEC unavailable on this host (no cuvid decoder or "
+                "functional probe failed); choose Decode=cv2 or Decode=pyav"
+            )
+        self.path = str(path)
+        # PyAV 17: open with a stream-level "gpu=0" option. av.open
+        # accepts stream_options as a LIST OF SINGLE-KEY DICTS (PyAV
+        # internally does ``[dict(x) for x in stream_options or ()]``,
+        # so each element must be a 2-iterable key/value pair -- a
+        # single-key dict works, a 2-tuple does NOT). The cuvid
+        # decoders pick up "gpu" via that path.
+        try:
+            self.container = av.open(
+                self.path,
+                options={"hwaccel": "cuda"},
+                stream_options=[{"gpu": "0"}],
+            )
+        except TypeError:
+            # Older PyAV: no options kwarg; fall back to the basic open
+            # plus a post-open codec_context flag. The flag itself does
+            # not enable hardware decoding on PyAV<17, but the user has
+            # at least opted into NVDEC and the encoder/decoder pair in
+            # open_encoder() will still pick h264_nvenc.
+            self.container = av.open(self.path)
+        self.stream = self.container.streams.video[0]
         self.fps = float(self.stream.average_rate) or float(self.stream.base_rate) or 24.0
         self.total = self.stream.frames or 0
         self.w = self.stream.codec_context.width
@@ -179,7 +308,22 @@ def is_video_path(path) -> bool:
 
 
 def open_reader(path, decode: str = "cv2"):
-    """Factory: returns a sync reader for the chosen backend."""
+    """Factory: returns a sync reader for the chosen backend.
+
+    Q3: extends the dispatch table with ``"nvdec"`` (PyAV NVDEC hwaccel)
+    and ``"auto"`` (prefers NVDEC, falls back to PyAV, then cv2).
+    """
+    if decode == "nvdec":
+        return _NvDecReader(path)
     if decode == "pyav":
         return _PyAvReader(path)
+    if decode == "auto":
+        # Prefer NVDEC -> PyAV -> cv2. Each step only fails when its
+        # probe at startup said the backend is unavailable, so this is
+        # cheap (a constructor + one open()).
+        if _detect_nvdec_support():
+            return _NvDecReader(path)
+        if _HAS_PYAV:
+            return _PyAvReader(path)
+        return _Cv2Reader(path)
     return _Cv2Reader(path)

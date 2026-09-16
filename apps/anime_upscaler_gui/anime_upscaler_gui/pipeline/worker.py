@@ -33,7 +33,7 @@ import torch.nn.functional as F
 
 from ..archs import build
 from ..archs import capabilities as _arch_caps
-from ..decoders import (_AsyncReader, _Cv2Reader, _PyAvReader, _SkipFirstFrames,
+from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
                         load_image_rgb, save_image_rgb)
 from ..ffmpeg import extract_cut, ffmpeg_available, open_encoder
 
@@ -44,6 +44,7 @@ from .jobs import (
     RETRY_FRAME,
     SKIP_FRAME,
     SKIP_REST,
+    JobControlEvent,
     JobEvent,
     RunJob,
 )
@@ -52,6 +53,105 @@ from .tensors import (_PinnedPool, _downscale_if_needed, _resize_keep_ar,
                       _to_tensor_batch)
 
 _pinned = _PinnedPool()
+
+
+# Q2 (perf/queue-controls-gpu-codec): internal exception used to bail out
+# of _run_video / _run_image / _process_video_batch when the user cancels.
+# Caught at the run() level; we emit a clean "cancelled" event and the
+# caller deletes the partial output file. Using a dedicated exception
+# (vs. a magic return value) keeps the cancel path composable with the
+# existing on_frame_error handler.
+class _JobCancelled(Exception):
+    """Raised internally by the worker when a cancel control arrives."""
+
+
+# Q4 (perf/queue-controls-gpu-codec): light-weight GPU util probe used
+# by the worker to emit ``JobEvent(kind="gpu_util")`` once per second.
+# We prefer pynvml (the canonical NVIDIA System Management Interface)
+# because it gives util / VRAM / temperature with no CUDA runtime cost.
+# Falls back to a torch.cuda.memory_allocated snapshot when pynvml is
+# missing (common on Windows test boxes); util% is reported as 0 in that
+# case because PyTorch itself has no CUDA utilisation counter.
+_GPU_UTIL_PROBE: Optional[dict] = None  # lazy probe cache
+_GPU_UTIL_MIN_INTERVAL_S = 1.0           # worker emits gpu_util at most 1Hz
+
+
+def _read_gpu_util() -> Optional[dict]:
+    """Return ``{util, mem_used_mb, mem_total_mb, temp_c}`` or None.
+
+    Process-cached: the first call probes pynvml + opens the device
+    handle; subsequent calls reuse the same handle until the process
+    ends. Returns None when neither pynvml nor torch.cuda is available.
+    """
+    global _GPU_UTIL_PROBE
+    if _GPU_UTIL_PROBE is not None:
+        return _GPU_UTIL_PROBE
+    probe: Optional[dict] = None
+    try:
+        import pynvml  # type: ignore
+        try:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
+            temp = pynvml.nvmlDeviceGetTemperature(handle, 0)
+            probe = {
+                "util": int(util),
+                "mem_used_mb": int(mem.used) // (1024 * 1024),
+                "mem_total_mb": int(mem.total) // (1024 * 1024),
+                "temp_c": int(temp),
+                "_handle": handle,
+                "_pynvml": pynvml,
+            }
+        except Exception:
+            probe = None
+    except Exception:
+        probe = None
+    if probe is None:
+        try:
+            import torch as _torch
+            if _torch.cuda.is_available():
+                free, total = _torch.cuda.mem_get_info()
+                probe = {
+                    "util": 0,
+                    "mem_used_mb": (total - free) // (1024 * 1024),
+                    "mem_total_mb": total // (1024 * 1024),
+                    "temp_c": 0,
+                }
+        except Exception:
+            probe = None
+    _GPU_UTIL_PROBE = probe if probe is not None else {}
+    return _GPU_UTIL_PROBE or None
+
+
+def _maybe_emit_gpu_util(emit_fn, job_id: int, last_emit_ref: list) -> None:
+    """Emit a gpu_util JobEvent at most once per second.
+
+    ``last_emit_ref`` is a single-element list so the closure can mutate
+    the caller's timestamp (Python 3 lacks the ``nonlocal`` workaround
+    that's needed when state lives on the worker instance only).
+    """
+    now = time.perf_counter()
+    if now - last_emit_ref[0] < _GPU_UTIL_MIN_INTERVAL_S:
+        return
+    info = _read_gpu_util()
+    if not info:
+        return
+    emit_fn(JobEvent(
+        kind="gpu_util",
+        job_id=job_id,
+        message=f"util={info['util']}% mem={info['mem_used_mb']}/"
+                f"{info['mem_total_mb']}MB t={info['temp_c']}C",
+        fps=float(info["util"]),
+    ))
+    last_emit_ref[0] = now
+
+
+# Q2: sentinel events used to wake a paused worker between frames.
+# Keyed by job_id so multiple jobs can have independent pause state.
+# The worker creates the Event on first pause, clears it on resume,
+# and pops it from the dict when the job ends (so a stale event can't
+# accidentally wake the next job that happens to reuse the same id).
 
 # ============================================================================ #
 # Pipeline worker (threaded, drives one job at a time from the in_queue)
@@ -69,11 +169,95 @@ class PipelineWorker(threading.Thread):
         stop()   -> enqueue a sentinel and join()
     """
 
-    def __init__(self, in_queue: "queue.Queue", out_queue: "queue.Queue"):
+    def __init__(self, in_queue: "queue.Queue", out_queue: "queue.Queue",
+                 ctl_queue: Optional["queue.Queue"] = None):
+        """``ctl_queue`` is the GUI->worker pause/cancel/resume channel.
+
+        If omitted (legacy callers / tests), the worker synthesizes an
+        internal queue so the same code path works whether or not the
+        GUI wires the new control channel. This keeps the Phase A1
+        back-compat commitment intact: existing tests that build a
+        PipelineWorker with just (in_queue, out_queue) keep passing.
+        """
         super().__init__(daemon=True)
         self.in_queue = in_queue
         self.out_queue = out_queue
+        self.ctl_queue = ctl_queue if ctl_queue is not None else queue.Queue()
+        # job_id -> threading.Event. Lazily populated by _check_pause();
+        # cleared on job completion so we don't leak events across jobs.
+        self._pause_events: dict = {}
         self._shutdown = False
+
+    # -- Q2 control-channel helpers -------------------------------------------
+    def send_control(self, evt: JobControlEvent) -> None:
+        """Public helper the GUI uses to push pause/cancel/resume.
+
+        Equivalent to ``self.ctl_queue.put(evt)`` but exposed as a
+        method so the GUI doesn't have to know which queue to use.
+        """
+        self.ctl_queue.put(evt)
+
+    def _drain_ctl_for_job(self, job_id: int) -> None:
+        """Pop and apply any pending control events for this job.
+
+        Called between frames in _run_video and after model load in
+        _run_image. Cancel is applied immediately (raises
+        _JobCancelled). Pause/resume just adjust the per-job event --
+        the actual blocking happens in _check_pause().
+        """
+        while True:
+            try:
+                evt = self.ctl_queue.get_nowait()
+            except queue.Empty:
+                return
+            if evt.job_id != job_id:
+                # Put it back -- it's for a different (probably future)
+                # job. Order matters: control events are FIFO per sender
+                # but the worker only cares about its current job.
+                self.ctl_queue.put(evt)
+                return
+            if evt.kind == "cancel":
+                raise _JobCancelled()
+            if evt.kind == "pause":
+                # Make sure a paused event exists for this job.
+                self._pause_events.setdefault(job_id, threading.Event())
+                self.emit(JobEvent(kind="log", job_id=job_id,
+                                    message="paused by user"))
+            elif evt.kind == "resume":
+                ev = self._pause_events.get(job_id)
+                if ev is not None:
+                    ev.set()
+                self.emit(JobEvent(kind="log", job_id=job_id,
+                                    message="resumed by user"))
+
+    def _check_pause(self, job_id: int) -> None:
+        """Block the worker on the per-job pause event until resume.
+
+        Called at every frame boundary in _run_video and after model
+        load in _run_image. Polls the control queue while blocked so
+        cancel can interrupt the pause. Returns once the event is set
+        (resume arrived) or raises _JobCancelled if a cancel arrived
+        during the pause.
+        """
+        ev = self._pause_events.get(job_id)
+        if ev is None or ev.is_set():
+            return
+        self.emit(JobEvent(kind="log", job_id=job_id,
+                            message="waiting on resume"))
+        # Use a short timeout so we can poll the control queue for cancel.
+        while not ev.is_set():
+            # Drain any controls that arrived -- they might be a cancel.
+            self._drain_ctl_for_job(job_id)
+            ev.wait(timeout=0.1)
+
+    def _finalize_job(self, job_id: int) -> None:
+        """Clean up per-job pause state when the job ends (any reason).
+
+        Ensures a stale pause event can't accidentally wake a future
+        job that reuses the same id. Called from _run_one's outer
+        try/finally.
+        """
+        self._pause_events.pop(job_id, None)
 
     def stop(self):
         self._shutdown = True
@@ -110,15 +294,35 @@ class PipelineWorker(threading.Thread):
             self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"input not found: {job.input_path}"))
             return
-        if job.is_video:
-            self._run_video(job)
-        else:
-            self._run_image(job)
+        try:
+            if job.is_video:
+                self._run_video(job)
+            else:
+                self._run_image(job)
+        except _JobCancelled:
+            # Clean up partial output. The encoder pipe is already closed
+            # because _run_video/_run_image's `finally` block ran on the
+            # way out. We just delete the file and emit a terminal event.
+            out = job.output_path
+            try:
+                if out.exists():
+                    out.unlink()
+            except OSError:
+                pass
+            self.emit(JobEvent(kind="cancelled", job_id=job.job_id,
+                                message="cancelled by user"))
+        finally:
+            self._finalize_job(job.job_id)
 
     # --- image ---
     def _run_image(self, job: RunJob):
         self.emit(JobEvent(kind="started", job_id=job.job_id,
                             message=f"image: {job.input_path.name}"))
+        # Q2: drain pending control events so cancel-during-load is
+        # honoured. Image jobs are sub-second, so a pause request is
+        # effectively a no-op (the work finishes before we get back to
+        # _check_pause), but cancel still aborts cleanly.
+        self._drain_ctl_for_job(job.job_id)
         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
         ckpt_path = _find_ckpt(job)
         try:
@@ -204,6 +408,10 @@ class PipelineWorker(threading.Thread):
     def _run_video(self, job: RunJob):
         self.emit(JobEvent(kind="started", job_id=job.job_id,
                             message=f"video: {job.input_path.name}"))
+        # Q2: drain any pending control events that arrived while the
+        # job was queued. If the user cancelled while we were loading,
+        # bail out before we waste time on a 4x super-res.
+        self._drain_ctl_for_job(job.job_id)
         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
         ckpt_path = _find_ckpt(job)
         try:
@@ -216,8 +424,23 @@ class PipelineWorker(threading.Thread):
             return
         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta, batch_size=job.batch_size)
 
-        if job.decode == "pyav":
+        if job.decode == "nvdec":
+            # Q3: explicit NVDEC selection. _NvDecReader raises if the
+            # probe said NVDEC is unavailable so the user gets a clean
+            # error instead of a silent CPU fallback.
+            sync = _NvDecReader(job.input_path)
+        elif job.decode == "pyav":
             sync = _PyAvReader(job.input_path)
+        elif job.decode == "auto":
+            # Q3: prefer NVDEC when available; same dispatch as the
+            # open_reader() factory.
+            from ..decoders import _detect_nvdec_support, _HAS_PYAV
+            if _detect_nvdec_support():
+                sync = _NvDecReader(job.input_path)
+            elif _HAS_PYAV:
+                sync = _PyAvReader(job.input_path)
+            else:
+                sync = _Cv2Reader(job.input_path)
         else:
             sync = _Cv2Reader(job.input_path)
         fps, total, w, h = sync.fps, sync.total, sync.w, sync.h
@@ -255,8 +478,20 @@ class PipelineWorker(threading.Thread):
         # always re-opened with cv2, silently ignoring decode=pyav; use the
         # reader factory so the selected decode backend actually decodes.
         sync.release()
-        if job.decode == "pyav":
+        if job.decode == "nvdec":
+            new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
+            async_inner = new_sync_reader
+        elif job.decode == "pyav":
             new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+            async_inner = new_sync_reader
+        elif job.decode == "auto":
+            from ..decoders import _detect_nvdec_support, _HAS_PYAV
+            if _detect_nvdec_support():
+                new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
+            elif _HAS_PYAV:
+                new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+            else:
+                new_sync_reader = _SkipFirstFrames(_Cv2Reader(job.input_path), start_frame)
             async_inner = new_sync_reader
         else:
             cap = cv2.VideoCapture(str(job.input_path))
@@ -314,6 +549,14 @@ class PipelineWorker(threading.Thread):
                 if skip_remaining:
                     # Still consume to drain the reader cleanly
                     continue
+                # Q2: pause / cancel check between frames. We block on
+                # the per-job threading.Event if the user paused, or
+                # raise _JobCancelled if the user cancelled. Both ops
+                # happen at the frame boundary so the output MP4 stays
+                # consistent (the previous frame's encode is already
+                # flushed to the pipe).
+                self._drain_ctl_for_job(job.job_id)
+                self._check_pause(job.job_id)
                 # Normalize payload: single frame (np.ndarray H,W,3) for
                 # batch_size=1; list of N frames for batch_size>1.
                 if use_batch and isinstance(payload, list):
@@ -407,6 +650,12 @@ class PipelineWorker(threading.Thread):
                     self.emit(JobEvent(kind="progress", job_id=job.job_id,
                                         progress=(proc / limit) if limit > 0 else -1.0, fps=fps_a,
                                         infer_ms=dt_ms, frame_idx=src_idx))
+                    # Q4 (perf/queue-controls-gpu-codec): piggy-back a
+                    # gpu_util emission on the existing 2 Hz progress
+                    # tick so the GUI can show util/VRAM/temp without
+                    # spinning up a second polling thread. The helper
+                    # rate-limits itself to 1 Hz internally.
+                    _maybe_emit_gpu_util(self.emit, job.job_id, [last_emit])
                     last_emit = now
         finally:
             if use_pipe:
@@ -531,6 +780,12 @@ class PipelineWorker(threading.Thread):
                 self.emit(JobEvent(kind="progress", job_id=job.job_id,
                                     progress=(proc_ref[0] / limit) if limit > 0 else -1.0, fps=fps_a,
                                     infer_ms=dt_ms, frame_idx=src_idx_start + i))
+                # Q4 (perf/queue-controls-gpu-codec): see site a; the
+                # ref-list pattern is the same here -- last_emit_ref[0]
+                # is mutated by the helper to remember the last gpu_util
+                # emission time, which is independent from the 2 Hz
+                # progress tick so a long pause won't suppress util.
+                _maybe_emit_gpu_util(self.emit, job.job_id, last_emit_ref)
                 last_emit_ref[0] = now
 
     def _process_video_batch_fallback(

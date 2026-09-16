@@ -106,7 +106,11 @@ SETTING_SPECS: List[SettingSpec] = [
     ),
     SettingSpec(
         key="decode", label="Decode:", widget="combobox", var_name="decode_var",
-        choices=(("cv2", "cv2"), ("pyav", "pyav")),
+        # Q3: adds nvdec (PyAV hwaccel=cuda) and auto (prefer nvdec, then
+        # pyav, then cv2). The existing cv2 / pyav choices are preserved
+        # so legacy settings files load unchanged.
+        choices=(("auto", "auto"), ("nvdec", "nvdec"),
+                 ("pyav", "pyav"), ("cv2", "cv2")),
         coerce=_str,
     ),
     SettingSpec(
@@ -164,6 +168,17 @@ SETTING_SPECS: List[SettingSpec] = [
         choices=(("p1", "p1"), ("p2", "p2"), ("p3", "p3"), ("p4", "p4")),
         coerce=_str,
         help_text="p1 = fastest, p4 = best (we expose p1..p4).",
+    ),
+    # Q3: was previously read from settings as a hardcoded default 18.
+    # Lower = better quality / larger file; 18 is "visually lossless"
+    # for SDR anime content. Range mirrors x264 CRF conventions but
+    # tuned for NVENC's constant-QP curve.
+    SettingSpec(
+        key="nvenc_qp", label="NVENC QP:", widget="spinbox",
+        var_name="nvenc_qp_var",
+        spin=(16, 28, 1),
+        coerce=_int,
+        help_text="constant-QP target (lower = better quality, larger file)",
     ),
 ]
 

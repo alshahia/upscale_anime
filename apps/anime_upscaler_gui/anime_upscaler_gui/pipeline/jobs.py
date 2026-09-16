@@ -98,3 +98,31 @@ SKIP_REST = "skip_rest"
 ABORT_JOB = "abort_job"
 RETRY_FRAME = "retry_frame"
 
+
+# Q2 (perf/queue-controls-gpu-codec): user-facing pause/cancel/resume
+# control events. The GUI pushes these into a separate control queue
+# that the worker drains between frames. The worker is the only
+# consumer; the dataclass is intentionally tiny so the queue is cheap.
+@dataclass
+class JobControlEvent:
+    """GUI -> worker control signal for an in-flight job.
+
+    kind:
+      "pause"   -- worker drains the current frame, then blocks on the
+                   per-job threading.Event until a matching "resume"
+                   arrives. The output MP4 stays consistent because we
+                   always finish the current frame before pausing.
+      "resume"  -- raise the per-job threading.Event so the worker
+                   continues the next frame. Safe to send even if the
+                   job is not paused (the worker treats it as a no-op).
+      "cancel"  -- abort the job at the next frame boundary. The worker
+                   closes the encoder pipe cleanly, deletes the partial
+                   output file, and emits a "cancelled" JobEvent.
+
+    job_id:
+      Which job this control event applies to. Controls for jobs that
+      are not currently running are ignored by the worker.
+    """
+    kind: str  # "pause" | "resume" | "cancel"
+    job_id: int = 0
+

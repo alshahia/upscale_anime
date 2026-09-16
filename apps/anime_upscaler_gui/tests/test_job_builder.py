@@ -74,6 +74,8 @@ _BASE_VALUES = {
     "use_tensorrt": False,
     "use_nvenc": True,
     "nvenc_preset": "p4",
+    # Q3 (perf/queue-controls-gpu-codec): NVENC QP widget added to the panel.
+    "nvenc_qp": 20,
 }
 
 
@@ -103,6 +105,9 @@ def test_every_panel_key_flows_into_runjob():
         "use_tensorrt": "use_tensorrt",
         "use_nvenc": "use_nvenc",
         "nvenc_preset": "nvenc_preset",
+        # Q3 (perf/queue-controls-gpu-codec): QP widget added to the panel
+        # and now flows through build_run_job (previously read from data).
+        "nvenc_qp": "nvenc_qp",
         # batch_size handled by build_run_job is_video branch; tested below.
     }
     for spec_key, runjob_field in PANEL_TO_RUNJOB.items():

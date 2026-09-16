@@ -82,6 +82,40 @@ class _GPUMonitor(ttk.LabelFrame):
         except tk.TclError:
             self._stop.set()
 
+    def apply_event(self, evt) -> None:
+        """Q4 (perf/queue-controls-gpu-codec): consume a gpu_util JobEvent.
+
+        The worker emits one of these once per second during long-running
+        jobs. Decoding the structured payload keeps the GPU monitor
+        widget in sync with whatever the worker is actually doing --
+        useful when the local pynvml poll is coarse (Windows counters
+        default to 1 Hz) or when the GPU is shared between processes.
+        The message format is ``util=X% mem=Y/ZMB t=TC`` (no space
+        between the slash-separator and the unit) so we parse it here
+        rather than add new JobEvent fields (keeps the dataclass
+        contract narrow).
+        """
+        msg = evt.message or ""
+        try:
+            util = int(msg.split("util=")[1].split("%")[0])
+            self._util_var.set(f"util: {util}%")
+        except Exception:
+            pass
+        try:
+            # 'mem=4096/8192MB t=72C' -> '4096/8192'
+            mem_part = msg.split("mem=")[1].split("MB")[0].strip()
+            used, total = mem_part.split("/")
+            self._mem_var.set(f"mem: {used} / {total} MB")
+        except Exception:
+            pass
+        try:
+            # 't=72C' -> 72. The trailing 'C' (degrees) is stripped.
+            temp_part = msg.split("t=")[1]
+            temp_c = int(temp_part.rstrip("C").strip())
+            self._temp_var.set(f"temp: {temp_c}°C")
+        except Exception:
+            pass
+
     def stop(self) -> None:
         """Stop the polling thread. Call from app teardown."""
         self._stop.set()

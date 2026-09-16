@@ -26,7 +26,7 @@ class _SettingsPanel(ttk.LabelFrame):
       device_var, fp16_var, outscale_var, batch_var, decode_var,
       prefetch_var, downscale_var, gpu_guard_var, tile_size_var,
       tile_overlap_var, tta_var, use_tensorrt_var, use_nvenc_var,
-      nvenc_preset_var, theme_var.
+      nvenc_preset_var, nvenc_qp_var, theme_var.
     """
 
     def __init__(self, parent, app):
