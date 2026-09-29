@@ -1,4 +1,4 @@
-﻿"""
+"""
 Ensemble models for Progressive Ensemble Distillation
 - EnsembleTeacher: Combines Model A and Model B
 - TinyStudent: Ultra-lightweight model for final distillation
@@ -186,6 +186,7 @@ def create_ensemble_teacher(
     model_b_checkpoint: str,
     device: str = 'cuda',
     weights: List[float] = [0.6, 0.4],
+    scale: int = 4,
 ) -> EnsembleTeacher:
     """
     Create ensemble teacher from checkpoints.
@@ -195,6 +196,7 @@ def create_ensemble_teacher(
         model_b_checkpoint: Path to Model B checkpoint
         device: Device to load models on
         weights: Ensemble weights [w_a, w_b]
+        scale: Upsampling scale for both models
     
     Returns:
         EnsembleTeacher instance
@@ -206,11 +208,12 @@ def create_ensemble_teacher(
     
     # Load Model A
     print(f"Loading Model A from {model_a_checkpoint}")
-    model_a = create_span_model({'type': 'span', 'scale': 4})
+    model_a = create_span_model({'type': 'span', 'scale': scale})
     try:
         checkpoint_a = torch.load(model_a_checkpoint, map_location=device, weights_only=True)
-    except UnpicklingError:
-        logger.warning(f"Model A checkpoint requires pickle. Only load from trusted sources: {model_a_checkpoint}")
+    except Exception as e:
+        import warnings
+        warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
         checkpoint_a = torch.load(model_a_checkpoint, map_location=device, weights_only=False)
     if 'model_state_dict' in checkpoint_a:
         model_a.load_state_dict(checkpoint_a['model_state_dict'])
@@ -223,11 +226,12 @@ def create_ensemble_teacher(
     
     # Load Model B
     print(f"Loading Model B from {model_b_checkpoint}")
-    model_b = create_mamba_pan_model({'scale': 4})
+    model_b = create_mamba_pan_model({'scale': scale})
     try:
         checkpoint_b = torch.load(model_b_checkpoint, map_location=device, weights_only=True)
-    except UnpicklingError:
-        logger.warning(f"Model B checkpoint requires pickle. Only load from trusted sources: {model_b_checkpoint}")
+    except Exception as e:
+        import warnings
+        warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
         checkpoint_b = torch.load(model_b_checkpoint, map_location=device, weights_only=False)
     if 'model_state_dict' in checkpoint_b:
         model_b.load_state_dict(checkpoint_b['model_state_dict'])

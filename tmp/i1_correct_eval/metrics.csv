@@ -1,0 +1,4 @@
+label,lap_var,mean,std,dt_ms
+bicubic,11.8,45.646,44.472,
+i1_nearest,109.4,45.398,44.480,503.0
+i1_bicubic_mismatch,127.5,45.398,44.514,203.8

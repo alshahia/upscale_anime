@@ -1,4 +1,4 @@
-﻿"""
+"""
 Base class for all Super-Resolution models
 """
 import logging
@@ -64,8 +64,9 @@ class BaseSRModel(nn.Module, ABC):
         """Load pretrained weights"""
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
-        except UnpicklingError as e:
-            logger.warning(f"weights_only=True failed ({e}), using pickle fallback - ensure checkpoint is trusted")
+        except Exception as e:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         if 'state_dict' in checkpoint:
             state_dict = checkpoint['state_dict']

@@ -52,6 +52,10 @@ class ConvLoRA(nn.Module):
             in_channels, out_channels, kernel_size,
             stride=stride, padding=padding, bias=bias
         )
+        # Freeze main conv during LoRA training
+        self.conv.weight.requires_grad_(False)
+        if bias:
+            self.conv.bias.requires_grad_(False)
         
         # LoRA parameters (trainable)
         # For conv: A is [r, in_channels, 1, 1], B is [out_channels, r, k, k]
@@ -98,24 +102,26 @@ class ConvLoRA(nn.Module):
         if not self.lora_enabled:
             return
         
+        # Store original weights so unmerge_lora() can restore them.
+        # persistent=False keeps these out of the state_dict.
+        self.register_buffer(
+            '_original_weight', self.conv.weight.data.clone(), persistent=False
+        )
+        if self.conv.bias is not None:
+            self.register_buffer(
+                '_original_bias', self.conv.bias.data.clone(), persistent=False
+            )
+        
         # Compute effective weight: W + scaling * B @ A
-        # lora_A: [r, in, 1, 1]
-        # lora_B: [out, r, k, k]
+        # lora_A: [r, in, 1, 1], lora_B: [out, r, k, k]
         # Effective LoRA weight: [out, in, k, k]
-        
-        # Expand A to match B's kernel size
-        # A: [r, in, 1, 1] -> pad to [r, in, k, k]
-        pad = self.kernel_size // 2
-        lora_A_expanded = F.pad(self.lora_A, (pad, pad, pad, pad))
-        
-        # Compute LoRA weight contribution
-        # Using group convolution: each group is one rank
-        lora_weight = F.conv2d(
-            lora_A_expanded,  # [r, in, k, k]
-            self.lora_B,      # [out, r, k, k]
-            groups=self.r,    # Process each rank separately
-        )  # Result: [out, in, k, k]
-        
+        A_matrix = self.lora_A.squeeze(-1).squeeze(-1)  # [r, in]
+        B_matrix = self.lora_B.reshape(self.out_channels, self.r, -1)  # [out, r, k*k]
+        lora_weight = torch.einsum('ork,ri->oik', B_matrix, A_matrix)
+        lora_weight = lora_weight.reshape(
+            self.out_channels, self.in_channels, self.kernel_size, self.kernel_size
+        )
+
         # Merge into main conv weight
         self.conv.weight.data += self.scaling * lora_weight
         
@@ -128,8 +134,12 @@ class ConvLoRA(nn.Module):
     
     def unmerge_lora(self):
         """Unmerge LoRA weights (restore original conv weights)"""
-        # This would require storing original weights
-        # Skipping for simplicity - reinitialize if needed
+        if self.lora_enabled:
+            return
+        if hasattr(self, '_original_weight'):
+            self.conv.weight.data.copy_(self._original_weight)
+        if hasattr(self, '_original_bias') and self.conv.bias is not None:
+            self.conv.bias.data.copy_(self._original_bias)
         self.lora_enabled = True
 
 

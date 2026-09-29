@@ -1,0 +1,59 @@
+[
+  {
+    "label": "single_pt_b1",
+    "config": {
+      "batch_size": 1,
+      "use_tensorrt": false,
+      "use_nvenc": true,
+      "tta": false,
+      "scale": 4,
+      "model_path": "pretrained/RFDN_distill_v1_4x_student.pth"
+    },
+    "wall_seconds": 3.075,
+    "frames_processed": 13,
+    "fps_reported_mean": 3.76,
+    "fps_reported_max": 6.06,
+    "infer_ms_mean": 377.12,
+    "output_size_bytes": 608606,
+    "frame_png": "E:\\python projects\\upscale_anime\\tmp\\e2e_real\\single_pt_b1_frame.png",
+    "output_path": "E:\\python projects\\upscale_anime\\tmp\\e2e_real\\single_pt_b1.mp4"
+  },
+  {
+    "label": "single_trt_b1",
+    "config": {
+      "batch_size": 1,
+      "use_tensorrt": true,
+      "use_nvenc": true,
+      "tta": false,
+      "scale": 4,
+      "model_path": "pretrained/RFDN_distill_v1_4x_student.pth"
+    },
+    "wall_seconds": 1.677,
+    "frames_processed": 11,
+    "fps_reported_mean": 5.47,
+    "fps_reported_max": 9.37,
+    "infer_ms_mean": 312.3,
+    "output_size_bytes": 609965,
+    "frame_png": null,
+    "output_path": "E:\\python projects\\upscale_anime\\tmp\\e2e_real\\single_trt_b1.mp4"
+  },
+  {
+    "label": "cascade_pt_b1",
+    "config": {
+      "batch_size": 1,
+      "use_tensorrt": false,
+      "use_nvenc": true,
+      "tta": false,
+      "scale": 2,
+      "model_path": "pretrained/RFDN_distill_v2_2x_student.pth"
+    },
+    "wall_seconds": 7.142,
+    "frames_processed": 17,
+    "fps_reported_mean": 1.9,
+    "fps_reported_max": 2.58,
+    "infer_ms_mean": 441.4,
+    "output_size_bytes": 636039,
+    "frame_png": "E:\\python projects\\upscale_anime\\tmp\\e2e_real\\cascade_pt_b1_frame.png",
+    "output_path": "E:\\python projects\\upscale_anime\\tmp\\e2e_real\\cascade_pt_b1.mp4"
+  }
+]

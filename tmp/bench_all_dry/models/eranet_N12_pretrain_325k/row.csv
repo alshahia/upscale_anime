@@ -1,0 +1,2 @@
+model_id,kind,ckpt,scale,params,status,backend,device,lr_in,sr_out,n_frames,load_s,warm_s,infer_total_s,mean_ms,min_ms,max_ms,p95_ms,ms_std,fps_1_over_mean,fps_throughput,encode_s,peak_vram_GB,clipiqa_mean,clipiqa_std,niqe_mean,niqe_n
+eranet_N12_pretrain_325k,era,eranet_N12_pretrain_325k.pth,2,658700,ok,pytorch-fp16,cuda-RTX4000-ac,854x480,1708x960,90,0.2,0.45,1.4,15.6,15.44,16.86,15.83,0.18,64.08,64.08,1.64,0.33,0.57,0.0,10.96,8

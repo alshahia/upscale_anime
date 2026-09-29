@@ -72,7 +72,8 @@ class SPANTeacher(nn.Module):
             if hasattr(ckpt, "keys"):
                 return ckpt
         except Exception:
-            pass
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         if isinstance(ckpt, dict):
             for key in ("ema_state_dict", "ema_model_state_dict",
@@ -183,9 +184,11 @@ def _load_state_dict_realesr(ckpt_path):
     returns the inner dict. Same logic as apps/.../archs.py::_load_state_dict.
     """
     try:
-        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    except Exception:
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    except Exception:
+        import warnings
+        warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     if isinstance(ckpt, dict):
         for key in ("params_ema", "params", "ema_state_dict",
                      "state_dict", "model_state_dict"):

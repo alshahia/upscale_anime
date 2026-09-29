@@ -1,4 +1,4 @@
-﻿"""
+"""
 Trainer for Model A: NTIRE + MTKD + FAKD
 """
 import torch
@@ -169,9 +169,6 @@ class ModelATrainer(BaseTrainer):
         # Update the model in the base trainer
         self.model = new_model
         self.model.to(self.device)
-        
-        # Reinitialize optimizer for new model
-        self.optimizer = self._create_optimizer()
         
         # Reinitialize EMA model for new architecture
         if self.use_ema:
@@ -675,7 +672,9 @@ class ModelATrainer(BaseTrainer):
                 lr = lr.view(B_lr * T_lr, C_lr, H_lr, W_lr)
                 hr = hr.view(B_hr * T_hr, C_hr, H_hr, W_hr)
             
-            optimizer.zero_grad()
+            # Zero gradients only at start of accumulation cycle
+            if batch_idx % accumulation_steps == 0:
+                optimizer.zero_grad()
             
             if debug_mode and batch_idx < 3:  # Debug first 3 batches only
                 self._check_tensor_stats(lr, "LR input", batch_idx)
@@ -1088,11 +1087,11 @@ class ModelATrainer(BaseTrainer):
             if (batch_idx + 1) % accumulation_steps == 0:
                 if self.use_amp:
                     self.scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.get('training', {}).get('max_grad_norm', 1.0))
                     self.scaler.step(optimizer)
                     self.scaler.update()
                 else:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.get('training', {}).get('max_grad_norm', 1.0))
                     optimizer.step()
                 
                 # Update EMA after optimizer step
@@ -1127,11 +1126,11 @@ class ModelATrainer(BaseTrainer):
         if num_batches > 0 and has_scaled_batch and (batch_idx + 1) % accumulation_steps != 0:
             if self.use_amp:
                 self.scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.get('training', {}).get('max_grad_norm', 1.0))
                 self.scaler.step(optimizer)
                 self.scaler.update()
             else:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.get('training', {}).get('max_grad_norm', 1.0))
                 optimizer.step()
             optimizer.zero_grad()
         
@@ -1239,6 +1238,7 @@ class ModelATrainer(BaseTrainer):
                     continue
 
                 # PSNR (with epsilon for numerical stability)
+                pred = pred.clamp(0, 1)
                 mse = torch.mean((pred - hr) ** 2)
                 psnr = 10 * torch.log10(1.0 / (mse + 1e-10))
 

@@ -1,0 +1,19 @@
+# Anime upscaler distillation pipeline (Python 3.12, CUDA 12.x)
+# torch/torchvision CUDA builds need the pytorch cu126 index:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+torch>=2.4
+torchvision>=0.19
+numpy>=2.0
+pillow>=10.0
+scikit-image>=0.24
+onnx>=1.16
+onnxruntime-gpu>=1.21,<2
+tqdm>=4.66
+# Teacher evaluation / generic checkpoint loading (eval_teachers.py,
+# spandrel_teacher.py) - not needed at inference time
+spandrel>=0.4
+spandrel-extra-arches>=0.3
+# v3 distillation loss terms (Phase 1: Charbonnier response + MS-SSIM GT).
+# Inlined Charbonnier avoids the older piq.charbonnier_loss that was removed
+# in piq 0.8.x. LPIPS is already declared in root requirements.txt.
+piq>=0.8,<0.9

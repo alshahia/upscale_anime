@@ -142,10 +142,16 @@ class HierarchicalMambaBlock(nn.Module):
         if self.use_direction_fusion:
             # Apply learnable weights
             weights = F.softmax(self.fusion_weights, dim=0)
-            
-            # Concatenate all directions
-            concat = torch.cat([out_h, out_v, out_rh, out_rv], dim=1)  # [B, C*4, H, W]
-            
+
+            # Scale each direction by its fusion weight before concatenation
+            # so the learned weights actually affect the fused output.
+            concat = torch.cat([
+                out_h * weights[0],
+                out_v * weights[1],
+                out_rh * weights[2],
+                out_rv * weights[3],
+            ], dim=1)  # [B, C*4, H, W]
+
             # Learnable fusion
             fused = self.fusion_conv(concat)  # [B, C, H, W]
         else:

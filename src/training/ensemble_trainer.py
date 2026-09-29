@@ -136,10 +136,13 @@ class EnsembleTrainer(BaseTrainer):
             # Backward
             if self.use_amp:
                 self.scaler.scale(loss).backward()
+                self.scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.scaler.step(optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
             
             # Update EMA
@@ -161,6 +164,9 @@ class EnsembleTrainer(BaseTrainer):
             if batch_idx % self.log_interval == 0:
                 self.log_metrics(loss_dict, self.global_step, 'ensemble_train')
         
+        if num_batches == 0:
+            return {'loss': 0.0, 'l1': 0.0, 'fakd': 0.0}
+
         return {
             'loss': total_loss / num_batches,
             'l1': total_l1 / num_batches,
@@ -195,10 +201,12 @@ class EnsembleTrainer(BaseTrainer):
                 loss = self.l1_loss(student_pred, hr)
                 
                 # PSNR for student (with epsilon for numerical stability)
+                student_pred = student_pred.clamp(0, 1)
                 mse = torch.mean((student_pred - hr) ** 2)
                 psnr = 10 * torch.log10(1.0 / (mse + 1e-10))
 
                 # PSNR for teacher (with epsilon for numerical stability)
+                teacher_pred = teacher_pred.clamp(0, 1)
                 mse_teacher = torch.mean((teacher_pred - hr) ** 2)
                 psnr_teacher = 10 * torch.log10(1.0 / (mse_teacher + 1e-10))
                 

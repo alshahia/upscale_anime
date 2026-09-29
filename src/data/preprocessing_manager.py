@@ -216,8 +216,14 @@ class PreprocessingManager:
 
             if self.cache_in_memory:
                 from PIL import Image
-                self._lr_cache = [np.array(Image.open(f)) for f in self.lr_files]
-                self._hr_cache = [np.array(Image.open(f)) for f in self.hr_files]
+                self._lr_cache = []
+                for f in self.lr_files:
+                    with Image.open(f) as img:
+                        self._lr_cache.append(np.array(img))
+                self._hr_cache = []
+                for f in self.hr_files:
+                    with Image.open(f) as img:
+                        self._hr_cache.append(np.array(img))
             else:
                 self._lr_cache = None
                 self._hr_cache = None
@@ -291,7 +297,8 @@ class PreprocessingManager:
         if self._lr_cache is not None:
             lr = self._lr_cache[idx]
         else:
-            lr = np.array(Image.open(self.lr_files[idx]))
+            with Image.open(self.lr_files[idx]) as img:
+                lr = np.array(img)
         
         lr_tensor = torch.from_numpy(lr).permute(2, 0, 1).float() / 255.0
         lr_tensor = lr_tensor.to(self.device)
@@ -342,8 +349,10 @@ class PreprocessingManager:
             lr = self._lr_cache[idx]
             hr = self._hr_cache[idx]
         else:
-            lr = np.array(Image.open(self.lr_files[idx]))
-            hr = np.array(Image.open(self.hr_files[idx]))
+            with Image.open(self.lr_files[idx]) as img:
+                lr = np.array(img)
+            with Image.open(self.hr_files[idx]) as img:
+                hr = np.array(img)
         
         # Convert to tensors
         lr_tensor = torch.from_numpy(lr).permute(2, 0, 1).float() / 255.0
@@ -401,17 +410,23 @@ class PreprocessingManager:
         if not lr_path.exists():
             lr_path = base_dir / 'lr' / lr_name.replace('.png', '.jpg')
         
+        # Derive fallback LR size from the HR image and scale factor
+        with Image.open(hr_path) as hr_img:
+            hr_w, hr_h = hr_img.size
+        scale = self.config.get('scale', 4)
+        fallback_lr = np.zeros((max(1, hr_h // scale), max(1, hr_w // scale), 3), dtype=np.uint8)
+        
         if lr_path.exists():
-            lr_img = Image.open(lr_path)
-            lr = np.array(lr_img)
+            with Image.open(lr_path) as lr_img:
+                lr = np.array(lr_img)
         elif self._lr_cache:
             idx = self._find_file_index(hr_path.name)
             if idx is not None and idx < len(self._lr_cache):
                 lr = self._lr_cache[idx]
             else:
-                lr = np.zeros((256, 256, 3), dtype=np.uint8)
+                lr = fallback_lr
         else:
-            lr = np.zeros((256, 256, 3), dtype=np.uint8)
+            lr = fallback_lr
         
         lr_tensor = torch.from_numpy(lr).permute(2, 0, 1).float() / 255.0
         lr_tensor = lr_tensor.to(self.device)
@@ -556,15 +571,11 @@ class OnTheFlyProcessor:
         Returns:
             LR tensor [B, C, H/scale, W/scale]
         """
-        scale = self.config.get('scale', 4)
-        
-        # For now, use bicubic as fallback
-        # Full implementation would apply blur, noise, resize, compression
-        lr_h = hr_tensor.shape[2] // scale
-        lr_w = hr_tensor.shape[3] // scale
-        lr = torch.nn.functional.interpolate(hr_tensor, size=(lr_h, lr_w), mode='bicubic')
-        
-        return lr
+        raise NotImplementedError(
+            "OnTheFlyProcessor.process is a legacy stub that only performed "
+            "bicubic downsampling. Use PreprocessingManager (mode='on_the_fly') "
+            "which runs the full DegradationPipeline instead."
+        )
 
 
 if __name__ == "__main__":

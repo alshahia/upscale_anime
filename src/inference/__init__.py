@@ -37,9 +37,16 @@ from inference.engine import (
     TTA_TRANSFORMS,
 )
 
+from inference.tta import (
+    tta_forward,
+    D4_AUGMENTATIONS,
+)
+
 __all__ = [
     'InferenceEngine',
     'quick_inference',
     'ModelSoup',
     'TTA_TRANSFORMS',
+    'tta_forward',
+    'D4_AUGMENTATIONS',
 ]

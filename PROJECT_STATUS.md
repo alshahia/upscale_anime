@@ -67,16 +67,38 @@
 ✅ Real degraded-frame perception: NIQE 7.38 (best of all tested models);
    visual check clean (1-second video + pair stills, no hallucination)
 ✅ 1-second video test: results/step2_video_test_pair.mp4
-   (3.7 fps eager fp16 at 960x540 -> 4K output; TensorRT export pending
-   for the 25 fps goal — eager will not reach it, as measured)
+   (3.7 fps eager fp16 at 960x540 -> 4K output while on the 35 W DC adapter —
+   the measured root cause of the low GPU clocks; on AC power eager fp16 +
+   channels_last reaches ~22 fps at 4K output)
 ✅ 50/50 epochs without NaN; best+last+rotating auto-save verified across
    three crash-free resumes (--resume latest.pt; CSV-lock fallback added)
 ```
 
-From-scratch SPAN/Mamba teacher models and the old RFDN student (29.46 dB ≈
-bicubic on their split, below bicubic CLIPIQA on real frames) are retired.
-Full evidence trail and measurements: docs/ROADMAP_REALTIME_QUALITY.md.
+### 🚀 Step-3 Deployment (COMPLETE — 2026-09)
 
+```
+✅ ONNX fp16 export of student_best.pt (opset 17, dynamic H/W) verified
+   numerically exact vs torch fp16 eager (max diff 9.8e-4, ORT-CUDA)
+✅ ORT-CUDA fp16 benchmark (results/step3_deploy_bench.csv):
+     960x540 -> 3840x2160 : 21.8 fps ORT / 21.3 fps eager fp16 channels_last
+     640x360 -> 2560x1440 : 47.4 fps ORT / 47.7 fps eager fp16 channels_last
+✅ Real-episode A/B (results/step3_video_ab_*.{mp4,csv}, ep2 t=45s, 1 s 25 fps,
+   640x360 LR -> 2560x1440 output):
+     student        51.8 fps  PASS
+     animevideov3   42.3 fps  PASS  (reference)
+   -> student clears 25 fps with 2x margin AND is faster than the reference
+```
+
+**Key findings:**
+- TensorRT 11.2's new compiler backend produces garbage (830 MB engine for 634 K
+  params!) and wrong output (mean|diff| 0.33; NaN from an fp32 graph) on this
+  Turing/WDDM machine regardless of graph dtype — deployment uses ONNX-Runtime
+  CUDA (numerically exact, fp16) instead.
+- In the GUI, run the student model with TensorRT off; ORT is the validated path.
+- The GPU was capped at 35 W (300 MHz) while on the DC adapter; full speed
+  (1560 MHz) requires AC power — all fps numbers above are AC-power numbers.
+
+From-scratch SPAN/Mamba teacher models and the old RFDN student (29.46 dB ≈
 ### 📈 Training Results (historical, superseded)
 
 ```

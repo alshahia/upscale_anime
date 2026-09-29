@@ -1,4 +1,4 @@
-﻿"""
+"""
 NaN detection and recovery utilities for training stability.
 
 Provides comprehensive NaN detection, automatic recovery mechanisms,

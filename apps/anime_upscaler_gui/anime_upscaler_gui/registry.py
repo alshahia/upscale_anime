@@ -10,6 +10,7 @@ Phase 5 additions:
   - `is_trained_filename` helper: classifies a filename as in-house by
     prefix. Add new patterns when you train new variants.
 """
+import hashlib
 import json
 import logging
 import math
@@ -44,6 +45,7 @@ PRESET_CATALOG = [
         "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
         "scale": 4, "kind": "srvgg",
         "license": "BSD-3-Clause", "size_mb": 2.5,
+        "sha256": "b8a8376811077954d82ca3fcf476f1ac3da3e8a68a4f4d71363008000a18b75d",
         "source": "community",
         "display_name": "Real-ESRGAN Anime v3",
         "description": "Real-ESRGAN Compact, anime-video tuned. Default recommendation.",
@@ -54,6 +56,7 @@ PRESET_CATALOG = [
         "url": "https://github.com/Phhofm/models/releases/download/4xLSDIRCompact2/4xLSDIRCompactv2.pth",
         "scale": 4, "kind": "srvgg",
         "license": "CC-BY-4.0", "size_mb": 1.2,
+        "sha256": "524afe45a22b19bcf11fbe32e31ebc4f8774d2b1535254fd9ba7b3f129a040ef",
         "source": "community",
         "display_name": "LSDIR Compact v2",
         "description": "Smallest preset; photo-pretrained but works on clean anime.",
@@ -64,6 +67,7 @@ PRESET_CATALOG = [
         "url": "https://github.com/Phhofm/models/releases/download/4xNomosUni_span_multijpg/4xNomosUni_span_multijpg.pth",
         "scale": 4, "kind": "span",
         "license": "CC-BY-4.0", "size_mb": 4.3,
+        "sha256": "724d6a9f675c008ff1a85e5af4938e756d5add4ba32f8af62f56cee45dd3927f",
         "source": "community",
         "display_name": "SPAN Pix-Loss Pretrain",
         "description": "Phhofm canonical SPAN pix-loss pretrain. Higher quality than 4x animevideov3.",
@@ -74,6 +78,7 @@ PRESET_CATALOG = [
         "url": "https://github.com/Phhofm/models/releases/download/4xNomosUni_span_multijpg_mssim/4xNomosUni_span_multijpg_mssim.pth",
         "scale": 4, "kind": "span",
         "license": "CC-BY-4.0", "size_mb": 4.3,
+        "sha256": "234ac9facfdce987dab59ef6cd8129dd88903a16b6d34eeddd639b81f6695b18",
         "source": "community",
         "display_name": "SPAN MSSIM-Loss Pretrain",
         "description": "Phhofm SPAN mssim-loss pretrain (alternative warm-start).",
@@ -84,6 +89,7 @@ PRESET_CATALOG = [
         "url": "https://github.com/NevermindNilas/eranet/releases/download/v1.1.0/eranet_N12_pretrain_325k.pth",
         "scale": 2, "kind": "era",
         "license": "MIT", "size_mb": 2.7,
+        "sha256": "91ed0139151cfd9dfb4217af5f4b2fe01bcbc7c3a379596157bfc2dd876f057f",
         "source": "community",
         "display_name": "ERANet N12 (2x only)",
         "description": "ERANet reparameterized CNN, 2x only. Very fast on real-time anime.",
@@ -230,6 +236,8 @@ class PresetEntry:
     # Human-readable label shown in the preset dropdown and installed list.
     # Falls back to `id` when empty.
     display_name: str = ""
+    # Expected SHA-256 hash of the downloaded file (empty = no verification).
+    sha256: str = ""
 
 
 def _validate_preset_entry(raw: dict, origin: str) -> Optional[PresetEntry]:
@@ -271,6 +279,7 @@ def _validate_preset_entry(raw: dict, origin: str) -> Optional[PresetEntry]:
         notes=str(raw.get("notes", "")),
         source=str(raw.get("source", "community")),
         display_name=str(raw.get("display_name", "")),
+        sha256=str(raw.get("sha256", "")),
     )
 
 
@@ -443,8 +452,13 @@ class ModelRegistry:
 
     # ---- download ----
     def download(self, url: str, dest_filename: str,
-                 on_progress=None) -> Path:
-        """Stream-download a URL to pretrained/dest_filename. Polls bytes-written."""
+                 on_progress=None, expected_sha256: str = None,
+                 cancel_event=None) -> Path:
+        """Stream-download a URL to pretrained/dest_filename. Polls bytes-written.
+
+        If expected_sha256 is provided, verifies the downloaded file's hash
+        and deletes it (raising RuntimeError) on mismatch.
+        """
         dest = self.pretrained_dir / dest_filename
         if dest.exists():
             return dest  # already downloaded
@@ -457,11 +471,15 @@ class ModelRegistry:
             )
         # Stream with urllib; fall back to requests if user has it.
         req = urllib.request.Request(url, headers={"User-Agent": "anime-upscaler-gui/0.1"})
+        cancelled = False
         with urllib.request.urlopen(req, timeout=60) as resp, open(dest, "wb") as f:
             total = int(resp.headers.get("Content-Length", 0))
             written = 0
             chunk = 64 * 1024
             while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    break
                 buf = resp.read(chunk)
                 if not buf:
                     break
@@ -469,6 +487,20 @@ class ModelRegistry:
                 written += len(buf)
                 if on_progress and total:
                     on_progress(written, total)
+        if cancelled:
+            # Remove the partial file so a retry isn't fooled into thinking
+            # the download completed.
+            dest.unlink(missing_ok=True)
+            raise RuntimeError("download cancelled by user")
+        # Verify hash if expected value provided
+        if expected_sha256:
+            actual = hashlib.sha256(dest.read_bytes()).hexdigest()
+            if actual != expected_sha256:
+                dest.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"SHA-256 mismatch for {dest_filename}: "
+                    f"expected {expected_sha256}, got {actual}. File deleted."
+                )
         return dest
 
 

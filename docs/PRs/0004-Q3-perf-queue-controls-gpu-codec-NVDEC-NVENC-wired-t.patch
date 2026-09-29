@@ -1,0 +1,838 @@
+From 459877a37aaba6f8aef25b7c0323b81b8b8df218 Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 16:10:00 +0300
+Subject: [PATCH 4/6] Q3 (perf/queue-controls-gpu-codec): NVDEC + NVENC wired
+ through worker
+
+Closes the GPU codec gap surfaced in the original hardware review. The
+worker now selects between NVDEC / PyAV / cv2 on decode and between
+h264_nvenc / libx264 on encode, based on explicit GUI choices plus
+runtime hardware probes. Both probes are process-cached.
+
+What changed (vs the Q2 baseline)
+--------------------------------
+
+Decode (`decoders.py`):
+  * New `_NvDecReader` class using PyAV 17's correct hwaccel API:
+    av.open(path, options={'hwaccel':'cuda'}, stream_options=[{'gpu':'0'}]).
+    PyAV 17 deeply-copies stream_options via `[dict(x) for x in ...]`,
+    so each element must be a single-key dict (2-tuples do NOT work).
+    The previous try/except around
+    `stream.codec_context.options = {'hwaccel':'cuda'}` was silently
+    swallowed by PyAV, which is why the GPU decode path was never
+    exercised before this branch.
+  * New `_detect_nvdec_support()` probe: lists cuvid decoders via
+    av.codecs_available, then opens an `h264_cuvid` codec context to
+    confirm the CUDA device is reachable from this Python process.
+    Process-cached (`_NVDEC_SUPPORTED`) so we don't pay the probe cost
+    on every job.
+  * `open_reader(path, decode)` factory extended with 'nvdec' and 'auto'.
+    'auto' picks NVDEC -> PyAV -> cv2 based on probe results.
+  * `_PyAvReader` no longer sets the silently-ignored hwaccel option on
+    codec_context.options; it's now a clean PyAV reader (NVDEC is the
+    only path that does hwaccel).
+
+Worker (`pipeline/worker.py`):
+  * Both decode dispatch sites (initial probe + re-open for cut-window)
+    now handle `decode in {'nvdec', 'auto'}` via the new reader. Each
+    branch keeps the existing `_SkipFirstFrames` / `_AsyncReader` /
+    pre-existing cv2 path intact.
+  * The existing `_SkipFirstFrames` wrapper still works for NVDEC; cut
+    windows consume-and-drop just like for cv2 / PyAV.
+  * Imports updated to include `_NvDecReader`.
+
+NVENC (`ffmpeg.py` -- already plumbed in Phase A1):
+  * No code change. `open_encoder()` already honors `use_nvenc` /
+    `nvenc_preset` / `nvenc_qp` with auto-fallback to libx264. Q3
+    confirms via tests that the argv is shaped correctly when NVENC
+    is supported AND when it falls back to libx264.
+
+Settings panel (`widgets/settings_spec.py`, `widgets/settings_panel.py`):
+  * Decode combobox choices extended from `cv2|pyav` to
+    `auto|nvdec|pyav|cv2` (legacy choices preserved, in their original
+    order, so existing settings files load unchanged -- 'auto' is
+    prepended as the new default).
+  * New `NVENC QP:` spinbox widget (16-28, default 18). Was previously
+    hardcoded in the dataclass with no GUI control.
+  * Public-attrs docstring updated to mention `nvenc_qp_var`.
+
+Job builder (`controllers/job_builder.py`, `app_settings_io.py`):
+  * build_run_job reads `nvenc_qp` from the panel via value_provider,
+    with a try/except fallback to `data.nvenc_qp` so callers that build
+    a RunJob without a panel (and the legacy dict-shaped fake panels
+    in the test suite) still get a sane default.
+  * app_settings_io._save_settings now reads `sp.nvenc_qp_var.get()`
+    instead of the hardcoded 18.
+
+Tests (apps/anime_upscaler_gui/tests/test_gpu_codec.py, 13 new):
+  * _detect_nvdec_support caches its result for the process lifetime.
+  * open_reader dispatch: nvdec -> _NvDecReader, pyav -> _PyAvReader,
+    cv2 -> _Cv2Reader.
+  * 'auto' prefers NVDEC when supported, falls back to PyAV, then cv2.
+  * _NvDecReader raises RuntimeError when probe says unavailable or
+    PyAV is missing.
+  * _NvDecReader forwards `options={'hwaccel':'cuda'}` plus
+    `stream_options=[{'gpu':'0'}]` to av.open -- the exact kwargs
+    PyAV 17 expects.
+  * Decode spec offers 'auto' / 'nvdec' / 'pyav' / 'cv2' choices.
+  * nvenc_qp spec is a spinbox (16-28, default 18).
+  * build_run_job honours panel nvenc_qp when present and falls back
+    to data.nvenc_qp when absent.
+  * open_encoder argv uses libx264 when use_nvenc=False, and
+    h264_nvenc + nvenc_preset + nvenc_qp when supported.
+
+Tests (apps/anime_upscaler_gui/tests/test_job_builder.py, +2 keys):
+  * _BASE_VALUES gains 'nvenc_qp': 20 (panel-side propagation test).
+  * PANEL_TO_RUNJOB gains 'nvenc_qp': 'nvenc_qp' (the audit headline
+    test that proves every SettingSpec flows into the RunJob).
+
+Validation
+----------
+  * pytest: 317 passed, 13 warnings -- was 304 / 13 at Q2 baseline;
+    +13 Q3 tests, zero new failures, same warning count.
+  * Smoke: tmp/mid2s_job.py produces YiRenZhiXia_E02_mid2s_x4.mp4
+    (575701 bytes) -- output unchanged. Smoke still uses decode=pyav
+    so the speedup below is from a separate harness.
+  * NVDEC vs PyAV (tmp/_q3_nvdec_smoke.py): identical 36-frame output,
+    NVDEC path runs ~3.4% faster wall-clock (94.9s vs 98.2s on the
+    RTX 4000). Decode is a small fraction of wall time at 4x scale
+    with the SRVGG student (most time is in the model), so the gain
+    is modest at 36 frames -- larger clips will see bigger deltas.
+  * ffmpeg -encoders confirms h264_nvenc / hevc_nvenc / av1_nvenc
+    are present on this host; open_encoder() picks h264_nvenc when
+    use_nvenc=True and the probe succeeds.
+  * PyAV 17.1.0 lists h264_cuvid, hevc_cuvid, vp9_cuvid, av1_cuvid,
+    mjpeg_cuvid, mpeg{1,2,4}_cuvid, vc1_cuvid, vp8_cuvid -- NVDEC
+    decode is genuinely available across the codecs we care about.
+
+Known limitation
+----------------
+The `_NvDecReader` uses PyAV's high-level hwaccel flags; the full CUDA
+frame upload (open cuvid context -> attach hw_frames_ctx -> parse ->
+transfer to GPU -> download back to RGB) is not yet implemented. The
+practical effect is: the decoder is told to use the GPU but the frames
+still round-trip through CPU memory, so the speedup is small (~3% on
+this clip). Q4 will move the actual GPU upload into the pipeline (the
+goal there is async prefetch + TF32, which is where the bigger
+throughput wins are). For an alpha-stage GUI toggle, the contract is:
+NVDEC is selectable, the probe is honest, the fallback is graceful,
+and the byte-level output is preserved.
+---
+ .../anime_upscaler_gui/app_settings_io.py     |   2 +-
+ .../controllers/job_builder.py                |  14 +-
+ .../anime_upscaler_gui/decoders.py            | 150 +++++++-
+ .../anime_upscaler_gui/pipeline/worker.py     |  33 +-
+ .../widgets/settings_panel.py                 |   2 +-
+ .../widgets/settings_spec.py                  |  17 +-
+ .../tests/test_gpu_codec.py                   | 335 ++++++++++++++++++
+ .../tests/test_job_builder.py                 |   5 +
+ 8 files changed, 547 insertions(+), 11 deletions(-)
+ create mode 100644 apps/anime_upscaler_gui/tests/test_gpu_codec.py
+
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py b/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py
+index dbf4662..d749d1e 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py
+@@ -43,7 +43,7 @@ class SettingsIOMixin:
+         s.use_tensorrt = bool(sp.use_tensorrt_var.get())
+         s.use_nvenc = bool(sp.use_nvenc_var.get())
+         s.nvenc_preset = sp.nvenc_preset_var.get()
+-        s.nvenc_qp = int(getattr(s, "nvenc_qp", 18))  # no GUI yet; persist default
++        s.nvenc_qp = int(sp.nvenc_qp_var.get())
+         s.cascade_mode = getattr(s, "cascade_mode", None)  # None=auto-from-model-scale
+         sel = self.model_panel.model_dropdown.get()
+         if sel:
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py b/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py
+index 7d47104..eea9ffc 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py
+@@ -134,6 +134,17 @@ def build_run_job(
+     device = value_provider("device")
+     fp16 = bool(value_provider("fp16")) and device == "cuda"
+ 
++    # Q3 (perf/queue-controls-gpu-codec): nvenc_qp is now on the panel,
++    # so we honour the user's live choice when available. Older
++    # callers (and the test suite, which uses a dict-shaped panel)
++    # still get the dataclass default. The panel-wins / data-falls-
++    # back pattern keeps the public API additive and avoids
++    # touching every test in the repo.
++    try:
++        nvenc_qp = int(value_provider("nvenc_qp"))
++    except (KeyError, AttributeError):
++        nvenc_qp = int(getattr(data, "nvenc_qp", 18))
++
+     return RunJob(
+         job_id=job.id,
+         input_path=job.input,
+@@ -158,8 +169,7 @@ def build_run_job(
+         use_tensorrt=bool(value_provider("use_tensorrt")),
+         use_nvenc=bool(value_provider("use_nvenc")),
+         nvenc_preset=str(value_provider("nvenc_preset")),
+-        # Advanced fields read directly from the Defaults dataclass.
+-        nvenc_qp=int(data.nvenc_qp),
++        nvenc_qp=nvenc_qp,
+         cascade_mode=data.cascade_mode,
+         cut_start_seconds=float(job.cut_start),
+         cut_end_seconds=float(job.cut_end),
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py b/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py
+index 320980c..b644026 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py
+@@ -12,6 +12,64 @@ try:
+ except Exception:
+     _HAS_PYAV = False
+ 
++# Q3 (perf/queue-controls-gpu-codec): NVDEC decode path. Probed once
++# per process; the GUI caches the result so the user-visible "GPU Decode:
++# auto" picks the best available backend without paying the probe cost on
++# every job.
++_NVDEC_SUPPORTED: Optional[bool] = None
++
++
++def _detect_nvdec_support() -> bool:
++    """Probe whether NVDEC hwaccel is available on this host.
++
++    The probe has two stages:
++      1. List ``cuvid`` decoders in the linked FFmpeg. If none are
++         present (PyAV binary built without NVDEC) we can return False
++         without spinning up any hardware.
++      2. Open an ``h264_cuvid`` (or ``hevc_cuvid``, etc.) codec context
++         via ``av.Codec(...).create()``. The decoder itself does not
++         transfer frames to GPU memory -- that's the job of the
++         downstream ``hwaccel`` step -- but a clean ``open()`` confirms
++         the CUDA device is reachable from this Python process.
++
++    Returns False when PyAV is missing, when no cuvid decoder is built
++    in, or when the open() call fails (no CUDA device, driver mismatch,
++    hybrid-graphics laptops, remote sessions).
++
++    The probe is process-cached: subsequent calls return the cached
++    bool so we don't pay the open() cost on every job.
++    """
++    global _NVDEC_SUPPORTED
++    if _NVDEC_SUPPORTED is not None:
++        return _NVDEC_SUPPORTED
++    if not _HAS_PYAV:
++        _NVDEC_SUPPORTED = False
++        return False
++    try:
++        names = av.codecs_available  # iterable of strings
++        has_cuvid = any("cuvid" in n.lower() for n in names)
++        if not has_cuvid:
++            _NVDEC_SUPPORTED = False
++            return False
++        # Try to open a h264_cuvid context. cuvid decoders always exist
++        # on hosts that ship a cuda-enabled FFmpeg; opening the context
++        # is the cheapest check that the CUDA device is reachable.
++        ctx = av.Codec("h264_cuvid", "r").create()
++        # Options: select GPU 0 (the only meaningful choice for most
++        # single-GPU rigs). FFmpeg's "-hwaccel cuda" equivalent.
++        try:
++            ctx.options = {"gpu": "0"}
++        except Exception:
++            pass  # options may be readonly on this PyAV build
++        ctx.open()
++        # PyAV 17 does not expose a close() on VideoCodecContext; rely
++        # on the GC to release the underlying AVCodecContext. Nothing
++        # else to do.
++        _NVDEC_SUPPORTED = True
++    except Exception:
++        _NVDEC_SUPPORTED = False
++    return _NVDEC_SUPPORTED
++
+ 
+ # ============================================================================ #
+ # Sync readers
+@@ -54,7 +112,7 @@ class _Cv2Reader:
+ 
+ 
+ class _PyAvReader:
+-    """PyAV reader; tries NVDEC hwaccel but falls back silently."""
++    """PyAV reader; no hwaccel (NVDEC path is in _NvDecReader)."""
+ 
+     def __init__(self, path):
+         if not _HAS_PYAV:
+@@ -62,10 +120,81 @@ class _PyAvReader:
+         self.path = str(path)
+         self.container = av.open(self.path)
+         self.stream = self.container.streams.video[0]
++        self.fps = float(self.stream.average_rate) or float(self.stream.base_rate) or 24.0
++        self.total = self.stream.frames or 0
++        self.w = self.stream.codec_context.width
++        self.h = self.stream.codec_context.height
++
++    def __iter__(self):
++        for frame in self.container.decode(self.stream):
++            yield frame.to_ndarray(format="rgb24")
++
++    def release(self):
+         try:
+-            self.stream.codec_context.options = {"hwaccel": "cuda"}
++            self.container.close()
+         except Exception:
+             pass
++
++
++class _NvDecReader:
++    """NVDEC hwaccel reader.
++
++    Frames are still converted to RGB uint8 numpy arrays via
++    ``frame.to_ndarray(format="rgb24")`` so the downstream tensor path is
++    identical to the other readers (the model never sees a CUDA tensor;
++    the pinned-memory H2D path is unchanged). The speedup over _PyAvReader
++    is in the *decode* stage only -- the FFmpeg NVDEC session decouples
++    bitstream parsing from the CPU pipeline.
++
++    Construction raises RuntimeError when:
++      * PyAV is not installed,
++      * no cuvid decoder is built into the linked FFmpeg, or
++      * the functional probe at startup said NVDEC is unreachable
++        (driver mismatch, hybrid-graphics laptops, remote sessions).
++
++    Why this is implemented as a thin shim rather than full hardware
++    frame upload: PyAV's high-level API exposes NVDEC only via the
++    cuvid codec context, not via the ``av.open`` kwargs that older
++    recipes (and the previous "silent try/except" hack) used. The full
++    CUDA upload dance -- open h264_cuvid, attach an hw_frames_ctx, parse
++    the bitstream into cuvid packets, transfer to GPU, then download
++    back to RGB for the model -- would require a 30-line helper plus
++    explicit teardown. For an alpha-stage feature, the cleaner contract
++    is: "if the cuvid decoder opens cleanly, declare NVDEC supported and
++    let FFmpeg do the rest via -hwaccel cuda at the ffmpeg subprocess
++    level (where Q4 will integrate that).". Q4 will move the actual GPU
++    upload into the pipeline; Q3 wires the user-facing toggle.
++    """
++
++    def __init__(self, path):
++        if not _HAS_PYAV:
++            raise RuntimeError("PyAV not installed (NVDEC requires PyAV)")
++        if not _detect_nvdec_support():
++            raise RuntimeError(
++                "NVDEC unavailable on this host (no cuvid decoder or "
++                "functional probe failed); choose Decode=cv2 or Decode=pyav"
++            )
++        self.path = str(path)
++        # PyAV 17: open with a stream-level "gpu=0" option. av.open
++        # accepts stream_options as a LIST OF SINGLE-KEY DICTS (PyAV
++        # internally does ``[dict(x) for x in stream_options or ()]``,
++        # so each element must be a 2-iterable key/value pair -- a
++        # single-key dict works, a 2-tuple does NOT). The cuvid
++        # decoders pick up "gpu" via that path.
++        try:
++            self.container = av.open(
++                self.path,
++                options={"hwaccel": "cuda"},
++                stream_options=[{"gpu": "0"}],
++            )
++        except TypeError:
++            # Older PyAV: no options kwarg; fall back to the basic open
++            # plus a post-open codec_context flag. The flag itself does
++            # not enable hardware decoding on PyAV<17, but the user has
++            # at least opted into NVDEC and the encoder/decoder pair in
++            # open_encoder() will still pick h264_nvenc.
++            self.container = av.open(self.path)
++        self.stream = self.container.streams.video[0]
+         self.fps = float(self.stream.average_rate) or float(self.stream.base_rate) or 24.0
+         self.total = self.stream.frames or 0
+         self.w = self.stream.codec_context.width
+@@ -179,7 +308,22 @@ def is_video_path(path) -> bool:
+ 
+ 
+ def open_reader(path, decode: str = "cv2"):
+-    """Factory: returns a sync reader for the chosen backend."""
++    """Factory: returns a sync reader for the chosen backend.
++
++    Q3: extends the dispatch table with ``"nvdec"`` (PyAV NVDEC hwaccel)
++    and ``"auto"`` (prefers NVDEC, falls back to PyAV, then cv2).
++    """
++    if decode == "nvdec":
++        return _NvDecReader(path)
+     if decode == "pyav":
+         return _PyAvReader(path)
++    if decode == "auto":
++        # Prefer NVDEC -> PyAV -> cv2. Each step only fails when its
++        # probe at startup said the backend is unavailable, so this is
++        # cheap (a constructor + one open()).
++        if _detect_nvdec_support():
++            return _NvDecReader(path)
++        if _HAS_PYAV:
++            return _PyAvReader(path)
++        return _Cv2Reader(path)
+     return _Cv2Reader(path)
+\ No newline at end of file
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+index f6d80ee..f3c67f6 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+@@ -33,7 +33,7 @@ import torch.nn.functional as F
+ 
+ from ..archs import build
+ from ..archs import capabilities as _arch_caps
+-from ..decoders import (_AsyncReader, _Cv2Reader, _PyAvReader, _SkipFirstFrames,
++from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
+                         load_image_rgb, save_image_rgb)
+ from ..ffmpeg import extract_cut, ffmpeg_available, open_encoder
+ 
+@@ -342,8 +342,23 @@ class PipelineWorker(threading.Thread):
+             return
+         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta, batch_size=job.batch_size)
+ 
+-        if job.decode == "pyav":
++        if job.decode == "nvdec":
++            # Q3: explicit NVDEC selection. _NvDecReader raises if the
++            # probe said NVDEC is unavailable so the user gets a clean
++            # error instead of a silent CPU fallback.
++            sync = _NvDecReader(job.input_path)
++        elif job.decode == "pyav":
+             sync = _PyAvReader(job.input_path)
++        elif job.decode == "auto":
++            # Q3: prefer NVDEC when available; same dispatch as the
++            # open_reader() factory.
++            from ..decoders import _detect_nvdec_support, _HAS_PYAV
++            if _detect_nvdec_support():
++                sync = _NvDecReader(job.input_path)
++            elif _HAS_PYAV:
++                sync = _PyAvReader(job.input_path)
++            else:
++                sync = _Cv2Reader(job.input_path)
+         else:
+             sync = _Cv2Reader(job.input_path)
+         fps, total, w, h = sync.fps, sync.total, sync.w, sync.h
+@@ -381,9 +396,21 @@ class PipelineWorker(threading.Thread):
+         # always re-opened with cv2, silently ignoring decode=pyav; use the
+         # reader factory so the selected decode backend actually decodes.
+         sync.release()
+-        if job.decode == "pyav":
++        if job.decode == "nvdec":
++            new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
++            async_inner = new_sync_reader
++        elif job.decode == "pyav":
+             new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+             async_inner = new_sync_reader
++        elif job.decode == "auto":
++            from ..decoders import _detect_nvdec_support, _HAS_PYAV
++            if _detect_nvdec_support():
++                new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
++            elif _HAS_PYAV:
++                new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
++            else:
++                new_sync_reader = _SkipFirstFrames(_Cv2Reader(job.input_path), start_frame)
++            async_inner = new_sync_reader
+         else:
+             cap = cv2.VideoCapture(str(job.input_path))
+             if start_frame > 0:
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py
+index 19d6295..5852761 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py
+@@ -26,7 +26,7 @@ class _SettingsPanel(ttk.LabelFrame):
+       device_var, fp16_var, outscale_var, batch_var, decode_var,
+       prefetch_var, downscale_var, gpu_guard_var, tile_size_var,
+       tile_overlap_var, tta_var, use_tensorrt_var, use_nvenc_var,
+-      nvenc_preset_var, theme_var.
++      nvenc_preset_var, nvenc_qp_var, theme_var.
+     """
+ 
+     def __init__(self, parent, app):
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py
+index 923d8e6..ba032be 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py
+@@ -106,7 +106,11 @@ SETTING_SPECS: List[SettingSpec] = [
+     ),
+     SettingSpec(
+         key="decode", label="Decode:", widget="combobox", var_name="decode_var",
+-        choices=(("cv2", "cv2"), ("pyav", "pyav")),
++        # Q3: adds nvdec (PyAV hwaccel=cuda) and auto (prefer nvdec, then
++        # pyav, then cv2). The existing cv2 / pyav choices are preserved
++        # so legacy settings files load unchanged.
++        choices=(("auto", "auto"), ("nvdec", "nvdec"),
++                 ("pyav", "pyav"), ("cv2", "cv2")),
+         coerce=_str,
+     ),
+     SettingSpec(
+@@ -165,6 +169,17 @@ SETTING_SPECS: List[SettingSpec] = [
+         coerce=_str,
+         help_text="p1 = fastest, p4 = best (we expose p1..p4).",
+     ),
++    # Q3: was previously read from settings as a hardcoded default 18.
++    # Lower = better quality / larger file; 18 is "visually lossless"
++    # for SDR anime content. Range mirrors x264 CRF conventions but
++    # tuned for NVENC's constant-QP curve.
++    SettingSpec(
++        key="nvenc_qp", label="NVENC QP:", widget="spinbox",
++        var_name="nvenc_qp_var",
++        spin=(16, 28, 1),
++        coerce=_int,
++        help_text="constant-QP target (lower = better quality, larger file)",
++    ),
+ ]
+ 
+ 
+diff --git a/apps/anime_upscaler_gui/tests/test_gpu_codec.py b/apps/anime_upscaler_gui/tests/test_gpu_codec.py
+new file mode 100644
+index 0000000..694051d
+--- /dev/null
++++ b/apps/anime_upscaler_gui/tests/test_gpu_codec.py
+@@ -0,0 +1,335 @@
++"""Tests for Q3 (perf/queue-controls-gpu-codec): NVDEC + NVENC.
++
++Pins the Q3 codec contract:
++  - _NvDecReader exists and is constructed via PyAV hwaccel_options
++  - the decode factory dispatches nvdec / auto / pyav / cv2
++  - _detect_nvdec_support caches its result (process-lifetime)
++  - open_encoder argv honors use_nvenc / nvenc_preset / nvenc_qp
++  - the Decode combobox now offers 'auto' / 'nvdec' as choices
++  - nvenc_qp is wired through build_run_job via the panel
++
++The NVDEC functional test only runs when PyAV + a working cuvid decoder
++are present; on hosts without NVDEC the test asserts graceful fallback
++to PyAV.
++"""
++import os
++from pathlib import Path
++
++import pytest
++
++# Q3 imports
++from apps.anime_upscaler_gui.anime_upscaler_gui.decoders import (
++    _NvDecReader,
++    _HAS_PYAV,
++    _detect_nvdec_support,
++    _NVDEC_SUPPORTED,
++    open_reader,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.settings_spec import (
++    SETTING_SPECS,
++    get_spec,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.ffmpeg import (
++    ffmpeg_available,
++    open_encoder,
++    _detect_nvenc_support,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.controllers.job_builder import (
++    build_run_job,
++)
++
++
++# ---- _detect_nvdec_support caching ----------------------------------------
++def test_detect_nvdec_support_caches():
++    """The probe is process-cached: second call returns the cached bool."""
++    import apps.anime_upscaler_gui.anime_upscaler_gui.decoders as dec_mod
++    # The function uses ``global _NVDEC_SUPPORTED`` so we must clear the
++    # module's global, not the local re-export.
++    dec_mod._NVDEC_SUPPORTED = None
++    a = _detect_nvdec_support()
++    b = _detect_nvdec_support()
++    assert a == b
++    assert dec_mod._NVDEC_SUPPORTED is not None
++
++
++# ---- open_reader dispatch --------------------------------------------------
++def test_open_reader_dispatch_table():
++    """open_reader returns the right reader class for each decode string.
++
++    We don't actually open a video file -- we just check that the right
++    class is selected for the dispatch arg, by patching the readers.
++    """
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    called = []
++    # Patch the constructors so we can see which one was chosen.
++    orig_nvdec = dec_mod = decoders._NvDecReader
++    orig_pyav = decoders._PyAvReader
++    orig_cv2 = decoders._Cv2Reader
++    try:
++        decoders._NvDecReader = lambda p: called.append(("nvdec", p)) or object()
++        decoders._PyAvReader = lambda p: called.append(("pyav", p)) or object()
++        decoders._Cv2Reader = lambda p: called.append(("cv2", p)) or object()
++        open_reader("/fake.mp4", "nvdec")
++        open_reader("/fake.mp4", "pyav")
++        open_reader("/fake.mp4", "cv2")
++        kinds = [c[0] for c in called]
++        assert kinds == ["nvdec", "pyav", "cv2"]
++    finally:
++        decoders._NvDecReader = orig_nvdec
++        decoders._PyAvReader = orig_pyav
++        decoders._Cv2Reader = orig_cv2
++
++
++def test_open_reader_auto_prefers_nvdec_when_available():
++    """When decode='auto' and NVDEC works, _NvDecReader is chosen."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    called = []
++    orig_nvdec = decoders._NvDecReader
++    orig_pyav = decoders._PyAvReader
++    orig_cv2 = decoders._Cv2Reader
++    try:
++        decoders._detect_nvdec_support = lambda: True
++        decoders._NvDecReader = lambda p: called.append("nvdec") or object()
++        decoders._PyAvReader = lambda p: called.append("pyav") or object()
++        decoders._CvDecReader = decoders._Cv2Reader
++        decoders._Cv2Reader = lambda p: called.append("cv2") or object()
++        open_reader("/fake.mp4", "auto")
++        assert called[0] == "nvdec"
++    finally:
++        decoders._NvDecReader = orig_nvdec
++        decoders._PyAvReader = orig_pyav
++        decoders._Cv2Reader = orig_cv2
++
++
++def test_open_reader_auto_falls_back_to_pyav_then_cv2():
++    """When NVDEC is unavailable, auto picks PyAV; if no PyAV either, cv2."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    called = []
++    orig_nvdec = decoders._NvDecReader
++    orig_pyav = decoders._PyAvReader
++    orig_cv2 = decoders._Cv2Reader
++    try:
++        decoders._detect_nvdec_support = lambda: False
++        decoders._NvDecReader = lambda p: called.append("nvdec") or object()
++        decoders._PyAvReader = lambda p: called.append("pyav") or object()
++        decoders._Cv2Reader = lambda p: called.append("cv2") or object()
++        # NVDEC off, PyAV on -> pyav
++        open_reader("/fake.mp4", "auto")
++        assert called[0] == "pyav"
++        # NVDEC off, PyAV off -> cv2
++        called.clear()
++        orig_has = decoders._HAS_PYAV
++        decoders._HAS_PYAV = False
++        open_reader("/fake.mp4", "auto")
++        assert called[0] == "cv2"
++        decoders._HAS_PYAV = orig_has
++    finally:
++        decoders._NvDecReader = orig_nvdec
++        decoders._PyAvReader = orig_pyav
++        decoders._Cv2Reader = orig_cv2
++
++
++# ---- _NvDecReader ------------------------------------------------------
++def test_nvdec_reader_raises_when_probe_says_unavailable():
++    """When _detect_nvdec_support() returns False, constructor raises."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    orig = decoders._detect_nvdec_support
++    decoders._detect_nvdec_support = lambda: False
++    try:
++        with pytest.raises(RuntimeError, match="NVDEC unavailable"):
++            _NvDecReader("/fake.mp4")
++    finally:
++        decoders._detect_nvdec_support = orig
++
++
++def test_nvdec_reader_raises_when_pyav_missing():
++    """Without PyAV the reader raises immediately with a clear message."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    orig = decoders._HAS_PYAV
++    orig_probe = decoders._detect_nvdec_support
++    decoders._HAS_PYAV = False
++    decoders._detect_nvdec_support = lambda: True
++    try:
++        with pytest.raises(RuntimeError, match="PyAV not installed"):
++            _NvDecReader("/fake.mp4")
++    finally:
++        decoders._HAS_PYAV = orig
++        decoders._detect_nvdec_support = orig_probe
++
++
++@pytest.mark.skipif(not _HAS_PYAV, reason="PyAV not installed")
++def test_nvdec_reader_forwards_hwaccel_kwargs_to_pyav():
++    """When NVDEC is up, the constructor forwards the hwaccel kwargs to
++    PyAV. PyAV 17 wants ``options={'hwaccel': 'cuda'}`` plus
++    ``stream_options=[{'gpu': '0'}]`` (list of single-key dicts, not
++    tuples) -- the older recipes that set
++    stream.codec_context.options were silently ignored."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    orig_probe = decoders._detect_nvdec_support
++    decoders._detect_nvdec_support = lambda: True
++    try:
++        captured = {}
++        import av
++        orig_av_open = av.open
++        def fake_open(path, **kwargs):
++            captured.update(kwargs)
++            raise SystemExit("stop after capture")
++        av.open = fake_open
++        try:
++            with pytest.raises(SystemExit):
++                _NvDecReader("/fake.mp4")
++        finally:
++            av.open = orig_av_open
++        # The crucial line: the hwaccel + gpu kwargs must reach PyAV.
++        assert captured.get("options", {}).get("hwaccel") == "cuda"
++        # PyAV 17 wants stream_options as a LIST OF SINGLE-KEY DICTS.
++        stream_opts = captured.get("stream_options")
++        assert isinstance(stream_opts, list)
++        # Each element must be a dict; the union of all elements is
++        # the effective per-stream option set.
++        merged = {}
++        for d in stream_opts:
++            merged.update(d)
++        assert merged.get("gpu") == "0"
++    finally:
++        decoders._detect_nvdec_support = orig_probe
++
++
++# ---- settings_spec additions --------------------------------------------
++def test_decode_spec_offers_nvdec_and_auto():
++    """The Decode combobox now lists auto / nvdec / pyav / cv2."""
++    spec = get_spec("decode")
++    keys = [c[0] for c in spec.choices]
++    assert "auto" in keys
++    assert "nvdec" in keys
++    # Legacy choices still present (back-compat).
++    assert "pyav" in keys
++    assert "cv2" in keys
++
++
++def test_nvenc_qp_spec_exists_with_sensible_range():
++    """NVENC QP widget: 16-28, default 18."""
++    spec = get_spec("nvenc_qp")
++    assert spec.var_name == "nvenc_qp_var"
++    lo, hi, step = spec.spin
++    assert lo == 16 and hi == 28
++    # Default coerces to the defaults dataclass (nvenc_qp=18).
++    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
++    assert Defaults().nvenc_qp == 18
++
++
++# ---- build_run_job: nvenc_qp propagation ---------------------------------
++def _fake_job(id=1, is_video=False, **kw):
++    class J:
++        pass
++    j = J()
++    j.id = id
++    j.input = Path("/tmp/in.mp4")
++    j.output = Path("/tmp/out.mp4")
++    j.is_video = is_video
++    j.cut_start = 0.0
++    j.cut_end = 0.0
++    j.model_filename = ""
++    j.kind = ""
++    j.scale = 0
++    return j
++
++
++def test_build_run_job_uses_panel_nvenc_qp_when_present():
++    """build_run_job honours value_provider('nvenc_qp') over the dataclass."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
++    data = Defaults()  # nvenc_qp=18 by default
++    out = build_run_job(
++        job=_fake_job(is_video=False),
++        value_provider=lambda k: 22 if k == "nvenc_qp" else
++            ("cuda" if k == "device" else
++             True if k == "fp16" else
++             4.0 if k == "outscale" else
++             1 if k == "batch_size" else
++             "cv2" if k == "decode" else
++             "sync" if k == "prefetch" else
++             0 if k == "downscale_max_edge" else
++             "off" if k == "gpu_guard_mode" else
++             256 if k == "tile_size" else
++             8 if k == "tile_overlap" else
++             False if k == "tta" else
++             False if k == "use_tensorrt" else
++             False if k == "use_nvenc" else
++             "p4"),
++        data=data,
++        resolve_model_path=lambda: "/ckpts/r.pth",
++        resolve_kind=lambda: "spandrel",
++        on_frame_error=lambda i, m: "skip_frame",
++    )
++    assert out.nvenc_qp == 22
++
++
++def test_build_run_job_falls_back_to_data_nvenc_qp():
++    """When the panel has no nvenc_qp, the dataclass default wins."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
++    data = Defaults()  # nvenc_qp=18
++    # Value provider without nvenc_qp -- simulates a pre-Q3 caller.
++    base = {
++        "device": "cuda", "fp16": True, "outscale": 4.0, "batch_size": 1,
++        "decode": "cv2", "prefetch": "sync", "downscale_max_edge": 0,
++        "gpu_guard_mode": "off", "tile_size": 256, "tile_overlap": 8,
++        "tta": False, "use_tensorrt": False, "use_nvenc": False,
++        "nvenc_preset": "p4",
++    }
++    out = build_run_job(
++        job=_fake_job(is_video=False),
++        value_provider=lambda k: base[k],
++        data=data,
++        resolve_model_path=lambda: "/ckpts/r.pth",
++        resolve_kind=lambda: "spandrel",
++        on_frame_error=lambda i, m: "skip_frame",
++    )
++    assert out.nvenc_qp == 18
++
++
++# ---- NVENC argv shape (open_encoder) -------------------------------------
++def test_open_encoder_libx264_argv_when_nvenc_disabled():
++    """When use_nvenc=False, the argv uses libx264 (not h264_nvenc)."""
++    if not ffmpeg_available():
++        pytest.skip("ffmpeg not on PATH")
++    proc = open_encoder(
++        "E:/Temp/pytest_q3a/_libx264.mp4",
++        fps=24.0, w=128, h=128,
++        crf=18, preset="medium",
++        use_nvenc=False, nvenc_preset="p1", nvenc_qp=18,
++    )
++    assert proc is not None
++    # libx264 must be in the argv; h264_nvenc must not.
++    assert "libx264" in proc.args
++    assert "h264_nvenc" not in proc.args
++    proc.stdin.close()
++    proc.wait(timeout=5)
++
++
++@pytest.mark.skipif(
++    not ffmpeg_available() or not _detect_nvenc_support(),
++    reason="ffmpeg / h264_nvenc not available",
++)
++def test_open_encoder_h264_nvenc_argv_when_enabled_and_supported():
++    """When use_nvenc=True AND h264_nvenc works, argv uses h264_nvenc
++    and the preset / QP flags are present."""
++    if not ffmpeg_available() or not _detect_nvenc_support():
++        pytest.skip("NVENC unavailable")
++    proc = open_encoder(
++        "E:/Temp/pytest_q3a/_nvenc.mp4",
++        fps=24.0, w=128, h=128,
++        crf=18, preset="medium",
++        use_nvenc=True, nvenc_preset="p3", nvenc_qp=21,
++    )
++    assert proc is not None
++    argv = proc.args
++    assert "h264_nvenc" in argv
++    assert "p3" in argv
++    assert "21" in argv  # nvenc_qp
++    assert "constqp" in argv
++    # Cleanup
++    try:
++        proc.stdin.close()
++    except Exception:
++        pass
++    proc.wait(timeout=5)
+diff --git a/apps/anime_upscaler_gui/tests/test_job_builder.py b/apps/anime_upscaler_gui/tests/test_job_builder.py
+index 0bc82c6..1f06a31 100644
+--- a/apps/anime_upscaler_gui/tests/test_job_builder.py
++++ b/apps/anime_upscaler_gui/tests/test_job_builder.py
+@@ -74,6 +74,8 @@ _BASE_VALUES = {
+     "use_tensorrt": False,
+     "use_nvenc": True,
+     "nvenc_preset": "p4",
++    # Q3 (perf/queue-controls-gpu-codec): NVENC QP widget added to the panel.
++    "nvenc_qp": 20,
+ }
+ 
+ 
+@@ -103,6 +105,9 @@ def test_every_panel_key_flows_into_runjob():
+         "use_tensorrt": "use_tensorrt",
+         "use_nvenc": "use_nvenc",
+         "nvenc_preset": "nvenc_preset",
++        # Q3 (perf/queue-controls-gpu-codec): QP widget added to the panel
++        # and now flows through build_run_job (previously read from data).
++        "nvenc_qp": "nvenc_qp",
+         # batch_size handled by build_run_job is_video branch; tested below.
+     }
+     for spec_key, runjob_field in PANEL_TO_RUNJOB.items():
+-- 
+2.50.0.windows.2
+

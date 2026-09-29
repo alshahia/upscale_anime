@@ -25,10 +25,14 @@ class ModelDownloader:
     def download_url(self, url: str, dest_filename: str,
                      on_progress: Optional[Callable[[int, int], None]] = None,
                      on_done: Optional[Callable[[Path], None]] = None,
-                     on_error: Optional[Callable[[Exception], None]] = None) -> threading.Thread:
+                     on_error: Optional[Callable[[Exception], None]] = None,
+                     expected_sha256: str = None,
+                     cancel_event: Optional[threading.Event] = None) -> threading.Thread:
         def _run():
             try:
-                self.registry.download(url, dest_filename, on_progress=on_progress)
+                self.registry.download(url, dest_filename, on_progress=on_progress,
+                                       expected_sha256=expected_sha256,
+                                       cancel_event=cancel_event)
                 if on_done:
                     on_done(self.registry.pretrained_dir / dest_filename)
             except Exception as e:

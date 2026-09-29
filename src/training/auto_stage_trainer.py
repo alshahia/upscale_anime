@@ -337,10 +337,6 @@ class AutoStageTrainer:
             combined_metrics = {**train_metrics, **val_metrics}
             self.trainer.callbacks.on_epoch_end(epoch, combined_metrics)
             
-            # Update EMA model
-            if self.trainer.use_ema:
-                self.trainer._update_ema()
-            
             # Check early stopping if enabled
             if self.trainer.callbacks.should_stop():
                 print(f"\nEarly stopping triggered at epoch {epoch}")

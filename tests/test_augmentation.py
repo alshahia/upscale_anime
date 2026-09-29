@@ -247,7 +247,7 @@ class TestColorJitter(unittest.TestCase):
     
     def test_color_jitter_zero_factor(self):
         """Test that zero factor doesn't change image."""
-        jittered = apply_color_jitter(self.image, brightness=0.0, contrast=0.0)
+        jittered = apply_color_jitter(self.image, brightness=0.0, contrast=0.0, saturation=0.0)
         torch.testing.assert_close(jittered, self.image)
 
 

@@ -1,0 +1,54 @@
+
+=== hybrid_cascade_2x4x ===
+  query: hybrid super resolution cascade 2x 2x anime lightweight student + diffusion post-process 2024 2025 2026 real-time achievable
+  [0] ZHCSOFT/Real-CUGAN
+      url: https://github.com/ZHCSOFT/Real-CUGAN
+      HL: Real Cascade U-Nets for Anime Image Super Resolution ------------------------------------------- [ ... ](README_CHS.md)  Real-CUGAN is an AI super resolution model for anime images, trained in a million scale anime dataset, using the same architecture as Waifu2x-CUNet. It supports **2x, 3x, 4x** sup
+  [1] Image Upscaling | leejet/stable-diffusion.cpp | DeepWiki
+      url: https://deepwiki.com/leejet/stable-diffusion.cpp/6.3-image-upscaling
+      HL: stable-diffusion.cpp provides two primary methods for enhancing image quality and resolution: ... 1. ESRGAN (Enhanced Super-Resolution GAN): High-quality upscaling (typically 4x) using trained super-resolution models implemented via GGML. 2. TAESD/TAEHV (Tiny AutoEncoder): Lightweight alternative to
+  [2] Real-CUGAN/README_EN.md
+      url: https://github.com/bilibili/ailab/blob/main/Real-CUGAN/README_EN.md
+      HL: :fire: **Real-CUGAN**:fire: is an AI super resolution model for anime images, trained in a million scale anime dataset, using the same architecture as Waifu2x-CUNet. It supports **2x\3x\4x** super resolving. For different enhancement strength, now 2x Real-CUGAN supports 5 model weights, 3x/4x Real-C
+  [3] Adore
+      url: https://github.com/renarchi/Re-SISR/releases/tag/Adore
+      HL: Author: renarchi  License: CC BY-NC-SA 4.0  Purpose: Real time upscaler for 1080p anime  Subject: Anime  Input Type: Images  Date: 11.04.2026      Adore is a improved successor to the Fallin models and has been trained using the same architecture and purpose. There may be shuffle patterns visible in
+  [4] Kiteretsu77/APISR
+      url: https://github.com/kiteretsu77/apisr
+      HL: APISR: Anime Production Inspired Real-World Anime Super-Resolution (CVPR 2024) ... APISR is an image&video upscaler that aims at restoring and enhancing low-quality low-resolution anime images and video sources with various degradations from real-world scenarios.    [![Arxiv](https://img.shields.io/
+
+=== diffusion_anime_finetune ===
+  query: SeeSR SUPIR anime fine-tuned anime-specific diffusion super resolution 2025 cartoon illustration dataset results
+  [0] Fanghua-Yu/SUPIR
+      url: http://github.com/Fanghua-Yu/SUPIR
+      HL: SUPIR aims at developing Practical Algorithms for Photo-Realistic Image Restoration In the Wild. Our new online demo is also released at suppixel.ai. ... - Stars: 5571 - Forks: 468 - Watchers: 64 - Open issues: 117 - Primary language: Python - Languages: Python (97.6%), JavaScript (1.2%), HTML (0.9%
+  [1] APISR: Anime Production Inspired Real-World Anime Super-Resolution
+      url: https://openaccess.thecvf.com/content/CVPR2024/supplemental/Wang_APISR_Anime_Production_CVPR_2024_supplemental.pdf
+      HL: ## APISR: Anime Production Inspired Real-World Anime Super-Resolution ... In this supplementary ... , Sec. A first presents more statistics and details of our ... anime image SR training dataset. ... , Sec. B shows details about our implementations in super-resolution ( ... ) network train ... . Spe
+  [2] APISR: Anime Production Inspired Real-World ...
+      url: https://arxiv.org/html/2403.01598v1
+      HL: While real-world anime super-resolution (SR) has gained increasing attention in the SR community, existing methods still adopt techniques from the photorealistic domain. In this paper, we analyze the anime production workflow and rethink how to use characteristics of it for the sake of the real-worl
+  [3] Anime4K: A Hybrid CNN–Transformer Network for Anime Super-Resolution | SCIENCE@home
+      url: https://sah.borca.ai/papers/283045784
+      HL: Although anime super-resolution (SR) has garnered increasing interest in recent years, many existing approaches still inherit design principles from photorealistic imagery, overlooking the unique visual traits of anime. In this work, we revisit the anime SR task from an anime-specific perspective an
+  [4] cswry/SeeSR
+      url: https://github.com/cswry/SeeSR
+      HL: [CVPR2024] SeeSR: Towards Semantics-Aware Real-World Image Super-Resolution ... ## SeeSR: Towards Semantics-Aware Real-World Image Super-Resolution (CVPR2024) ... paper [VOSR](https://github.com/cswry/VOSR), a vision-only generative model for image super-resolution ... accepted by **CV ... - **2024.
+
+=== sota_2025_2026_sr ===
+  query: super resolution state of the art 2025 2026 latest publication OneRestore DiffIRv2 HAT-Lite RealPLKSR DAT2 anime quality
+  [0] One-Step Diffusion Transformer for Controllable Real-World Image Super-Resolution
+      url: https://openaccess.thecvf.com/content/CVPR2026/papers/Fang_One-Step_Diffusion_Transformer_for_Controllable_Real-World_Image_Super-Resolution_CVPR_2026_paper.pdf
+      HL: Recent advances in diffusion-based real-world image super resolution (Real-ISR) have demonstrated remarkable per ceptual quality, yet the balance between fidelity and con trollability remains a problem: multi-step diffusion-based methods suffer from generative diversity and randomness, resulting in 
+  [1] Kim2091/UltraSharpV2 · Hugging Face
+      url: https://huggingface.co/Kim2091/UltraSharpV2
+      HL: Kim2091/UltraSharpV2 · Hugging Face ... ## UltraSharpV2 ... Scale: 4 ... Architecture: DAT2 ... Purpose: Compression Removal, Dehalo, Denoise, General Upscaler, JPEG, Restoration ... Subject: AI Generated, Anime, Cartoon, CGI, Faces, Screenshots, Textures, Photography, Text ... Date: 5/23/25 ... Des
+  [2] Allo{SR}$^2$: Rectifying One-Step Super-Resolution to Stay Real via Allomorphic Generative Flows
+      url: https://doi.org/10.48550/arxiv.2604.19238
+      HL: Abstract. Real-world image super-resolution (Real-SR) has been rev olutionized by leveraging the powerful generative priors of large-scale diffusion and flow-based models. However, fine-tuning these models on limited LR-HR pairs often precipitates “prior collapse” that the model sacrifices its inher
+  [3] FiDeSR: High-Fidelity and Detail-Preserving One-Step Diffusion Super-Resolution
+      url: https://openaccess.thecvf.com/content/CVPR2026/papers/Kim_FiDeSR_High-Fidelity_and_Detail-Preserving_One-Step_Diffusion_Super-Resolution_CVPR_2026_paper.pdf
+      HL: Diffusion-based approaches have recently driven remark able progress in real-world image super-resolution (SR). However, existing methods still struggle to simultaneously preserve fine details and ensure high-fidelity reconstruction, often resulting in suboptimal visual quality. In this paper, we pr
+  [4] Bridging Fidelity-Reality with Controllable One-Step Diffusion for Image Super-Resolution
+      url: https://openaccess.thecvf.com/content/CVPR2026/papers/Chen_Bridging_Fidelity-Reality_with_Controllable_One-Step_Diffusion_for_Image_Super-Resolution_CVPR_2026_paper.pdf
+      HL: Recent diffusion-based one-step methods have shown re markable progress in the field of image super-resolution, yet they remain constrained by three critical limitations: (1) inferior fidelity performance caused by the information loss from compression encoding of low-quality (LQ) inputs; (2) insuff

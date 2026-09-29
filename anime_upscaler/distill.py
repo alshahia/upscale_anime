@@ -418,6 +418,8 @@ def main():
                     help="val minibatches per quick epoch-end eval")
     ap.add_argument("--resume", default=None,
                     help="path to student_last.pt/student_best.pt to continue training from")
+    ap.add_argument("--allow-pickle", action="store_true",
+                    help="allow pickle checkpoint loading (only use with trusted checkpoints)")
     ap.add_argument("--fresh-epoch", action="store_true",
                     help="when --resume is set, ignore the ckpt's epoch counter "
                          "and start at epoch 1. Use for warm-start from v1: "
@@ -647,8 +649,14 @@ def main():
     resume_from = 1
     best_psnr = -1.0  # sentinel; updated below if --resume, else first epoch's val_psnr wins.
     if args.resume:
-        rs = torch.load(args.resume, map_location=device,
-                        weights_only=False)
+        try:
+            rs = torch.load(args.resume, map_location=device, weights_only=True)
+        except Exception as e:
+            if not args.allow_pickle:
+                raise RuntimeError("Checkpoint requires pickle loading. Use --allow-pickle to allow. Only use with trusted checkpoints!")
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
+            rs = torch.load(args.resume, map_location=device, weights_only=False)
         # Phase 5 Rank #1 (2026-09-03): partial warm-start across architectures.
         # 'strict' (default) preserves the legacy Phase 2/3/4 contract: any
         # key/shape mismatch raises RuntimeError, surfacing bugs. 'partial'
@@ -1124,8 +1132,14 @@ def main():
                         shutil.move(str(f), str(archive / f.name))
 
     # ---- final held-out evaluation ----
-    best = torch.load(out_dir / "student_best.pt", map_location=device,
-                      weights_only=False)
+    try:
+        best = torch.load(out_dir / "student_best.pt", map_location=device, weights_only=True)
+    except Exception as e:
+        if not args.allow_pickle:
+            raise RuntimeError("Checkpoint requires pickle loading. Use --allow-pickle to allow. Only use with trusted checkpoints!")
+        import warnings
+        warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
+        best = torch.load(out_dir / "student_best.pt", map_location=device, weights_only=False)
     student.load_state_dict(best["student"])
     final = evaluate(student, teacher, test_dl, device)
     lines = ["| model | PSNR (dB) | SSIM |", "|---|---|---|"]

@@ -84,6 +84,10 @@ class AnimePairDataset(Dataset):
         ch = self.crop_hr
         cl = ch // self.scale
 
+        if w < ch or h < ch:
+            hr = hr.resize((max(w, ch), max(h, ch)), Image.BICUBIC)
+            w, h = hr.size
+
         if self.split == "train":
             x = random.randint(0, w - ch)
             y = random.randint(0, h - ch)

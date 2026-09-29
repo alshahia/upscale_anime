@@ -168,6 +168,49 @@ class MambaPANModel(BaseSRModel):
         
         return out, features
     
+    def forward_with_direction_features(self, x: torch.Tensor) -> tuple:
+        """
+        Forward with per-direction intermediate feature extraction (for directional FAKD).
+        
+        Unlike forward_with_features (which returns fused features), this collects each
+        directional scan's output at every feature extraction layer.
+        
+        Returns:
+            (output, direction_features)
+            - direction_features: Dict mapping direction ('h', 'v', 'rh', 'rv') to a
+              Dict mapping layer index to that direction's feature tensor
+        """
+        direction_features = {d: {} for d in ['h', 'v', 'rh', 'rv']}
+        
+        lr_upsampled = F.interpolate(x, scale_factor=self.scale, mode='bicubic', align_corners=False)
+        feat = self.shallow_conv(x)
+        
+        # Hierarchical Mamba Blocks
+        shortcut = feat
+        for i, block in enumerate(self.blocks):
+            # HMB with 4-direction scanning
+            hmb_out = block['hmb'](feat)
+            feat = hmb_out['fused']
+            
+            # Pixel attention
+            feat = block['pa'](feat)
+            
+            # Store per-direction features at specified layers
+            # (.contiguous(): fallback directional scans return flipped, non-contiguous
+            # tensors, which break .view() in the affinity loss)
+            if (i + 1) in self.feature_extraction_layers:
+                for direction in direction_features:
+                    direction_features[direction][i + 1] = hmb_out[direction].contiguous()
+        
+        feat = self.after_blocks_conv(feat)
+        feat = feat + shortcut
+        
+        out = self.upsample(feat)
+        out = out + lr_upsampled
+        out = torch.clamp(out, 0, 1)
+        
+        return out, direction_features
+    
     def get_direction_outputs(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Get outputs from all 4 directions before fusion.

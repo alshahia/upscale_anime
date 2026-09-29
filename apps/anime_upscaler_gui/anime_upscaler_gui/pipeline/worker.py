@@ -21,6 +21,7 @@ Phase A2 of the GUI extensibility refactor moved these out of the monolithic
 same: every name is re-exported from ``pipeline.__init__``.
 """
 import queue
+import subprocess
 import threading
 import time
 import traceback
@@ -53,6 +54,11 @@ from .tensors import (_PinnedPool, _downscale_if_needed, _resize_keep_ar,
                       _to_tensor_batch)
 
 _pinned = _PinnedPool()
+
+# AsyncReader queue depth per prefetch mode (job.prefetch is "sync" |
+# "async"). Kept in one place so the depth is tunable without touching
+# the call site.
+_PREFETCH_DEPTH = {"async": 8}
 
 
 # Q2 (perf/queue-controls-gpu-codec): internal exception used to bail out
@@ -204,20 +210,29 @@ class PipelineWorker(threading.Thread):
         _run_image. Cancel is applied immediately (raises
         _JobCancelled). Pause/resume just adjust the per-job event --
         the actual blocking happens in _check_pause().
+
+        Drains the whole queue (not just up to the first foreign event),
+        applies the ones for `job_id`, and puts the rest back in their
+        original order -- control events are FIFO per sender, and the
+        worker only cares about its current job.
         """
-        while True:
-            try:
-                evt = self.ctl_queue.get_nowait()
-            except queue.Empty:
-                return
+        pending = []
+        try:
+            while True:
+                pending.append(self.ctl_queue.get_nowait())
+        except queue.Empty:
+            pass
+        cancel = False
+        for evt in pending:
             if evt.job_id != job_id:
-                # Put it back -- it's for a different (probably future)
-                # job. Order matters: control events are FIFO per sender
-                # but the worker only cares about its current job.
+                # For a different (probably future) job: preserve order.
                 self.ctl_queue.put(evt)
-                return
+                continue
             if evt.kind == "cancel":
-                raise _JobCancelled()
+                # Raise after the loop so events queued behind this one
+                # still get put back.
+                cancel = True
+                continue
             if evt.kind == "pause":
                 # Make sure a paused event exists for this job.
                 self._pause_events.setdefault(job_id, threading.Event())
@@ -229,6 +244,8 @@ class PipelineWorker(threading.Thread):
                     ev.set()
                 self.emit(JobEvent(kind="log", job_id=job_id,
                                     message="resumed by user"))
+        if cancel:
+            raise _JobCancelled()
 
     def _check_pause(self, job_id: int) -> None:
         """Block the worker on the per-job pause event until resume.
@@ -497,16 +514,11 @@ class PipelineWorker(threading.Thread):
             cap = cv2.VideoCapture(str(job.input_path))
             if start_frame > 0:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-            new_sync_reader = _Cv2Reader.__new__(_Cv2Reader)
-            new_sync_reader.path = str(job.input_path)
-            new_sync_reader.cap = cap
-            new_sync_reader.fps = fps
-            new_sync_reader.total = total
-            new_sync_reader.w = w
-            new_sync_reader.h = h
+            new_sync_reader = _Cv2Reader.from_cap(
+                cap, job.input_path, fps, total, w, h)
             async_inner = new_sync_reader
         if job.prefetch == "async":
-            sync_reader = _AsyncReader(async_inner, prefetch=8)
+            sync_reader = _AsyncReader(async_inner, prefetch=_PREFETCH_DEPTH.get(job.prefetch, 8))
             sync_reader.start(max_frames=limit)
         else:
             sync_reader = new_sync_reader
@@ -626,6 +638,11 @@ class PipelineWorker(threading.Thread):
                         skip_remaining = True
                         continue
                     if action == ABORT_JOB:
+                        # A user cancel that arrived while the frame-error
+                        # modal was up is re-queued by the GUI's wait loop;
+                        # drain here so the job unwinds as a clean cancel
+                        # instead of a worker crash.
+                        self._drain_ctl_for_job(job.job_id)
                         raise e
                     if action == RETRY_FRAME:
                         continue
@@ -660,7 +677,13 @@ class PipelineWorker(threading.Thread):
         finally:
             if use_pipe:
                 pipe.stdin.close()
-                pipe.wait()
+                try:
+                    pipe.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    # Encoder wedged (e.g. NVENC session hang): kill it so
+                    # the worker thread doesn't block forever.
+                    pipe.kill()
+                    pipe.wait()
             else:
                 writer.release()
             sync_reader.release()
@@ -840,6 +863,8 @@ def _batched(it, batch_size: int, limit: int):
             batch = []
         if limit and consumed >= limit:
             break
+    if batch:
+        yield consumed - len(batch), batch[0] if batch_size == 1 else batch
 
 
 def _find_ckpt(job: RunJob) -> Path:

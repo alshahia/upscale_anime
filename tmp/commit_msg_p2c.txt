@@ -1,0 +1,43 @@
+Phase 2.C: v2_2x student trained; cascade measurement (negative result)
+
+Train v2 2x student and confirm cascade plumbing end-to-end. Cascade
+mode is functional, but the 1.5-2x speed-up hypothesis from Phase 2
+planning was wrong: cascading the same RFDN architecture 2x+2x is
+MEASURED SLOWER than single 4x because the body convolutions at stage
+2 operate on 4x more pixels -- the late-stage compute dominates.
+
+Code changes:
+- anime_upscaler/distill.py : re-enable teacher response distillation
+  at scale=2 by bicubic-upsampling the student output to the teacher's
+  4x scale before Charbonnier. Improves single 2x pass test PSNR from
+  33.52 dB to 33.71 dB (v3 retrained at 30 epochs).
+- apps/.../trt_engine.py : _TrtBackend now exposes self.model (mirror
+  of _PyTorchBackend) so the cascade helper can read backend.model.scale
+  uniformly across backends. Without this, _TrtBackend raised
+  'object has no attribute model'.
+- apps/.../pipeline.py : _OnnxBackend(model=...) accepts an optional
+  model reference for the same reason (parallel symmetry, even though
+  the current _make_backend path falls through to PyTorch).
+
+Measurements (E2E bench on .venv/test_4k_540p_input.mp4):
+  Test eval (val, bicubic 4x floor / single 4x / cascade 2x2x):
+    bicubic 4x    : 30.28 dB
+    single 4x     : 30.10 dB
+    cascade 2x2x  : 28.71 dB (-1.39 dB -- beyond 0.3 dB tolerance)
+  E2E fps (PyTorch cascade, batch=1, RTX 4000):
+    pt_b1_nvenc_cascade : 2.86 fps @ 4K, infer 310 ms/frame
+    pt_b4_nvenc_cascade : 2.15 fps @ 4K, infer 1442 ms/4 frames
+  Compared to single 4x Phase 1 baseline:
+    trt_b1_nvenc (single 4x) : 18.80 fps @ 4K
+
+Cascade is FUNCTIONALLY CORRECT but **fails on both axes** (worse PSNR
+*and* worse FPS). The premise that two 2x stages would be cheaper than
+one 4x stage was wrong for RFDN's body-heavy architecture.
+
+Out of scope for this commit:
+  * Speed-side: the 30 fps @ 4K goal still needs a different approach
+    (CUDA graphs on the existing 4x model, NVDEC decode, smaller input
+    via downscale_max_edge, etc.).
+  * Quality-side: cascade could close the 1.4 dB gap by adding stage-2
+    fine-tuning (Option 2 from Phase 2 plan) but only if speed matters
+    less than quality.

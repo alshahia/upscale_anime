@@ -1,0 +1,15 @@
+backend,ckpt,clipiqa_mean,clipiqa_std,device,encode_s,fps_1_over_mean,fps_throughput,infer_total_s,kind,load_s,lr_in,max_ms,mean_ms,min_ms,model_id,ms_std,n_frames,niqe_mean,niqe_n,p95_ms,params,peak_vram_GB,scale,size_mb,sr_out,status,warm_s
+pytorch-fp16,4xLSDIRCompactv2.pth,0.73,0.0,cuda-RTX4000-ac,5.02,23.87,23.87,3.77,srvgg,0.16,854x480,46.52,41.9,40.58,4xLSDIRCompactv2,0.86,90,7.04,8,42.96,621424,0.4,4,,3416x1920,ok,0.63
+,,,,,,,,,animesr,,,,,,AnimeSR_v1-PaperModel,,,,,,,,,,,failed: warmup failed: NotImplementedError('Padding size 4 is not supported for 5D input tensor.\nSupported combinations for non-constant padding:\n  - 2D or 3D input: padding size = 2 (pads last dimension)\n  - 3D or 4D input: padding size = 4 (pads last 2 dimensions)\n  - 4D or 5D input: padding size = 6 (pads last 3 dimensions)'),
+,,,,,,,,,animesr,,,,,,AnimeSR_v2,,,,,,,,,,,failed: warmup failed: NotImplementedError('Padding size 4 is not supported for 5D input tensor.\nSupported combinations for non-constant padding:\n  - 2D or 3D input: padding size = 2 (pads last dimension)\n  - 3D or 4D input: padding size = 4 (pads last 2 dimensions)\n  - 4D or 5D input: padding size = 6 (pads last 3 dimensions)'),
+pytorch-fp16,eranet_N12_pretrain_325k.pth,0.57,0.0,cuda-RTX4000-ac,1.64,64.08,64.08,1.4,era,0.2,854x480,16.86,15.6,15.44,eranet_N12_pretrain_325k,0.18,90,10.96,8,15.83,658700,0.33,2,,1708x960,ok,0.45
+pytorch-fp16,realesr-animevideov3.pth,0.52,0.0,cuda-RTX4000-ac,5.23,23.84,23.84,3.78,srvgg,0.13,854x480,47.43,41.95,40.74,realesr-animevideov3,0.84,90,8.64,8,42.88,621424,0.4,4,,3416x1920,ok,0.63
+pytorch-fp16,RFDN_distill_v1_4x_student.pth,0.33,0.0,cuda-RTX4000-ac,4.78,16.93,16.93,5.32,rfdn_student,0.14,854x480,61.19,59.06,58.36,RFDN_distill_v1_4x_student,0.46,90,8.52,8,59.79,315844,0.51,4,,3416x1920,ok,0.99
+pytorch-fp16,RFDN_distill_v2_2x_student.pth,0.43,0.0,cuda-RTX4000-ac,1.43,18.77,18.77,4.79,rfdn_student,0.14,854x480,56.46,53.27,52.25,RFDN_distill_v2_2x_student,0.71,90,7.17,8,54.35,298960,0.51,4,,1708x960,ok,1.06
+pytorch-fp16,span_mssim_pretrain_4x.pth,0.55,0.0,cuda-RTX4000-ac,5.38,21.52,21.52,4.18,span,0.22,854x480,49.72,46.47,45.31,span_mssim_pretrain_4x,0.81,90,5.97,8,48.13,2236731,0.73,4,,3416x1920,ok,0.66
+pytorch-fp16,span_pix_pretrain_4x.pth,0.57,0.0,cuda-RTX4000-ac,8.94,21.67,21.67,4.15,span,0.22,854x480,50.66,46.14,45.15,span_pix_pretrain_4x,0.73,90,6.31,8,46.87,2236731,0.73,4,,3416x1920,ok,0.63
+pytorch-fp16,SRVGG_distill_v1_4x_student.pth,0.33,0.0,cuda-RTX4000-ac,5.1,20.22,20.22,4.45,srvgg_student,0.12,854x480,205.17,49.45,33.21,SRVGG_distill_v1_4x_student,37.32,90,6.96,8,146.34,317300,0.37,4,,3416x1920,ok,0.48
+,E:\python projects\upscale_anime\pretrained\EDSR_x4.pt,,,,,,,,?,,,,,,EDSR_x4,,,,,,,,,6.1,,skipped-unsupported-arch,
+,E:\python projects\upscale_anime\pretrained\RCAN_x4.pt,,,,,,,,?,,,,,,RCAN_x4,,,,,,,,,63.03,,skipped-unsupported-arch,
+,E:\python projects\upscale_anime\pretrained\SwinIR_x4.pt,,,,,,,,?,,,,,,SwinIR_x4,,,,,,,,,59.61,,skipped-unsupported-arch,
+PIL-bicubic (CPU),,0.62,,cpu,,12.0,,,cpu-resize,,,,83.494,,bicubic_ref,,90,7.96,,,,,4,,3416x1920,ok,

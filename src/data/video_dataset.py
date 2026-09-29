@@ -585,8 +585,10 @@ class VideoDataset(Dataset):
         hr = self._get_cached_frame(idx)
 
         if hr is None:
-            # Return a blank frame if extraction failed
-            hr = np.zeros((self.crop_size, self.crop_size, 3), dtype=np.uint8)
+            raise RuntimeError(
+                f"VideoDataset: failed to extract frame at idx {idx} "
+                f"(video_idx, frame_pos)={self.frame_index[idx]}"
+            )
 
         # Degrade via the shared PreprocessingManager if attached (Issue #12).
         if self.preprocessing_manager is not None:

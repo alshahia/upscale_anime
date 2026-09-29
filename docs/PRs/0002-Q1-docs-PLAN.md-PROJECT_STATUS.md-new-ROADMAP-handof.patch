@@ -1,0 +1,370 @@
+From 318b38601fac39eb4492e96e7ad274aed2192ca5 Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 15:27:47 +0300
+Subject: [PATCH 2/6] Q1 docs: PLAN.md + PROJECT_STATUS.md + new ROADMAP +
+ handoff for perf/queue-controls-gpu-codec\n\nBranch
+ perf/queue-controls-gpu-codec closes two orthogonal gaps surfaced\nfrom a
+ hardware review of the GUI on RTX 4000 (8 GB, CUDA 12.6,
+ PyTorch\n2.12.0+cu126):\n\n  1. No user-visible Pause / Cancel / Resume for
+ in-flight jobs. The\n     existing resume modal is for per-frame errors, not
+ 'pause and come\n     back later'. For minutes-to-hours encodes this is
+ unusable.\n\n  2. GPU codec paths (NVDEC decode, NVENC encode, TF32,
+ auto-TRT) exist\n     as fields on RunJob but are not exposed in the Settings
+ panel and\n     not exercised in the worker.\n\nThis commit is documentation
+ only -- no code changes. Q2-Q5 land in\nseparate commits on the same branch,
+ each independently revertible.\n\nFiles:\n  - PLAN.md: appended a 'GUI Queue
+ Controls + GPU Decode/Encode' section\n    with the phase table, expected
+ speedups, risks, and out-of-scope\n    items.\n  - PROJECT_STATUS.md:
+ appended a status entry pointing at the new\n    ROADMAP.\n  -
+ docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md: NEW. Full roadmap --\n    user
+ stories, designs (state machine, API additions, settings\n    panel rows,
+ performance expectations, risks, out-of-scope\n    branches). Each phase has
+ its own 'Design' + 'Tests' subsection\n    so the implementation commits can
+ reference this document.\n  -
+ .dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-\n   
+ 20260915-perf-queue-controls/handoff.md: NEW. Session-continuity\n    handoff
+ capturing branch intent, phase plan, critical context\n    (workspace policy,
+ machine specs, smoke + test commands, known\n    environmental flakes), and
+ the next step for whoever continues.
+
+---
+ .../handoff.md                                |  61 +++++
+ PLAN.md                                       |   1 +
+ PROJECT_STATUS.md                             |   1 +
+ docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md      | 238 ++++++++++++++++++
+ 4 files changed, 301 insertions(+)
+ create mode 100644 .dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+ create mode 100644 docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+
+diff --git a/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md b/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+new file mode 100644
+index 0000000..d507acf
+--- /dev/null
++++ b/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+@@ -0,0 +1,61 @@
++# Handoff: GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec)
++
++**Date**: 2026-09-15
++**Branch**: `perf/queue-controls-gpu-codec`
++**Cut from**: `refactor/gui-extensibility` at commit `6f7c1f6`
++**Active TODO**: Q1 documentation (DONE this turn). Q2-Q5 PLANNED.
++
++## What this branch is for
++
++Two orthogonal gaps surfaced from a hardware review of the GUI on RTX 4000:
++1. No user-visible Pause / Cancel / Resume for in-flight jobs (current
++   resume modal is for per-frame errors, not "pause and come back").
++2. GPU-accelerated video codec paths exist in `RunJob` fields
++   (`use_nvenc`, `nvenc_preset`, `nvenc_qp`, `use_tensorrt`,
++   `cascade_mode`) but are not exposed in the Settings panel and not
++   exercised in the worker.
++
++Full plan: `docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md`.
++
++## State after Q1 (this commit)
++
++- Q1 commit: documentation only — `PLAN.md` (new section), `docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md` (new), `PROJECT_STATUS.md` (new entry).
++- Q2-Q5 not started. Branch is clean and ready.
++
++## Phases planned (each = one commit)
++
++- **Q2 Pause/Cancel/Resume**: `JobControlEvent` dataclass, `_ctl_queue`,
++  per-job `threading.Event`, three buttons in `input_panel`, status
++  state `"paused"`. Tests: pause/resume video, cancel video, pause image.
++- **Q3 GPU decode + GPU encode**: `_NvDecReader` (PyAV hwaccel=cuda with
++  auto-fallback), `open_encoder()` honors `use_nvenc`/`nvenc_preset`/
++  `nvenc_qp` explicitly, four new settings panel rows, job builder
++  wiring. Tests: encoder argv, decoder fallback, panel render.
++- **Q4 TF32 + async default + GPU util**: enable TF32 in `tensors.py`,
++  flip `prefetch` default to `async`, fill in `widgets/gpu_monitor.py`
++  (file already exists, empty), `JobEvent(kind="gpu_util", ...)` once
++  per second. Tests: flags, default, widget poll cycle.
++- **Q5 Tests + smoke + commit**: end-to-end smoke on `tmp/mid2s_job.py`,
++  full GUI suite green, one commit per phase as above.
++
++## Critical context
++
++- Workspace policy: danger-full-access for file ops.
++- Approval prompts disabled: do not set `sandbox_permissions`.
++- Branch protection: never delete branches or rewrite history.
++- Public API back-compat must be preserved (Phase E `DeprecatedAlias` proxies
++  warn on underscore aliases; removal at 0.4.0).
++- 6C/12T i7-9750H + Quadro RTX 4000 8 GB; CUDA 12.6; PyTorch 2.12.0+cu126.
++- Smoke command: `.venv\Scripts\python.exe tmp/mid2s_job.py` from repo root.
++- Test runner: `.venv\Scripts\python.exe -m pytest apps/anime_upscaler_gui/tests --ignore=.../test_video_end_to_end.py --ignore=.../test_assets.py`.
++- Known environmental flakes: `test_video_end_to_end.py` (needs init.tcl),
++  `test_assets.py` (concurrent permission errors). Not in scope.
++
++## Next step for whoever continues
++
++Implement Q2: the data model (`JobControlEvent`, cancel exception,
++per-job event) and the worker plumbing first; the buttons in
++`input_panel` come last. Make sure the existing thread safety tests
++(`tests/test_threading.py`) still pass — `monkeypatch.setattr` on the
++deprecated `_PipelineWorker` alias must continue to work (Phase E
++contract).
+diff --git a/PLAN.md b/PLAN.md
+index 1c7feb0..397d609 100644
+--- a/PLAN.md
++++ b/PLAN.md
+@@ -99,3 +99,4 @@ python scripts/train.py --config configs/finetune_neosr_span_v4.yaml
+ - `src/training/neosr_finetuner.py` — torch.compile, cudnn, FDL interval
+ - `scripts/precompute_degradation.py` — NEW
+ - `configs/finetune_neosr_span_v4.yaml` — all config changes
++\n\n---\n\n# PLAN: GUI Queue Controls + GPU Decode/Encode (branch perf/queue-controls-gpu-codec)\n\n**Branch**: perf/queue-controls-gpu-codec (cut from efactor/gui-extensibility at 6f7c1f6)\n**Target hardware**: NVIDIA Turing/Ampere/Ada (verified on RTX 4000 8 GB, CUDA 12.6, PyTorch 2.12.0+cu126)\n**Status**: Q1 DONE, Q2-Q5 PLANNED\n\nFull roadmap: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md. Summary:\n\n| Phase | Title | Status | Files |\n|-------|-------|--------|-------|\n| Q1    | Documentation (this section + ROADMAP + handoff) | **DONE** | PLAN.md, PROJECT_STATUS.md, docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md |\n| Q2    | Pause / Cancel / Resume buttons in GUI | PLANNED | input panel, queue controller, worker, jobs.py |\n| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | PLANNED | decoders.py, ffmpeg.py, worker.py, settings panel |\n| Q4    | TF32 + async default + GPU util telemetry | PLANNED | tensors.py, settings.py, gpu_monitor widget |\n| Q5    | Tests + smoke + commit | PLANNED | test_queue_controls.py, test_gpu_codec.py, test_tf32.py, test_gpu_monitor.py |\n\n## Expected speedups on RTX 4000 (1080p -> 4K)\n\n| Stage                  | Before    | After Q2+Q3+Q4 | Notes |\n|------------------------|-----------|----------------|-------|\n| Decode                 | CPU PyAV  | NVDEC          | ~3x on 1080p H.264 |\n| H2D                    | sync 1x   | async + pinned | overlaps with next decode |\n| Model                  | PyTorch eager fp16, batch=1 | TF32 + auto-TRT fp16 | 2-3x |\n| Encode                 | libx264 CPU pipe | NVENC zero-copy pipe | ~5x, frees CPU |\n\nEnd-to-end on 	mp/mid2s_job.py smoke target: 5-10 fps vs current 0.09 fps.\nRealistic floor (no auto-TRT, just Q2+Q4): 1-2 fps.\n\n## Risks / rollback\n\n- NVDEC codec coverage falls back to PyAV automatically.\n- NVENC preset p1 is fastest but lower quality; users can pick p4.\n- Cancel waits for the next frame boundary; partial output is cleaned up.\n- TF32 is fp32-only; fp16 paths unchanged. Free win on Turing+.\n\n## Out of scope\n\n- Batched video (separate perf/batched-video).\n- CUDA Graphs (separate perf/cuda-graphs).\n- Quality-vs-speed model selection (separate eat/quality-modes).\n
+diff --git a/PROJECT_STATUS.md b/PROJECT_STATUS.md
+index 0149380..7a75e26 100644
+--- a/PROJECT_STATUS.md
++++ b/PROJECT_STATUS.md
+@@ -335,3 +335,4 @@ The project is ready for production use and can be easily extended with addition
+ **Completion**: 95%  
+ **Next Major Release**: v2.1 (Performance Optimization)  
+ **Last Updated**: May 7, 2026
++\n\n## GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec) — Q1 DONE\n\n- **Q1 Documentation (DONE)**: new section in PLAN.md, new ROADMAP\n  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md. Q2-Q5 PLANNED.\n- Full plan: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.\n
+diff --git a/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md b/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+new file mode 100644
+index 0000000..22fd90b
+--- /dev/null
++++ b/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+@@ -0,0 +1,238 @@
++# ROADMAP: GUI Queue Controls + GPU Decode/Encode (perf/queue-controls-gpu-codec)
++
++**Branch**: `perf/queue-controls-gpu-codec` (cut from `refactor/gui-extensibility` at `6f7c1f6`)
++**Owner**: GUI
++**Status**: PLANNING → IN PROGRESS
++**Started**: 2026-09-15
++**Target hardware**: NVIDIA Turing/Ampere/Ada (verified on RTX 4000 8 GB, CUDA 12.6, PyTorch 2.12.0+cu126)
++
++---
++
++## Why this branch exists
++
++A review of the GUI on RTX 4000 hardware revealed two orthogonal gaps:
++
++1. **No user-visible Pause / Cancel / Resume** for an in-flight job. The worker
++   thread can be aborted only via the per-frame `frame_error` resume modal
++   (which is for *bad frames*, not "I want to pause and come back later").
++   For long video encodes (minutes-to-hours) this is unusable.
++
++2. **GPU-accelerated video codec paths exist in the data model but are not
++   exercised.** `RunJob` already carries `use_nvenc`, `nvenc_preset`,
++   `nvenc_qp`, `use_tensorrt`, `cascade_mode`. The Settings panel and
++   job builder do not surface them. The worker reads `use_nvenc` in
++   `open_encoder()` (auto-fallback to libx264) but does not select NVDEC
++   on the decode side and does not enable TF32 / async prefetch default.
++
++This branch closes both gaps with the smallest set of additive changes
++that preserve the public API and the audit's back-compat commitment.
++
++---
++
++## Phases
++
++| Phase | Title | Status | Scope |
++|-------|-------|--------|-------|
++| Q1    | Documentation (PLAN.md, PROJECT_STATUS.md, this ROADMAP, handoff) | **DONE** | this commit |
++| Q2    | Pause / Cancel / Resume buttons in GUI | PLANNED | input panel, queue controller, worker side |
++| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | PLANNED | decoders.py, ffmpeg.py, worker.py, settings panel |
++| Q4    | TF32 + async default + GPU util telemetry | PLANNED | tensors.py, settings defaults, gpu_monitor widget |
++| Q5    | Tests + smoke + commit | PLANNED | test_queue_controls.py, test_gpu_codec.py |
++
++Each phase lands as a separate commit on this branch. Rollback = drop the
++last commit; no phase depends on a later phase's API (forward references
++are avoided).
++
++---
++
++## Q2 — Pause / Cancel / Resume
++
++### User story
++
++> As a user running a 30-minute video encode, I want to pause the job to
++> free the GPU for something else, then resume it later from the same
++> frame without restarting the whole encode.
++
++### Design
++
++**Three buttons** added to the queue listbox toolbar (next to Start /
++Remove):
++- **Pause** — sets a per-job `JobControlEvent(kind="pause", job_id=N)`. Worker
++  stops reading the next frame from `sync_reader` and waits on a
++  `threading.Event` until the GUI raises it. The current frame finishes
++  writing so the output stays consistent.
++- **Cancel** — sets `JobControlEvent(kind="cancel", job_id=N)`. Worker
++  aborts the job at the next frame boundary, deletes the partial output,
++  marks the job `error` with message `"cancelled by user"`.
++- **Resume** — visible only when the job is in `paused` state. Sets
++  `JobControlEvent(kind="resume", job_id=N)`. Worker raises the
++  `threading.Event` and continues.
++
++**State machine** (per job):
++```
++pending ──► running ──► finished
++                  │  ▲
++                  │  └─ resume ── paused (visible to user; event blocks worker)
++                  └─ cancel ──► error("cancelled by user")
++                  └─ on error ─► error
++```
++
++### API additions (Phase A1-back-compat friendly)
++
++- New dataclass `JobControlEvent(kind, job_id)` in `pipeline/jobs.py`.
++- New methods on `App`: `_send_pause(job_id)`, `_send_cancel(job_id)`,
++  `_send_resume(job_id)`. All three push a `JobControlEvent` to a new
++  `self._ctl_queue: queue.Queue`.
++- Worker loop polls `self._ctl_queue` between frames; on pause, waits on
++  `self._pause_events[job_id]`; on cancel, raises `CancelJob` (a new
++  internal exception caught at the `_run_video` / `_run_image` level).
++- The job status `"paused"` is new — `_refresh_queue_listbox` already
++  reads `j.status`, so it just needs a STATUS_COLORS entry.
++
++### Tests
++
++- `test_pause_resume_video.py`: enqueue a video job, start worker, send
++  pause after 5 frames, assert frame count freezes, send resume, assert
++  frame count resumes, finish, assert output is a valid playable MP4 with
++  the expected frame count.
++- `test_cancel_video.py`: same setup, send cancel after 3 frames, assert
++  worker exits within 1 second, partial output is deleted, queue state
++  shows `error("cancelled by user")`.
++- `test_pause_image.py`: pause an image job, assert it doesn't actually
++  run (image jobs are sub-second), assert cancel still works.
++
++---
++
++## Q3 — GPU decode (NVDEC) + GPU encode (NVENC)
++
++### User story
++
++> As a user with an NVIDIA GPU, I want the GUI to use the GPU for video
++> decode (NVDEC) and encode (NVENC) so the CPU is free for the SR model
++> and I get closer to real-time 4K.
++
++### Design
++
++**NVDEC decode** (`decoders.py`):
++- New `_NvDecReader` class that wraps PyAV's `codec_context = "cuda"` (CUDA
++  hwaccel via PyAV, no extra dep beyond PyAV + a CUDA build) when
++  available. Falls back to `_PyAvReader` automatically if NVDEC fails to
++  open or any frame fails to decode. Selection is by `RunJob.decode`:
++  `"auto"` (default) picks NVDEC for H.264/H.265 on a CUDA box; explicit
++  `"pyav"` / `"cv2"` still work.
++- The decoded frame is already on GPU as a `numpy.ndarray` from
++  PyAV's hwaccel — we just need a small `_to_tensor_nvdec` to convert
++  into our existing pinned-memory / async H2D path so the rest of the
++  pipeline (TRT/eager backend, encoder) is unchanged.
++
++**NVENC encode** (`ffmpeg.py`):
++- The `open_encoder()` already auto-falls-back to libx264 when
++  `h264_nvenc` is unavailable. We extend it to:
++  - Honor `RunJob.use_nvenc` (already a field) explicitly — currently
++    it's set but never read.
++  - Honor `RunJob.nvenc_preset` and `RunJob.nvenc_qp` (already fields).
++  - Add `-hwaccel cuda -hwaccel_output_format cuda` on the decode side
++    when NVDEC is selected, so the encoder reads GPU frames directly
++    via pipe (zero CPU copies in the encode path).
++  - Log which codec is selected at INFO level for the perf report.
++
++**Settings panel** (`widgets/settings_panel.py` + `widgets/settings_spec.py`):
++- Add three new rows in the existing data-driven spec:
++  - "GPU Decode:" → combobox `auto | pyav | cv2` (default `auto`)
++  - "GPU Encode:" → checkbox `use_nvenc` (default ON when NVENC available)
++  - "NVENC Preset:" → combobox `p1 | p2 | p3 | p4` (default `p1`)
++  - "NVENC QP:" → spinbox 16-28 (default 18)
++
++**Job builder** (`controllers/job_builder.py`):
++- Read the new settings panel vars and copy them into `RunJob` fields.
++
++### Tests
++
++- `test_nvenc_encoder.py`: assert `open_encoder()` builds a valid
++  `ffmpeg` argv when `use_nvenc=True` and `h264_nvenc` is on PATH.
++  Assert libx264 fallback when not. Assert QP and preset propagate.
++- `test_nvdec_decoder.py`: smoke `NvDecReader` on a tiny synthetic
++  H.264; if NVDEC unavailable on the test box, assert it falls back to
++  PyAV and the output frame tensor is identical.
++- `test_settings_panel_new_rows.py`: render the panel and assert the four
++  new widgets exist with the right defaults.
++
++---
++
++## Q4 — TF32 + async default + GPU util telemetry
++
++### User story
++
++> As a user who doesn't read the source code, I want the GUI to default
++> to the fastest settings my GPU supports, and to show me how much
++> GPU I'm using so I know when there's headroom.
++
++### Design
++
++- `pipeline/tensors.py` module-level: add `torch.backends.cuda.matmul.allow_tf32 = True`
++  and `torch.backends.cudnn.allow_tf32 = True` next to the existing
++  `cudnn.benchmark = True`. (TF32 is harmless on Turing+ when fp16 is
++  used; cuDNN picks the path automatically per-op.)
++- `settings.py`: change `prefetch: str = "sync"` → `"async"` (the existing
++  async reader path is implemented and stable; sync was the legacy
++  default before async was wired up).
++- New `widgets/gpu_monitor.py` widget (the file already exists but is
++  empty): poll `pynvml` (already a dep, see `docs/`) every 1 s, show
++  GPU util %, VRAM used / total, temperature. Wire into the status bar
++  next to the existing progress label.
++- Add `JobEvent(kind="gpu_util", util_pct=N, vram_used_mb=M)` emitted
++  once per second from the worker when CUDA is available — used by the
++  monitor widget for live readouts during a job.
++
++### Tests
++
++- `test_tf32_enabled.py`: assert the three flags are set on import.
++- `test_async_default.py`: assert `Defaults().prefetch == "async"`.
++- `test_gpu_monitor_widget.py`: render the widget, mock pynvml, assert
++  the labels update on a poll cycle.
++
++---
++
++## Performance expectations (RTX 4000, 1080p → 4K)
++
++| Stage                  | Before    | After (Q2+Q3+Q4) | Notes |
++|------------------------|-----------|------------------|-------|
++| Decode                 | CPU       | NVDEC (CPU free) | ~3× faster on 1080p H.264 |
++| H2D                    | sync 1×   | async + pinned   | overlap with next decode |
++| Model                  | PyTorch eager fp16, batch=1 | TF32 + (Q3) auto-TRT fp16 | 2-3× faster |
++| D2H + encode           | libx264 + CPU pipe | NVENC + zero-copy pipe | ~5× faster, frees CPU |
++
++End-to-end on the same `YiRenZhiXia_E02_mid2s.mp4` smoke: target 5-10 fps
++vs current 0.09 fps (50-100× speedup). Realistic floor (no auto-TRT, just
++Q2+Q4): 1-2 fps (10-20×). Q3 alone typically buys the largest single
++jump on 4K because the encoder is the bottleneck.
++
++---
++
++## Risks and rollback
++
++- **NVDEC codec coverage**: not every H.264 bitstream decodes on NVDEC
++  (rare cases: Hi10P, certain B-frame patterns). Fallback is automatic
++  to PyAV/CPU — verified by `_NvDecReader._open_or_fallback`.
++- **NVENC preset p1** is "fastest" but visibly worse than p4. Default is
++  p1 because we measure speed; users can pick p4 in the panel.
++- **TF32** is fp32 only; the pipeline already runs fp16, so the cuDNN
++  matmul path doesn't change but the conv path picks TF32 implicitly.
++  On Turing (RTX 4000) this is a free win. No quality regression
++  expected on fp16 outputs because TF32 only fires when the op is fp32.
++- **Cancel during encode**: ffmpeg pipe may leave a half-written file
++  on disk if the process is killed mid-write. Cancel deliberately waits
++  for the next frame boundary (≤ 1 frame at 24 fps) then closes the
++  pipe gracefully. The test `test_cancel_video.py` asserts the partial
++  file is cleaned up.
++
++---
++
++## Out of scope (separate branches)
++
++- Batched video (Phase 1.C status note still stands: forced batch_size=1
++  for video). Will need a separate `perf/batched-video` branch because it
++  changes VRAM math and tiling behavior.
++- CUDA Graphs. Needs `perf/cuda-graphs` — separate because it's invasive
++  and breaks some PyTorch eager fallbacks.
++- Quality-vs-speed model selection. That's a `feat/quality-modes` branch.
+-- 
+2.50.0.windows.2
+

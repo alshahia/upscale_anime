@@ -90,8 +90,10 @@ class PrecomputedDataset(Dataset):
         lr_path = self.lr_files[idx]
         hr_path = self.hr_files[idx]
 
-        lr = np.array(Image.open(lr_path)).astype(np.float32) / 255.0
-        hr = np.array(Image.open(hr_path)).astype(np.float32) / 255.0
+        with Image.open(lr_path) as img:
+            lr = np.array(img).astype(np.float32) / 255.0
+        with Image.open(hr_path) as img:
+            hr = np.array(img).astype(np.float32) / 255.0
 
         lr, hr = self._augment(lr, hr)
 

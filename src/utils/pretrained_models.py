@@ -2,6 +2,7 @@
 Pretrained model downloader for teacher models.
 Downloads EDSR, RCAN, and SwinIR models from reliable sources.
 """
+import json
 import os
 import torch
 import urllib.request
@@ -13,7 +14,12 @@ from tqdm import tqdm
 # Model URLs from reliable sources
 # EDSR/RCAN: HuggingFace (eugenesiow) - PyTorch format
 # SwinIR: Official GitHub releases
-MODEL_URLS: Dict[str, Dict[str, str]] = {
+#
+# Defaults can be overridden without editing source code via the
+# ANIME_SR_MODEL_URLS environment variable, which must contain a JSON object
+# mapping model names to {scale: url} mappings, e.g.:
+#   {"edsr": {"x2": "https://mirror.example.com/edsr_x2.pt"}}
+_DEFAULT_MODEL_URLS: Dict[str, Dict[str, str]] = {
     "edsr": {
         "x2": "https://huggingface.co/eugenesiow/edsr-base/resolve/main/pytorch_model_2x.pt",
         "x3": "https://huggingface.co/eugenesiow/edsr-base/resolve/main/pytorch_model_3x.pt",
@@ -31,6 +37,43 @@ MODEL_URLS: Dict[str, Dict[str, str]] = {
         "x4": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x4.pth",
     },
 }
+
+
+def _load_model_urls() -> Dict[str, Dict[str, str]]:
+    """Build the model URL table, applying environment variable overrides.
+
+    The ANIME_SR_MODEL_URLS environment variable may contain a JSON object
+    mapping model names to {scale: url} mappings. Any entry provided there
+    overrides the built-in default, so mirrors or alternative sources can be
+    configured without modifying source code.
+    """
+    urls: Dict[str, Dict[str, str]] = {
+        model: dict(scales) for model, scales in _DEFAULT_MODEL_URLS.items()
+    }
+    override = os.environ.get("ANIME_SR_MODEL_URLS", "").strip()
+    if not override:
+        return urls
+    try:
+        custom = json.loads(override)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Invalid JSON in ANIME_SR_MODEL_URLS environment variable: {e}"
+        ) from e
+    if not isinstance(custom, dict):
+        raise ValueError(
+            "ANIME_SR_MODEL_URLS must be a JSON object mapping model names "
+            "to {scale: url} mappings."
+        )
+    for model, scales in custom.items():
+        if not isinstance(scales, dict):
+            raise ValueError(
+                f"ANIME_SR_MODEL_URLS[{model!r}] must be a {{scale: url}} object."
+            )
+        urls.setdefault(model, {}).update(scales)
+    return urls
+
+
+MODEL_URLS: Dict[str, Dict[str, str]] = _load_model_urls()
 
 # Alternative filenames used when saving
 MODEL_FILENAMES: Dict[str, Dict[str, str]] = {

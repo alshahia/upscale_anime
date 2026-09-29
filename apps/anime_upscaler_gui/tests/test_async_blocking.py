@@ -8,6 +8,8 @@ Tk only allows one root per process. All tests in this file share a
 single module-scoped `app` fixture; state is reset between tests via
 `reset()`.
 """
+import queue
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -43,6 +45,8 @@ def app(shared_tk_root):
     a.paths = paths
     a.settings = s
     a._resume_boxes = {}
+    a._resume_boxes_lock = threading.Lock()
+    a._ctl_queue = queue.Queue()
     a.status_bar = _StatusBar(a, a)
     yield a
     try:

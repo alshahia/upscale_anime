@@ -89,7 +89,7 @@ def calculate_anime_quality(img: np.ndarray) -> float:
         return 0.0
     
     if len(img.shape) == 3 and img.shape[2] == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     else:
         gray = img if len(img.shape) == 2 else img[:, :, 0]
     
@@ -176,6 +176,9 @@ def detect_color_quantization(img: np.ndarray) -> float:
         return 0.0
     
     h, w, c = img.shape
+    
+    if h < 40 or w < 40:
+        return 0.0
     
     # Sample smooth regions and check for stepped colors
     scores = []

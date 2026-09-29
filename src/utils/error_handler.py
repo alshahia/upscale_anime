@@ -6,8 +6,12 @@ Provides structured error handling, logging, and debugging capabilities.
 import os
 import sys
 import logging
+import logging.handlers
 import traceback
 import inspect
+import functools
+import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable
@@ -83,6 +87,7 @@ class ErrorHandler:
             "total_errors": 0,
             "errors_by_type": {},
             "errors_by_severity": {},
+            "recent_errors": [],
             "last_error_time": None
         }
         
@@ -202,36 +207,7 @@ class ErrorHandler:
         
         # Return enhanced error record for further processing
         return error_record
-        
-        # Get logger
-        logger = logging.getLogger(self.get_logger_name(error))
-        
-        # Log with appropriate level
-        log_message = f"{error_type}: {str(error)}"
-        if context:
-            log_message += f" | Context: {json.dumps(context, default=str)}"
-        if user_message:
-            log_message += f" | User Message: {user_message}"
-        
-        if severity == ErrorSeverity.CRITICAL:
-            logger.critical(log_message, exc_info=True)
-        elif severity == ErrorSeverity.HIGH:
-            logger.error(log_message, exc_info=True)
-        elif severity == ErrorSeverity.MEDIUM:
-            logger.warning(log_message, exc_info=True)
-        else:
-            logger.info(log_message, exc_info=True)
-        
-        # Call error callbacks
-        for callback in self.error_callbacks:
-            try:
-                callback(error_record)
-            except Exception as e:
-                logger.error(f"Error in error callback: {e}")
-        
-        # Save error to file
-        self.save_error_to_file(error_record)
-    
+
     def get_logger_name(self, error: Exception) -> str:
         """Get appropriate logger name for error type."""
         error_type = type(error).__name__
@@ -266,28 +242,6 @@ class ErrorHandler:
                 
         except Exception as e:
             logging.getLogger(__name__).error(f"Failed to save error to file: {e}")
-    
-    def handle_exception(self, func: Callable, *args, **kwargs):
-        """Decorator for automatic exception handling."""
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except SuperResolutionError as e:
-                self.log_error(e, severity=ErrorSeverity.MEDIUM, context={
-                    "function": func.__name__,
-                    "args": str(args)[:200],
-                    "kwargs": str(kwargs)[:200]
-                })
-                raise
-            except Exception as e:
-                self.log_error(e, severity=ErrorSeverity.HIGH, context={
-                    "function": func.__name__,
-                    "args": str(args)[:200],
-                    "kwargs": str(kwargs)[:200]
-                })
-                raise
-        return wrapper
     
     def handle_training_exception(self, func: Callable):
         """Decorator for training-specific exception handling."""
@@ -377,6 +331,8 @@ class ErrorHandler:
                 ) from e
         
         return wrapper
+
+    def get_error_summary(self):
         """Get error summary statistics."""
         return {
             "total_errors": self.error_stats["total_errors"],
@@ -385,7 +341,7 @@ class ErrorHandler:
             "recent_errors_count": len(self.error_stats["recent_errors"]),
             "last_error": self.error_stats["recent_errors"][-1] if self.error_stats["recent_errors"] else None
         }
-    
+
     def clear_error_stats(self):
         """Clear error statistics."""
         self.error_stats = {

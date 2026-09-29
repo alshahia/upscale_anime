@@ -94,8 +94,7 @@ class TrainingOrchestrator:
         elif self.mode == TrainingMode.ENSEMBLE:
             print("\nSetting up Ensemble trainer...")
             print("Loading pre-trained Model A and Model B...")
-            # Would load frozen A and B here
-            raise NotImplementedError("Ensemble mode requires pre-trained checkpoints")
+            # Ensemble trainer is created in _train_ensemble after checkpoint paths are validated
         
         elif self.mode == TrainingMode.FULL:
             print("\nSetting up full pipeline: A -> B -> Ensemble...")

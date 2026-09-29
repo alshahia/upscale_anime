@@ -5,6 +5,7 @@ Includes Mixup, CutMix, and progressive augmentation strategies.
 import torch
 import torch.nn.functional as F
 import numpy as np
+import cv2
 from typing import Tuple, Optional
 
 
@@ -74,13 +75,13 @@ class CutMixAugmentation:
         
         # Apply CutMix to HR
         hr_mixed = hr1.clone()
-        hr_mixed[:, cx:cx+cut_h, cy:cy+cut_w] = hr2[:, cx:cx+cut_h, cy:cy+cut_w]
+        hr_mixed[:, cy:cy+cut_h, cx:cx+cut_w] = hr2[:, cy:cy+cut_h, cx:cx+cut_w]
         
         # Apply corresponding CutMix to LR
         lr_mixed = lr1.clone()
         lr_cx, lr_cy = cx // scale, cy // scale
         lr_ch, lr_cw = cut_h // scale, cut_w // scale
-        lr_mixed[:, lr_cx:lr_cx+lr_ch, lr_cy:lr_cy+lr_cw] = lr2[:, lr_cx:lr_cx+lr_ch, lr_cy:lr_cy+lr_cw]
+        lr_mixed[:, lr_cy:lr_cy+lr_ch, lr_cx:lr_cx+lr_cw] = lr2[:, lr_cy:lr_cy+lr_ch, lr_cx:lr_cx+lr_cw]
         
         return hr_mixed, lr_mixed, ratio
 
@@ -147,6 +148,7 @@ class AugmentationPipeline:
                  random_resize_prob: float = 0.5,
                  random_resize_range: Tuple[float, float] = (0.5, 2.0)):
         
+        self.alpha = mixup_alpha
         self.mixup = MixupAugmentation(alpha=mixup_alpha)
         self.cutmix = CutMixAugmentation()
         self.random_resize = RandomResizedCrop(scale_range=random_resize_range)
@@ -187,7 +189,7 @@ class AugmentationPipeline:
             lr_shuffled = lr_batch[indices]
             
             # Sample lambdas for each image
-            dist = torch.distributions.Beta(0.4, 0.4)
+            dist = torch.distributions.Beta(self.alpha, self.alpha)
             lambdas = dist.sample((batch_size,)).float().to(device)
             
             # Expand for broadcasting
@@ -266,6 +268,15 @@ def apply_color_jitter(image: torch.Tensor,
         mean = image.mean(dim=(-2, -1), keepdim=True)
         factor = torch.empty(1).uniform_(1 - contrast, 1 + contrast).item()
         image = (image - mean) * factor + mean
+    
+    # Random saturation (via HSV color space)
+    if saturation > 0:
+        factor = torch.empty(1).uniform_(1 - saturation, 1 + saturation).item()
+        arr = image.detach().cpu().permute(1, 2, 0).contiguous().numpy().astype(np.float32)
+        hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+        hsv[..., 1] = np.clip(hsv[..., 1] * factor, 0.0, 1.0)
+        arr = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+        image = torch.from_numpy(arr).permute(2, 0, 1).to(device=image.device, dtype=image.dtype)
     
     # Clamp to valid range
     image = torch.clamp(image, 0, 1)

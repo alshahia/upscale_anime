@@ -9,9 +9,12 @@ try:
 except ImportError:
     from torch.cuda.amp import GradScaler  # PyTorch 1.x
 import os
+import random
 from pathlib import Path
 from typing import Dict, Optional, Any
 from tqdm import tqdm
+
+import numpy as np
 
 # Optional tensorboard
 try:
@@ -203,6 +206,10 @@ class BaseTrainer:
         with torch.no_grad():
             for ema_param, model_param in zip(self.ema_model.parameters(), self.model.parameters()):
                 ema_param.data.mul_(self.ema_decay).add_(model_param.data, alpha=1 - self.ema_decay)
+            
+            # Copy buffers (e.g. BatchNorm running stats) directly — no EMA smoothing
+            for ema_buf, model_buf in zip(self.ema_model.buffers(), self.model.buffers()):
+                ema_buf.data.copy_(model_buf.data)
     
     def _create_optimizer(self) -> optim.Optimizer:
         """Create optimizer based on config"""
@@ -277,6 +284,20 @@ class BaseTrainer:
         """
         raise NotImplementedError
     
+    @staticmethod
+    def _pack_numpy_rng_state(state):
+        """Convert numpy RNG state to a weights_only-safe form (list instead of ndarray)."""
+        name, keys, pos, has_gauss, cached_gaussian = state
+        return (name, keys.tolist(), pos, has_gauss, cached_gaussian)
+
+    @staticmethod
+    def _unpack_numpy_rng_state(state):
+        """Restore numpy RNG state from its weights_only-safe form."""
+        name, keys, pos, has_gauss, cached_gaussian = state
+        if not isinstance(keys, np.ndarray):
+            keys = np.asarray(keys, dtype=np.uint32)
+        return (name, keys, pos, has_gauss, cached_gaussian)
+
     def save_checkpoint(self, epoch: int, optimizer: optim.Optimizer, is_best: bool = False, metrics: Dict = None):
         """Save model checkpoint"""
         checkpoint = {
@@ -285,6 +306,13 @@ class BaseTrainer:
             'optimizer_state_dict': optimizer.state_dict(),
             'best_loss': self.best_loss,
             'config': self.config,
+            'rng_state': {
+                'torch': torch.get_rng_state(),
+                'cuda': torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                # Packed (list) form keeps the checkpoint loadable with weights_only=True
+                'numpy': self._pack_numpy_rng_state(np.random.get_state()),
+                'random': random.getstate(),
+            },
         }
         
         if metrics is not None:
@@ -419,6 +447,16 @@ class BaseTrainer:
             
             if restored_callbacks:
                 print(f"  Restored callback states: {restored_callbacks}")
+
+        # Restore RNG states for reproducible resumed training
+        if 'rng_state' in checkpoint:
+            rng_state = checkpoint['rng_state']
+            torch.set_rng_state(rng_state['torch'])
+            if torch.cuda.is_available() and rng_state['cuda']:
+                torch.cuda.set_rng_state_all(rng_state['cuda'])
+            np.random.set_state(self._unpack_numpy_rng_state(rng_state['numpy']))
+            random.setstate(rng_state['random'])
+            print("  Restored RNG states")
 
         # Store checkpoint for deferred scheduler loading (scheduler created after model initialization)
         self._pending_checkpoint = checkpoint

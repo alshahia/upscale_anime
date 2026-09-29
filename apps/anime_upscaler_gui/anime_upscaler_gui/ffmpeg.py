@@ -30,7 +30,7 @@ _NVENC_PROBE_TIMEOUT = 15  # seconds (functional encode probe can take a few sec
 # failure. A healthy encoder sits alive waiting for stdin frames, so a poll
 # that sees an exit code means the encoder never opened. Near-zero cost
 # when NVENC works.
-_NVENC_INIT_GRACE_S = 1.5
+_NVENC_INIT_GRACE_S = 4.0
 
 
 def _detect_nvenc_support() -> bool:
@@ -166,7 +166,10 @@ def extract_cut(full_path, cut_path, start_seconds: float, cut_seconds: float) -
         "-t", f"{max(0.0, cut_seconds):.3f}",
         "-c", "copy", str(cut_path),
     ]
-    r = subprocess.run(cmd, capture_output=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return False
     return r.returncode == 0
 
 

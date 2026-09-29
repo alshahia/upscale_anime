@@ -24,6 +24,7 @@ Backwards-compat (Phase A1 contract): _make_backend is preserved as an alias.
 """
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Tuple
@@ -273,9 +274,23 @@ def _trt_predicate(ctx: BackendSelectionCtx) -> bool:
     return True
 
 
+def _trt_cache_dir() -> Path:
+    """Per-OS cache root for TRT engines.
+
+    Windows: %APPDATA% (roaming app data). Linux/macOS: XDG_CACHE_HOME
+    (default ~/.cache) per the XDG base directory spec -- APPDATA is a
+    Windows-only variable and is usually unset on Linux.
+    """
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", str(Path.home())))
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "anime_upscaler_gui" / "cache" / "trt"
+
+
 def _trt_factory(ctx: BackendSelectionCtx):
     """Build the TRT engine + return a _TrtBackend instance."""
-    cache_dir = Path(os.environ.get("APPDATA", str(Path.home()))) / "anime_upscaler_gui" / "cache" / "trt"
+    cache_dir = _trt_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
     return _TrtBackend_t(ctx.model, ctx.kind, ctx.device, ctx.fp16, cache_dir, batch_size=ctx.batch_size)
 
@@ -289,10 +304,18 @@ def _pytorch_factory(ctx: BackendSelectionCtx):
     return _PyTorchBackend(ctx.ckpt_path, ctx.kind, ctx.device, ctx.fp16)
 
 
-# Register the default registry. Order matters: TRT first (when available),
-# PyTorch last (always-on fallback).
-register_backend("TensorRT", _trt_predicate, _trt_factory)
-register_backend("PyTorch", _pytorch_predicate, _pytorch_factory)
+def init_default_backends() -> None:
+    """Populate the default REGISTRY with the built-in backends.
+
+    Explicit init instead of import-time side effects: importing backends.py
+    no longer mutates the global REGISTRY. ``pipeline/__init__`` calls this
+    once at package import; tests that build their own registry are
+    unaffected.
+    """
+    # Order matters: TRT first (when available), PyTorch last (always-on
+    # fallback).
+    register_backend("TensorRT", _trt_predicate, _trt_factory)
+    register_backend("PyTorch", _pytorch_predicate, _pytorch_factory)
 
 
 # ============================================================================ #

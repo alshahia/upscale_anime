@@ -1,0 +1,2 @@
+model_id,kind,ckpt,scale,params,status,backend,device,lr_in,sr_out,n_frames,load_s,warm_s,infer_total_s,mean_ms,min_ms,max_ms,p95_ms,ms_std,fps_1_over_mean,fps_throughput,encode_s,peak_vram_GB,clipiqa_mean,clipiqa_std,niqe_mean,niqe_n
+SRVGG_distill_v1_4x_student,srvgg_student,SRVGG_distill_v1_4x_student.pth,4,317300,ok,pytorch-fp16,cuda-RTX4000-ac,854x480,3416x1920,90,0.12,0.48,4.45,49.45,33.21,205.17,146.34,37.32,20.22,20.22,5.1,0.37,0.33,0.0,6.96,8

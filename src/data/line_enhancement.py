@@ -116,36 +116,14 @@ def connected_component_cleanup(line_map: np.ndarray, min_size: int = 32) -> np.
     Returns:
         HxW uint8 cleaned line map.
     """
-    h, w = line_map.shape
-    out = np.zeros_like(line_map)
-    visited = np.zeros((h, w), dtype=bool)
-
-    for i in range(h):
-        for j in range(w):
-            if visited[i, j]:
-                continue
-            if int(line_map[i, j]) <= 127:
-                visited[i, j] = True
-                continue
-            # BFS
-            stack = [(i, j)]
-            region = [(i, j)]
-            visited[i, j] = True
-            while stack:
-                ci, cj = stack.pop()
-                for di in (-1, 0, 1):
-                    for dj in (-1, 0, 1):
-                        if di == 0 and dj == 0:
-                            continue
-                        ni, nj = ci + di, cj + dj
-                        if 0 <= ni < h and 0 <= nj < w and not visited[ni, nj]:
-                            visited[ni, nj] = True
-                            if int(line_map[ni, nj]) > 127:
-                                stack.append((ni, nj))
-                                region.append((ni, nj))
-            if len(region) >= int(min_size):
-                for (ri, rj) in region:
-                    out[ri, rj] = 255
+    binary = (line_map > 127).astype(np.uint8)
+    num_labels, labels = cv2.connectedComponents(binary, connectivity=8)
+    if num_labels <= 1:
+        return np.zeros_like(line_map)
+    counts = np.bincount(labels.ravel())
+    keep = np.zeros(num_labels, dtype=bool)
+    keep[1:] = counts[1:] >= int(min_size)
+    out = np.where(keep[labels], 255, 0).astype(np.uint8)
     return out
 
 
@@ -161,23 +139,11 @@ def passive_dilation(line_map: np.ndarray, threshold: int = 3) -> np.ndarray:
     Returns:
         HxW uint8 dilated line map.
     """
-    h, w = line_map.shape
+    binary = (line_map > 127).astype(np.uint8)
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    neighbor_count = cv2.filter2D(binary, -1, kernel, borderType=cv2.BORDER_CONSTANT) - binary
     out = line_map.copy()
-    th = int(threshold)
-    for i in range(h):
-        for j in range(w):
-            if int(out[i, j]) > 127:
-                continue
-            n_white = 0
-            for di in (-1, 0, 1):
-                for dj in (-1, 0, 1):
-                    if di == 0 and dj == 0:
-                        continue
-                    ni, nj = i + di, j + dj
-                    if 0 <= ni < h and 0 <= nj < w and int(line_map[ni, nj]) > 127:
-                        n_white += 1
-            if n_white >= th:
-                out[i, j] = 255
+    out[(binary == 0) & (neighbor_count >= int(threshold))] = 255
     return out
 
 

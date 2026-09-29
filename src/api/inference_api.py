@@ -21,7 +21,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -57,8 +57,66 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
+# API key authentication
+API_KEY = os.getenv("DSH_API_KEY")
+
+# Rate limiting: 60 requests per minute per IP
+RATE_LIMIT = 60
+RATE_LIMIT_WINDOW = 60  # seconds
+_rate_limit_store: Dict[str, List[float]] = {}
+
+
+@app.middleware("http")
+async def api_key_middleware(request, call_next):
+    """Require API key for all endpoints except /health."""
+    if request.url.path == "/health":
+        return await call_next(request)
+    if not API_KEY:
+        # No key configured - allow all (development mode)
+        return await call_next(request)
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Missing or invalid API key"}
+        )
+    token = auth_header[7:]
+    if token != API_KEY:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid API key"}
+        )
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    """Simple in-memory rate limiter: 60 req/min per IP."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = datetime.now().timestamp()
+
+    # Clean old entries for this IP
+    if client_ip in _rate_limit_store:
+        _rate_limit_store[client_ip] = [
+            t for t in _rate_limit_store[client_ip] if now - t < RATE_LIMIT_WINDOW
+        ]
+    else:
+        _rate_limit_store[client_ip] = []
+
+    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Rate limit exceeded"}
+        )
+
+    _rate_limit_store[client_ip].append(now)
+    return await call_next(request)
+
 # Allowed model names whitelist
 ALLOWED_MODELS = {"model_a", "model_b", "ensemble", "checkpoint_compatible"}
+
+# Maximum upload file size (50MB)
+MAX_FILE_SIZE = 50 * 1024 * 1024
 
 # Global model cache
 models = {}
@@ -110,12 +168,22 @@ class HealthResponse(BaseModel):
     uptime: float
 
 
+# Lock guarding model loading to prevent concurrent double-loads
+_model_load_lock = asyncio.Lock()
+
+
 # Dependency for model loading
 async def get_model(model_name: str) -> InferenceEngine:
-    """Get or load a model."""
-    if model_name not in inference_engines:
+    """Get or load a model (double-checked locking against concurrent loads)."""
+    if model_name in inference_engines:
+        return inference_engines[model_name]
+    async with _model_load_lock:
+        # Re-check after acquiring the lock: another coroutine may have
+        # loaded the model while we were waiting.
+        if model_name in inference_engines:
+            return inference_engines[model_name]
         await load_model(model_name)
-    return inference_engines[model_name]
+        return inference_engines[model_name]
 
 
 @app.on_event("startup")
@@ -197,7 +265,13 @@ async def load_model(model_name: str):
             if Path(checkpoint_path).exists():
                 try:
                     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-                except Exception:
+                except Exception as e:
+                    security_cfg = (model_config or {}).get('security') or {}
+                    allow_pickle = security_cfg.get('allow_pickle_checkpoint', False)
+                    if not allow_pickle:
+                        raise RuntimeError("Checkpoint requires pickle loading. Set 'security.allow_pickle_checkpoint: true' in config. Only use with trusted checkpoints!")
+                    import warnings
+                    warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
                     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
                 
                 # Handle different checkpoint formats
@@ -310,24 +384,42 @@ async def load_model_endpoint(model_name: str):
 
 @app.post("/inference", response_model=InferenceResponse)
 async def inference_endpoint(
-    request: InferenceRequest,
     background_tasks: BackgroundTasks,
     image: UploadFile = File(...),
-    engine: InferenceEngine = Depends(lambda: get_model(request.model_name))
+    model_name: str = Form(..., description="Model name to use for inference"),
+    scale_factor: int = Form(4, description="Upscaling factor (2, 3, or 4)"),
+    enhance_faces: bool = Form(False, description="Enable face enhancement"),
+    tile_size: Optional[int] = Form(None, description="Tile size for large images"),
+    return_base64: bool = Form(False, description="Return image as base64 string"),
 ):
     """Perform inference on uploaded image."""
     
-    # Validate request
-    if request.scale_factor not in [2, 3, 4]:
+    # Validate scale BEFORE loading any model so bad input returns 400
+    # without paying the cost of a model load.
+    if scale_factor not in [2, 3, 4]:
         raise HTTPException(status_code=400, detail="Scale factor must be 2, 3, or 4")
     
-    if request.model_name not in inference_engines:
-        raise HTTPException(status_code=404, detail=f"Model {request.model_name} not loaded")
+    # Rebuild the request model from the individual multipart form fields.
+    # (A Pydantic model cannot be combined with File in this FastAPI version.)
+    request = InferenceRequest(
+        model_name=model_name,
+        scale_factor=scale_factor,
+        enhance_faces=enhance_faces,
+        tile_size=tile_size,
+        return_base64=return_base64,
+    )
+    
+    # Load the model (validates model_name against the whitelist)
+    engine = await get_model(request.model_name)
     
     try:
         # Read image
         image_data = await image.read()
-        
+
+        # Check file size
+        if len(image_data) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File too large (max 50MB)")
+
         # Validate image
         try:
             img = Image.open(io.BytesIO(image_data))
@@ -403,25 +495,6 @@ async def inference_endpoint(
     except Exception as e:
         logger.error(f"Inference error: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
-
-
-@app.get("/inference/{model_name}")
-async def inference_get_endpoint(
-    model_name: str,
-    image_url: str,
-    scale_factor: int = 4,
-    enhance_faces: bool = False,
-    tile_size: Optional[int] = None,
-    return_base64: bool = False
-):
-    """Perform inference on image from URL."""
-    
-    # This would require downloading the image from URL
-    # For now, return an error
-    raise HTTPException(
-        status_code=501, 
-        detail="URL-based inference not implemented. Use POST endpoint with file upload."
-    )
 
 
 @app.delete("/models/{model_name}")

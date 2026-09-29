@@ -10,6 +10,7 @@ _refresh_queue_listbox, _confirm_destructive, _worker). All coordination still
 happens through the orchestrator (UpscaleGUI).
 """
 import os
+import subprocess
 import sys
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -85,9 +86,9 @@ class SettingsIOMixin:
             if sys.platform == "win32":
                 os.startfile(str(path))  # noqa
             elif sys.platform == "darwin":
-                os.system(f"open '{path}'")
+                subprocess.run(["open", str(path)])
             else:
-                os.system(f"xdg-open '{path}'")
+                subprocess.run(["xdg-open", str(path)])
         except Exception as e:
             messagebox.showerror("Cannot open", str(e))
 

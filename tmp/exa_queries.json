@@ -1,0 +1,278 @@
+[
+  {
+    "label": "sota_anime_sr_2024_2026",
+    "query": "Survey the state of the art for 4x anime super-resolution models 2024-2026. Compare top published models on benchmark datasets (mostly real-world anime frames from ACvc / Danbooru / AVC-RealLQ). Include: Real-ESRGAN animevideov3, Real-CUGAN, Anime4K, SUPIR, SeeSR, DiffBIR, PixelXL, APISR, HAT, MambaIRv2, SRVGG, lightweight CNN variants (RFDN, IMDN, ESRT). For each: quality metrics (PSNR/LPIPS/MANIQA), inference latency, parameter count, year.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "top_models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "year": {
+                "type": "string"
+              },
+              "architecture": {
+                "type": "string"
+              },
+              "parameters_mb": {
+                "type": "string"
+              },
+              "inference_ms_rtx4000": {
+                "type": "string"
+              },
+              "inference_ms_rtx4090": {
+                "type": "string"
+              },
+              "psnr_db": {
+                "type": "string"
+              },
+              "lpips": {
+                "type": "string"
+              },
+              "maniqa": {
+                "type": "string"
+              },
+              "clipiqa": {
+                "type": "string"
+              },
+              "paper_url": {
+                "type": "string"
+              },
+              "repo_url": {
+                "type": "string"
+              },
+              "license": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "sota_summary": {
+          "type": "string"
+        },
+        "best_quality_perceptual": {
+          "type": "string"
+        },
+        "best_psnr": {
+          "type": "string"
+        },
+        "best_real_time": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "top_models",
+        "sota_summary",
+        "best_quality_perceptual",
+        "best_psnr",
+        "best_real_time"
+      ]
+    }
+  },
+  {
+    "label": "realtime_lightweight_25fps",
+    "query": "Find lightweight 4x super-resolution models designed for real-time >= 25 fps on consumer / laptop GPUs (RTX 3060-4070 class). Include RFDN, IMDN, ESRT, ShuffleMixer, OmniSR, ELSANet, BSRN, FMEN, GhostSR, lightweight SwinIR/Restormer variants, MambaIR, MambaIRv2, Spatially-adaptive Feature Modulation. Give parameter count, MACs, latency, quality, year. Especially note which ones target 4x scale on 1080p->4K or 480p->1920p.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "year": {
+                "type": "string"
+              },
+              "params": {
+                "type": "string"
+              },
+              "macs_g": {
+                "type": "string"
+              },
+              "latency_ms": {
+                "type": "string"
+              },
+              "gpu": {
+                "type": "string"
+              },
+              "scale": {
+                "type": "string"
+              },
+              "psnr_db": {
+                "type": "string"
+              },
+              "lpips": {
+                "type": "string"
+              },
+              "paper_url": {
+                "type": "string"
+              },
+              "repo_url": {
+                "type": "string"
+              },
+              "real_time_fps_estimate": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "best_under_300k_params": {
+          "type": "string"
+        },
+        "best_under_1m_params": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "models",
+        "best_under_300k_params",
+        "best_under_1m_params"
+      ]
+    }
+  },
+  {
+    "label": "high_quality_diffusion_anime",
+    "query": "Survey diffusion-based and large-model 4x super-resolution methods applicable to anime content. Include SUPIR, SeeSR, DiffBIR, StableSR, ResShift, SinSR, OSEDiff, DiffPlugin. Give parameters, inference time on RTX 4090, perceptual quality, year, paper/repo. Focus on which ones handle anime-style line art well, and whether any have been fine-tuned for anime. Distinguish 1-step vs multi-step variants.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "year": {
+                "type": "string"
+              },
+              "base_model": {
+                "type": "string"
+              },
+              "steps": {
+                "type": "string"
+              },
+              "inference_s_rtx4090": {
+                "type": "string"
+              },
+              "maniqa": {
+                "type": "string"
+              },
+              "clipiqa": {
+                "type": "string"
+              },
+              "lpips": {
+                "type": "string"
+              },
+              "psnr": {
+                "type": "string"
+              },
+              "anime_finetuned": {
+                "type": "string"
+              },
+              "paper_url": {
+                "type": "string"
+              },
+              "repo_url": {
+                "type": "string"
+              },
+              "one_step_variant": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "best_diffusion_for_anime": {
+          "type": "string"
+        },
+        "fastest_one_step": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "models",
+        "best_diffusion_for_anime",
+        "fastest_one_step"
+      ]
+    }
+  },
+  {
+    "label": "knowledge_distillation_sr_2024_2026",
+    "query": "Survey knowledge distillation techniques for super-resolution 2024-2026. Include CSD (Contrastive Spatial Distillation), CKD (Curriculum KD), FAKD (Feature Affinity KD), locality-aware distillation, frequency-domain distillation, attention transfer variants, logit-free distillation methods, diffusion-as-teacher methods. Note any specifically targeting real-time student models. Give year, paper/repo URL, target architecture, what was distilled (logits/features/attention/frequency), reported gains.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "techniques": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "year": {
+                "type": "string"
+              },
+              "teacher": {
+                "type": "string"
+              },
+              "student": {
+                "type": "string"
+              },
+              "distillation_target": {
+                "type": "string"
+              },
+              "reported_gain_db": {
+                "type": "string"
+              },
+              "reported_gain_lpips": {
+                "type": "string"
+              },
+              "paper_url": {
+                "type": "string"
+              },
+              "repo_url": {
+                "type": "string"
+              },
+              "real_time_focus": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "best_for_real_time_2025_2026": {
+          "type": "string"
+        },
+        "key_lessons": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "techniques",
+        "best_for_real_time_2025_2026",
+        "key_lessons"
+      ]
+    }
+  }
+]

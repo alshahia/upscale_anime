@@ -1,4 +1,5 @@
 """Video and image readers (cv2 + PyAV) with optional async prefetch."""
+import logging
 import queue
 import threading
 from pathlib import Path
@@ -11,6 +12,8 @@ try:
     _HAS_PYAV = True
 except Exception:
     _HAS_PYAV = False
+
+log = logging.getLogger(__name__)
 
 # Q3 (perf/queue-controls-gpu-codec): NVDEC decode path. Probed once
 # per process; the GUI caches the result so the user-visible "GPU Decode:
@@ -86,6 +89,23 @@ class _Cv2Reader:
         self.total = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    @classmethod
+    def from_cap(cls, cap, path, fps, total, w, h):
+        """Wrap an already-opened VideoCapture.
+
+        Used for cut windows: the caller seeks to the start frame on its
+        own VideoCapture, then wraps it. ``__init__`` always opens from
+        position 0, so the seek would be lost.
+        """
+        r = cls.__new__(cls)
+        r.path = str(path)
+        r.cap = cap
+        r.fps = fps
+        r.total = total
+        r.w = w
+        r.h = h
+        return r
 
     def __iter__(self):
         while True:
@@ -252,20 +272,39 @@ class _AsyncReader:
     def __init__(self, sync_reader, prefetch: int = 8):
         self._sync = sync_reader
         self._q: "queue.Queue" = queue.Queue(maxsize=prefetch)
+        self._stop = threading.Event()
 
     def start(self, max_frames: int = 0):
         def _run():
             n = 0
             try:
                 for frame in self._sync:
-                    self._q.put(frame)
+                    if self._stop.is_set():
+                        break
+                    # Bounded put with a timeout so a stopped consumer
+                    # (cancelled job) can't wedge the producer on a full
+                    # queue. The stop flag is checked between attempts.
+                    queued = False
+                    while not self._stop.is_set():
+                        try:
+                            self._q.put(frame, timeout=0.1)
+                            queued = True
+                            break
+                        except queue.Full:
+                            pass
+                    if not queued:
+                        break
                     n += 1
                     if max_frames and n >= max_frames:
                         break
             except Exception as e:
-                print(f"  [AsyncReader] producer error: {e}")
+                log.exception("  [AsyncReader] producer error: %s", e)
             finally:
-                self._q.put(_SENTINEL)
+                # Wake a consumer blocked on _q.get(). If the consumer is
+                # gone (cancelled job), _stop is set and we skip the sentinel
+                # rather than wedge the producer on a full queue.
+                if not self._stop.is_set():
+                    self._q.put(_SENTINEL)
         t = threading.Thread(target=_run, daemon=True)
         t.start()
 
@@ -277,6 +316,9 @@ class _AsyncReader:
             yield item
 
     def release(self):
+        # Ask the producer to stop; it may be blocked decoding the next frame
+        # or (briefly) on a full-queue put.
+        self._stop.set()
         self._sync.release()
 
 

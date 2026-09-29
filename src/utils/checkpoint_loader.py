@@ -1,4 +1,4 @@
-﻿"""
+"""
 Checkpoint loading utilities for transfer learning and fine-tuning.
 Handles loading pretrained weights from various checkpoint formats.
 """
@@ -49,8 +49,9 @@ def load_pretrained_weights(
         # Load checkpoint
         try:
             checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        except UnpicklingError:
-            logger.warning("Checkpoint requires pickle deserialization. Only load from trusted sources.")
+        except Exception as e:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         
         # Extract state dict
@@ -160,8 +161,9 @@ def get_checkpoint_info(checkpoint_path: Union[str, Path]) -> Optional[Dict]:
     try:
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
-        except UnpicklingError:
-            logger.warning("Checkpoint requires pickle deserialization. Only load from trusted sources.")
+        except Exception as e:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         info = {
@@ -225,8 +227,9 @@ def convert_spanf_checkpoint(
     try:
         try:
             checkpoint = torch.load(input_path, map_location='cpu', weights_only=True)
-        except UnpicklingError:
-            logger.warning("Checkpoint requires pickle deserialization. Only load from trusted sources.")
+        except Exception as e:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             checkpoint = torch.load(input_path, map_location='cpu', weights_only=False)
         
         # Extract state dict
@@ -336,8 +339,9 @@ def load_checkpoint_compatible_span(
         # Load checkpoint
         try:
             checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        except UnpicklingError:
-            logger.warning("Checkpoint requires pickle deserialization. Only load from trusted sources.")
+        except Exception as e:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         
         # Extract parameters
@@ -500,8 +504,9 @@ def verify_checkpoint_compatibility(
         # Load checkpoint
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
-        except UnpicklingError:
-            logger.warning("Checkpoint requires pickle deserialization. Only load from trusted sources.")
+        except Exception as e:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         # Extract parameters

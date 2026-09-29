@@ -4,6 +4,7 @@ Uses channel mean and standard deviation (no learnable parameters)
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class ParameterFreeChannelAttention(nn.Module):
@@ -80,9 +81,11 @@ class ParameterFreeSpatialAttention(nn.Module):
         # Combine max and mean
         spatial_att = max_val + mean_val
         
-        # Normalize
-        spatial_att = spatial_att / (spatial_att.sum(dim=[2, 3], keepdim=True) + self.eps)
-        
+        # Normalize with softmax over spatial positions. Sum-normalization
+        # would scale each pixel's weight to ~1/(H*W), shrinking the output.
+        B, _, H, W = x.shape
+        spatial_att = F.softmax(spatial_att.view(B, 1, -1), dim=-1).view(B, 1, H, W)
+
         # Apply
         out = x * spatial_att
         

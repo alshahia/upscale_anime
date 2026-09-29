@@ -150,6 +150,8 @@ class SelectiveScanV2(nn.Module):
         A = torch.arange(1, d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
         self.A_log = nn.Parameter(torch.log(A))
         self.D = nn.Parameter(torch.ones(self.d_inner))
+        # dt projection: produces the per-step delta for the scan
+        self.dt_proj = nn.Linear(self.d_model, self.d_inner, bias=True)
         # dt projection bias: start near zero; helps stability.
         self.dt_bias = nn.Parameter(torch.zeros(self.d_inner))
 
@@ -166,7 +168,9 @@ class SelectiveScanV2(nn.Module):
         B, L, _ = x.shape
         # Treat the whole sequence as a single chunk (K=1).
         x_t = x.permute(0, 2, 1)            # [B, hidden, L]
-        delta = x_t                          # treat x itself as Δ (simplest K=1)
+        # Per-step delta from a learned projection (not the raw input).
+        delta = F.softplus(self.dt_proj(x))  # [B, L, hidden]
+        delta = delta.permute(0, 2, 1).contiguous()  # [B, hidden, L]
         # Derive B, C from prompt (K=1, single projection per token).
         B_param = prompt                     # [B, L, d_state]
         C_param = prompt                     # [B, L, d_state]

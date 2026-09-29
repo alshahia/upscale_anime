@@ -1,0 +1,11 @@
+{
+  "source": "C:\\Users\\Ahmad Mahmoud\\Downloads\\Video\\[Anime3rb.com] Yi Ren Zhi Xia - 1 [480p].mp4",
+  "t_start": 709.528,
+  "seconds": 5,
+  "fps": 18.0,
+  "width": 854,
+  "height": 480,
+  "frames": 90,
+  "src_clip": "E:\\python projects\\upscale_anime\\tmp\\bench_all_dry\\source_clip_5s.mp4",
+  "lr_frames": 90
+}

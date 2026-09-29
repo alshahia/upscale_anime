@@ -465,6 +465,8 @@ class NeosrSPAN(nn.Module):
         try:
             ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
         except Exception:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
         if isinstance(ckpt, dict):
@@ -669,7 +671,12 @@ def _load_state_dict(path):
     Accepts any of these top-level keys: params, params_ema, state_dict,
     model_state_dict, student (KD pipeline), params_ema.
     """
-    sd = torch.load(path, map_location='cpu', weights_only=False)
+    try:
+        sd = torch.load(path, map_location='cpu', weights_only=True)
+    except Exception:
+        import warnings
+        warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
+        sd = torch.load(path, map_location='cpu', weights_only=False)
     if isinstance(sd, dict):
         for k in ('params', 'params_ema', 'state_dict', 'model_state_dict', 'student'):
             if k in sd and isinstance(sd[k], dict):
@@ -898,7 +905,12 @@ def _load_rfdn_student(ckpt_path: str) -> nn.Module:
     import math
     shortcut_mode = "bicubic"
     try:
-        full = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+        try:
+            full = torch.load(ckpt_path, map_location='cpu', weights_only=True)
+        except Exception:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
+            full = torch.load(ckpt_path, map_location='cpu', weights_only=False)
         if isinstance(full, dict) and isinstance(full.get('args'), dict):
             sm = full['args'].get('shortcut_mode')
             if sm in ('bicubic', 'nearest'):

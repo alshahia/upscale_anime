@@ -53,9 +53,14 @@ from .backends import (  # noqa: F401
     _cascade_count,
     _make_backend,
     _tta_forward,
+    init_default_backends,
     register_backend,
     select_backend,
 )
+
+# Populate the default backend registry (TensorRT + PyTorch). Explicit
+# init: importing backends.py alone no longer mutates the global REGISTRY.
+init_default_backends()
 
 # --- encoder --- (ffmpeg pipe guard)
 from .encoder import (  # noqa: F401

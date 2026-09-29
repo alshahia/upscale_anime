@@ -1,4 +1,4 @@
-﻿"""
+"""
 Inference Engine for Super-Resolution
 High-level interface for running inference
 
@@ -24,7 +24,7 @@ try:
 except ImportError:
     from torch.cuda.amp import autocast as _autocast  # PyTorch 1.x
     
-    def autocast(device=None, enabled=True):
+    def autocast(device_type=None, enabled=True):
         return _autocast(enabled=enabled)
 
 from models.span import create_span_model, SPANModel, create_neosr_span
@@ -81,7 +81,7 @@ class InferenceEngine:
         device: str = 'cuda',
         use_amp: bool = True,
     ):
-        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(device) if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = model.to(self.device)
         self.model.eval()
         
@@ -126,8 +126,13 @@ class InferenceEngine:
                 with safe_globals([utils.config.Config]):
                     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
             except (UnpicklingError, AttributeError, ModuleNotFoundError):
-                # Final fallback: load without weights_only (legacy behavior)
-                logger.warning(f"Loading checkpoint without weights_only - ensure source is trusted: {checkpoint_path}")
+                # Final fallback: load without weights_only (legacy behavior) - requires opt-in
+                security_cfg = (config or {}).get('security') or {}
+                allow_pickle = security_cfg.get('allow_pickle_checkpoint', False)
+                if not allow_pickle:
+                    raise RuntimeError("Checkpoint requires pickle loading. Set 'security.allow_pickle_checkpoint: true' in config. Only use with trusted checkpoints!")
+                import warnings
+                warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
                 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         # Determine config
@@ -185,7 +190,7 @@ class InferenceEngine:
         model_a_checkpoint: Union[str, Path],
         model_b_checkpoint: Union[str, Path],
         device: str = 'cuda',
-        weights: List[float] = [0.6, 0.4],
+        weights: List[float] = None,
     ) -> 'InferenceEngine':
         """
         Create inference engine from ensemble.
@@ -199,6 +204,9 @@ class InferenceEngine:
         Returns:
             InferenceEngine instance
         """
+        if weights is None:
+            weights = [0.6, 0.4]
+
         from models.ensemble import create_ensemble_teacher
         
         ensemble = create_ensemble_teacher(
@@ -293,7 +301,7 @@ class InferenceEngine:
         
         # Inference
         with torch.no_grad():
-            with autocast(device='cuda', enabled=self.use_amp):
+            with autocast(device_type=self.device.type, enabled=self.use_amp):
                 sr_tensor = self.model(lr_tensor)
         
         # Postprocess
@@ -354,7 +362,7 @@ class InferenceEngine:
                 augmented = forward_fn(lr_tensor)
                 
                 # Inference
-                with autocast(device='cuda', enabled=self.use_amp):
+                with autocast(device_type=self.device.type, enabled=self.use_amp):
                     pred = self.model(augmented)
                 
                 # Apply inverse transform to prediction
@@ -390,26 +398,134 @@ class InferenceEngine:
     ) -> List[np.ndarray]:
         """
         Run inference on a batch of images.
-        
+
+        Images are grouped by spatial size; each group is forwarded as one
+        true batched tensor (a single forward pass per distinct shape), and
+        results are returned in the original input order.
+
         Args:
             lr_images: List of low-resolution images
-        
+
         Returns:
             List of super-resolved images
         """
-        results = []
-        
+        if not lr_images:
+            return []
+
+        # Normalize to batched tensors and group by spatial size so each
+        # distinct shape gets one true batched forward pass.
+        tensors = []
+        shapes = []
         for lr_image in lr_images:
-            sr_image = self.run(lr_image)
-            results.append(sr_image)
-        
+            if isinstance(lr_image, np.ndarray):
+                t = self.preprocess(lr_image)
+            else:
+                t = lr_image
+            if t.dim() == 3:
+                t = t.unsqueeze(0)
+            tensors.append(t)
+            shapes.append(tuple(t.shape))
+
+        results: List[Optional[np.ndarray]] = [None] * len(lr_images)
+
+        for shape in dict.fromkeys(shapes):
+            idxs = [i for i, s in enumerate(shapes) if s == shape]
+            batch = torch.cat([tensors[i] for i in idxs], dim=0).to(self.device)
+            with torch.no_grad():
+                with autocast(device_type=self.device.type, enabled=self.use_amp):
+                    sr_batch = self.model(batch)
+            for i, sr in zip(idxs, sr_batch):
+                results[i] = self.postprocess(sr)
+
         return results
-    
+
+    def process_image(
+        self,
+        input_path: Union[str, Path],
+        output_path: Union[str, Path],
+        scale: int = 4,
+        enhance_faces: bool = False,
+        tile_size: int = 0,
+    ) -> Dict:
+        """
+        Run super-resolution on a single image file and save the result.
+
+        Args:
+            input_path: Path to the input (low-resolution) image.
+            output_path: Path where the upscaled image will be saved.
+            scale: Upscaling factor (informational; the model's own scale is used).
+            enhance_faces: Accepted for API compatibility (no-op; this model does
+                not perform face enhancement).
+            tile_size: If > 0, run inference in overlapping tiles (VRAM-friendly).
+
+        Returns:
+            Dictionary with the output path and scale.
+        """
+        from PIL import Image
+
+        img = Image.open(input_path).convert("RGB")
+        # Build an RGB tensor directly. The model expects RGB input, whereas
+        # self.preprocess assumes BGR (OpenCV) input, so convert here.
+        arr = np.array(img)
+        tensor = torch.from_numpy(arr).float() / 255.0
+        tensor = tensor.permute(2, 0, 1).unsqueeze(0)  # [1, C, H, W]
+
+        if tile_size and tile_size > 0:
+            sr = self.run_tiled(tensor, tile_size)
+        else:
+            sr = self.run(tensor)
+
+        # self.run/run_tiled return a BGR numpy array (OpenCV convention);
+        # convert back to RGB for saving via PIL.
+        sr_rgb = cv2.cvtColor(sr, cv2.COLOR_BGR2RGB)
+        Image.fromarray(sr_rgb).save(output_path)
+
+        return {"output_path": str(output_path), "scale": scale}
+
+    def run_tiled(
+        self,
+        lr_tensor: torch.Tensor,
+        tile_size: int,
+        overlap: int = 16,
+    ) -> np.ndarray:
+        """
+        Run inference in overlapping tiles for large images (VRAM-friendly).
+
+        Adapted from the proven tiled inference in anime_upscaler/infer.py.
+        Returns a BGR numpy image (same convention as self.run).
+        """
+        if lr_tensor.dim() == 3:
+            lr_tensor = lr_tensor.unsqueeze(0)
+        lr_tensor = lr_tensor.to(self.device)
+        b, c, h, w = lr_tensor.shape
+        scale = int(getattr(self.model, "scale", 4))
+
+        # Fall back to a single forward pass for small inputs.
+        if tile_size <= 0 or (h <= tile_size and w <= tile_size):
+            return self.run(lr_tensor)
+
+        sr = torch.zeros(b, c, h * scale, w * scale, device=self.device)
+        for y in range(0, h, tile_size):
+            for x in range(0, w, tile_size):
+                y0, y1 = max(0, y - overlap), min(h, y + tile_size + overlap)
+                x0, x1 = max(0, x - overlap), min(w, x + tile_size + overlap)
+                with torch.no_grad():
+                    with autocast(device_type=self.device.type, enabled=self.use_amp):
+                        pred = self.model(lr_tensor[:, :, y0:y1, x0:x1])
+                # Keep only the core region so tile seams stay out of the result.
+                cy0, ch = (y - y0) * scale, (min(y + tile_size, h) - y) * scale
+                cx0, cw = (x - x0) * scale, (min(x + tile_size, w) - x) * scale
+                sr[:, :, y * scale:y * scale + ch, x * scale:x * scale + cw] = \
+                    pred[:, :, cy0:cy0 + ch, cx0:cx0 + cw]
+
+        return self.postprocess(sr)
+
     def benchmark(
         self,
         input_size: tuple = (3, 128, 128),
         num_runs: int = 100,
         warmup: int = 10,
+        scale: Optional[int] = None,
     ) -> Dict[str, float]:
         """
         Benchmark inference speed.
@@ -418,6 +534,7 @@ class InferenceEngine:
             input_size: Input tensor size (C, H, W)
             num_runs: Number of benchmark runs
             warmup: Number of warmup runs
+            scale: Upscaling factor (default: model.scale, falling back to 4)
         
         Returns:
             Dictionary with benchmark results
@@ -458,7 +575,8 @@ class InferenceEngine:
         times = np.array(times)
         
         h, w = input_size[1], input_size[2]
-        scale = 4  # Assume 4x
+        if scale is None:
+            scale = int(getattr(self.model, 'scale', 4))
         output_pixels = (h * scale) * (w * scale)
         
         results = {
@@ -600,6 +718,8 @@ class ModelSoup:
                     with safe_globals([utils.config.Config]):
                         checkpoint = torch.load(path, map_location='cpu', weights_only=True)
                 except (UnpicklingError, AttributeError, ModuleNotFoundError):
+                    import warnings
+                    warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
                     checkpoint = torch.load(path, map_location='cpu', weights_only=False)
             
             # Choose weights (EMA preferred)

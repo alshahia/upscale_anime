@@ -54,6 +54,9 @@ class CheckpointManager:
         name = re.sub(r'[<>:"/\\|?*]', '_', name)
         name = re.sub(r'_+', '_', name)
         name = name.strip('_')
+        # Reject path traversal attempts
+        if '..' in name:
+            name = name.replace('..', '_')
         return name[:100]
 
     def _find_existing_runs(self, base_name: str) -> List[str]:

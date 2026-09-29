@@ -1,0 +1,2 @@
+model_id,kind,ckpt,scale,params,status,backend,device,lr_in,sr_out,n_frames,load_s,warm_s,infer_total_s,mean_ms,min_ms,max_ms,p95_ms,ms_std,fps_1_over_mean,fps_throughput,encode_s,peak_vram_GB,clipiqa_mean,clipiqa_std,niqe_mean,niqe_n
+4xLSDIRCompactv2,srvgg,4xLSDIRCompactv2.pth,4,621424,ok,pytorch-fp16,cuda-RTX4000-ac,854x480,3416x1920,90,0.16,0.63,3.77,41.9,40.58,46.52,42.96,0.86,23.87,23.87,5.02,0.4,0.73,0.0,7.04,8

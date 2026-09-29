@@ -35,7 +35,7 @@ class DatasetSampler:
         """
         self.seed = seed
         self.rng = random.Random(seed)
-        np.random.seed(seed)
+        self._rng = np.random.default_rng(seed)
         
         # Parse dataset configs
         self.datasets = []

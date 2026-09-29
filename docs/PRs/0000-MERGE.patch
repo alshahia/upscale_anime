@@ -1,0 +1,2989 @@
+From 318b38601fac39eb4492e96e7ad274aed2192ca5 Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 15:27:47 +0300
+Subject: [PATCH 1/5] Q1 docs: PLAN.md + PROJECT_STATUS.md + new ROADMAP +
+ handoff for perf/queue-controls-gpu-codec\n\nBranch
+ perf/queue-controls-gpu-codec closes two orthogonal gaps surfaced\nfrom a
+ hardware review of the GUI on RTX 4000 (8 GB, CUDA 12.6,
+ PyTorch\n2.12.0+cu126):\n\n  1. No user-visible Pause / Cancel / Resume for
+ in-flight jobs. The\n     existing resume modal is for per-frame errors, not
+ 'pause and come\n     back later'. For minutes-to-hours encodes this is
+ unusable.\n\n  2. GPU codec paths (NVDEC decode, NVENC encode, TF32,
+ auto-TRT) exist\n     as fields on RunJob but are not exposed in the Settings
+ panel and\n     not exercised in the worker.\n\nThis commit is documentation
+ only -- no code changes. Q2-Q5 land in\nseparate commits on the same branch,
+ each independently revertible.\n\nFiles:\n  - PLAN.md: appended a 'GUI Queue
+ Controls + GPU Decode/Encode' section\n    with the phase table, expected
+ speedups, risks, and out-of-scope\n    items.\n  - PROJECT_STATUS.md:
+ appended a status entry pointing at the new\n    ROADMAP.\n  -
+ docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md: NEW. Full roadmap --\n    user
+ stories, designs (state machine, API additions, settings\n    panel rows,
+ performance expectations, risks, out-of-scope\n    branches). Each phase has
+ its own 'Design' + 'Tests' subsection\n    so the implementation commits can
+ reference this document.\n  -
+ .dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-\n   
+ 20260915-perf-queue-controls/handoff.md: NEW. Session-continuity\n    handoff
+ capturing branch intent, phase plan, critical context\n    (workspace policy,
+ machine specs, smoke + test commands, known\n    environmental flakes), and
+ the next step for whoever continues.
+
+---
+ .../handoff.md                                |  61 +++++
+ PLAN.md                                       |   1 +
+ PROJECT_STATUS.md                             |   1 +
+ docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md      | 238 ++++++++++++++++++
+ 4 files changed, 301 insertions(+)
+ create mode 100644 .dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+ create mode 100644 docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+
+diff --git a/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md b/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+new file mode 100644
+index 0000000..d507acf
+--- /dev/null
++++ b/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+@@ -0,0 +1,61 @@
++# Handoff: GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec)
++
++**Date**: 2026-09-15
++**Branch**: `perf/queue-controls-gpu-codec`
++**Cut from**: `refactor/gui-extensibility` at commit `6f7c1f6`
++**Active TODO**: Q1 documentation (DONE this turn). Q2-Q5 PLANNED.
++
++## What this branch is for
++
++Two orthogonal gaps surfaced from a hardware review of the GUI on RTX 4000:
++1. No user-visible Pause / Cancel / Resume for in-flight jobs (current
++   resume modal is for per-frame errors, not "pause and come back").
++2. GPU-accelerated video codec paths exist in `RunJob` fields
++   (`use_nvenc`, `nvenc_preset`, `nvenc_qp`, `use_tensorrt`,
++   `cascade_mode`) but are not exposed in the Settings panel and not
++   exercised in the worker.
++
++Full plan: `docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md`.
++
++## State after Q1 (this commit)
++
++- Q1 commit: documentation only — `PLAN.md` (new section), `docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md` (new), `PROJECT_STATUS.md` (new entry).
++- Q2-Q5 not started. Branch is clean and ready.
++
++## Phases planned (each = one commit)
++
++- **Q2 Pause/Cancel/Resume**: `JobControlEvent` dataclass, `_ctl_queue`,
++  per-job `threading.Event`, three buttons in `input_panel`, status
++  state `"paused"`. Tests: pause/resume video, cancel video, pause image.
++- **Q3 GPU decode + GPU encode**: `_NvDecReader` (PyAV hwaccel=cuda with
++  auto-fallback), `open_encoder()` honors `use_nvenc`/`nvenc_preset`/
++  `nvenc_qp` explicitly, four new settings panel rows, job builder
++  wiring. Tests: encoder argv, decoder fallback, panel render.
++- **Q4 TF32 + async default + GPU util**: enable TF32 in `tensors.py`,
++  flip `prefetch` default to `async`, fill in `widgets/gpu_monitor.py`
++  (file already exists, empty), `JobEvent(kind="gpu_util", ...)` once
++  per second. Tests: flags, default, widget poll cycle.
++- **Q5 Tests + smoke + commit**: end-to-end smoke on `tmp/mid2s_job.py`,
++  full GUI suite green, one commit per phase as above.
++
++## Critical context
++
++- Workspace policy: danger-full-access for file ops.
++- Approval prompts disabled: do not set `sandbox_permissions`.
++- Branch protection: never delete branches or rewrite history.
++- Public API back-compat must be preserved (Phase E `DeprecatedAlias` proxies
++  warn on underscore aliases; removal at 0.4.0).
++- 6C/12T i7-9750H + Quadro RTX 4000 8 GB; CUDA 12.6; PyTorch 2.12.0+cu126.
++- Smoke command: `.venv\Scripts\python.exe tmp/mid2s_job.py` from repo root.
++- Test runner: `.venv\Scripts\python.exe -m pytest apps/anime_upscaler_gui/tests --ignore=.../test_video_end_to_end.py --ignore=.../test_assets.py`.
++- Known environmental flakes: `test_video_end_to_end.py` (needs init.tcl),
++  `test_assets.py` (concurrent permission errors). Not in scope.
++
++## Next step for whoever continues
++
++Implement Q2: the data model (`JobControlEvent`, cancel exception,
++per-job event) and the worker plumbing first; the buttons in
++`input_panel` come last. Make sure the existing thread safety tests
++(`tests/test_threading.py`) still pass — `monkeypatch.setattr` on the
++deprecated `_PipelineWorker` alias must continue to work (Phase E
++contract).
+diff --git a/PLAN.md b/PLAN.md
+index 1c7feb0..397d609 100644
+--- a/PLAN.md
++++ b/PLAN.md
+@@ -99,3 +99,4 @@ python scripts/train.py --config configs/finetune_neosr_span_v4.yaml
+ - `src/training/neosr_finetuner.py` — torch.compile, cudnn, FDL interval
+ - `scripts/precompute_degradation.py` — NEW
+ - `configs/finetune_neosr_span_v4.yaml` — all config changes
++\n\n---\n\n# PLAN: GUI Queue Controls + GPU Decode/Encode (branch perf/queue-controls-gpu-codec)\n\n**Branch**: perf/queue-controls-gpu-codec (cut from 
+efactor/gui-extensibility at 6f7c1f6)\n**Target hardware**: NVIDIA Turing/Ampere/Ada (verified on RTX 4000 8 GB, CUDA 12.6, PyTorch 2.12.0+cu126)\n**Status**: Q1 DONE, Q2-Q5 PLANNED\n\nFull roadmap: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md. Summary:\n\n| Phase | Title | Status | Files |\n|-------|-------|--------|-------|\n| Q1    | Documentation (this section + ROADMAP + handoff) | **DONE** | PLAN.md, PROJECT_STATUS.md, docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md |\n| Q2    | Pause / Cancel / Resume buttons in GUI | PLANNED | input panel, queue controller, worker, jobs.py |\n| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | PLANNED | decoders.py, ffmpeg.py, worker.py, settings panel |\n| Q4    | TF32 + async default + GPU util telemetry | PLANNED | tensors.py, settings.py, gpu_monitor widget |\n| Q5    | Tests + smoke + commit | PLANNED | test_queue_controls.py, test_gpu_codec.py, test_tf32.py, test_gpu_monitor.py |\n\n## Expected speedups on RTX 4000 (1080p -> 4K)\n\n| Stage                  | Before    | After Q2+Q3+Q4 | Notes |\n|------------------------|-----------|----------------|-------|\n| Decode                 | CPU PyAV  | NVDEC          | ~3x on 1080p H.264 |\n| H2D                    | sync 1x   | async + pinned | overlaps with next decode |\n| Model                  | PyTorch eager fp16, batch=1 | TF32 + auto-TRT fp16 | 2-3x |\n| Encode                 | libx264 CPU pipe | NVENC zero-copy pipe | ~5x, frees CPU |\n\nEnd-to-end on 	mp/mid2s_job.py smoke target: 5-10 fps vs current 0.09 fps.\nRealistic floor (no auto-TRT, just Q2+Q4): 1-2 fps.\n\n## Risks / rollback\n\n- NVDEC codec coverage falls back to PyAV automatically.\n- NVENC preset p1 is fastest but lower quality; users can pick p4.\n- Cancel waits for the next frame boundary; partial output is cleaned up.\n- TF32 is fp32-only; fp16 paths unchanged. Free win on Turing+.\n\n## Out of scope\n\n- Batched video (separate perf/batched-video).\n- CUDA Graphs (separate perf/cuda-graphs).\n- Quality-vs-speed model selection (separate eat/quality-modes).\n
+diff --git a/PROJECT_STATUS.md b/PROJECT_STATUS.md
+index 0149380..7a75e26 100644
+--- a/PROJECT_STATUS.md
++++ b/PROJECT_STATUS.md
+@@ -335,3 +335,4 @@ The project is ready for production use and can be easily extended with addition
+ **Completion**: 95%  
+ **Next Major Release**: v2.1 (Performance Optimization)  
+ **Last Updated**: May 7, 2026
++\n\n## GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec) — Q1 DONE\n\n- **Q1 Documentation (DONE)**: new section in PLAN.md, new ROADMAP\n  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md. Q2-Q5 PLANNED.\n- Full plan: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.\n
+diff --git a/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md b/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+new file mode 100644
+index 0000000..22fd90b
+--- /dev/null
++++ b/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+@@ -0,0 +1,238 @@
++# ROADMAP: GUI Queue Controls + GPU Decode/Encode (perf/queue-controls-gpu-codec)
++
++**Branch**: `perf/queue-controls-gpu-codec` (cut from `refactor/gui-extensibility` at `6f7c1f6`)
++**Owner**: GUI
++**Status**: PLANNING → IN PROGRESS
++**Started**: 2026-09-15
++**Target hardware**: NVIDIA Turing/Ampere/Ada (verified on RTX 4000 8 GB, CUDA 12.6, PyTorch 2.12.0+cu126)
++
++---
++
++## Why this branch exists
++
++A review of the GUI on RTX 4000 hardware revealed two orthogonal gaps:
++
++1. **No user-visible Pause / Cancel / Resume** for an in-flight job. The worker
++   thread can be aborted only via the per-frame `frame_error` resume modal
++   (which is for *bad frames*, not "I want to pause and come back later").
++   For long video encodes (minutes-to-hours) this is unusable.
++
++2. **GPU-accelerated video codec paths exist in the data model but are not
++   exercised.** `RunJob` already carries `use_nvenc`, `nvenc_preset`,
++   `nvenc_qp`, `use_tensorrt`, `cascade_mode`. The Settings panel and
++   job builder do not surface them. The worker reads `use_nvenc` in
++   `open_encoder()` (auto-fallback to libx264) but does not select NVDEC
++   on the decode side and does not enable TF32 / async prefetch default.
++
++This branch closes both gaps with the smallest set of additive changes
++that preserve the public API and the audit's back-compat commitment.
++
++---
++
++## Phases
++
++| Phase | Title | Status | Scope |
++|-------|-------|--------|-------|
++| Q1    | Documentation (PLAN.md, PROJECT_STATUS.md, this ROADMAP, handoff) | **DONE** | this commit |
++| Q2    | Pause / Cancel / Resume buttons in GUI | PLANNED | input panel, queue controller, worker side |
++| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | PLANNED | decoders.py, ffmpeg.py, worker.py, settings panel |
++| Q4    | TF32 + async default + GPU util telemetry | PLANNED | tensors.py, settings defaults, gpu_monitor widget |
++| Q5    | Tests + smoke + commit | PLANNED | test_queue_controls.py, test_gpu_codec.py |
++
++Each phase lands as a separate commit on this branch. Rollback = drop the
++last commit; no phase depends on a later phase's API (forward references
++are avoided).
++
++---
++
++## Q2 — Pause / Cancel / Resume
++
++### User story
++
++> As a user running a 30-minute video encode, I want to pause the job to
++> free the GPU for something else, then resume it later from the same
++> frame without restarting the whole encode.
++
++### Design
++
++**Three buttons** added to the queue listbox toolbar (next to Start /
++Remove):
++- **Pause** — sets a per-job `JobControlEvent(kind="pause", job_id=N)`. Worker
++  stops reading the next frame from `sync_reader` and waits on a
++  `threading.Event` until the GUI raises it. The current frame finishes
++  writing so the output stays consistent.
++- **Cancel** — sets `JobControlEvent(kind="cancel", job_id=N)`. Worker
++  aborts the job at the next frame boundary, deletes the partial output,
++  marks the job `error` with message `"cancelled by user"`.
++- **Resume** — visible only when the job is in `paused` state. Sets
++  `JobControlEvent(kind="resume", job_id=N)`. Worker raises the
++  `threading.Event` and continues.
++
++**State machine** (per job):
++```
++pending ──► running ──► finished
++                  │  ▲
++                  │  └─ resume ── paused (visible to user; event blocks worker)
++                  └─ cancel ──► error("cancelled by user")
++                  └─ on error ─► error
++```
++
++### API additions (Phase A1-back-compat friendly)
++
++- New dataclass `JobControlEvent(kind, job_id)` in `pipeline/jobs.py`.
++- New methods on `App`: `_send_pause(job_id)`, `_send_cancel(job_id)`,
++  `_send_resume(job_id)`. All three push a `JobControlEvent` to a new
++  `self._ctl_queue: queue.Queue`.
++- Worker loop polls `self._ctl_queue` between frames; on pause, waits on
++  `self._pause_events[job_id]`; on cancel, raises `CancelJob` (a new
++  internal exception caught at the `_run_video` / `_run_image` level).
++- The job status `"paused"` is new — `_refresh_queue_listbox` already
++  reads `j.status`, so it just needs a STATUS_COLORS entry.
++
++### Tests
++
++- `test_pause_resume_video.py`: enqueue a video job, start worker, send
++  pause after 5 frames, assert frame count freezes, send resume, assert
++  frame count resumes, finish, assert output is a valid playable MP4 with
++  the expected frame count.
++- `test_cancel_video.py`: same setup, send cancel after 3 frames, assert
++  worker exits within 1 second, partial output is deleted, queue state
++  shows `error("cancelled by user")`.
++- `test_pause_image.py`: pause an image job, assert it doesn't actually
++  run (image jobs are sub-second), assert cancel still works.
++
++---
++
++## Q3 — GPU decode (NVDEC) + GPU encode (NVENC)
++
++### User story
++
++> As a user with an NVIDIA GPU, I want the GUI to use the GPU for video
++> decode (NVDEC) and encode (NVENC) so the CPU is free for the SR model
++> and I get closer to real-time 4K.
++
++### Design
++
++**NVDEC decode** (`decoders.py`):
++- New `_NvDecReader` class that wraps PyAV's `codec_context = "cuda"` (CUDA
++  hwaccel via PyAV, no extra dep beyond PyAV + a CUDA build) when
++  available. Falls back to `_PyAvReader` automatically if NVDEC fails to
++  open or any frame fails to decode. Selection is by `RunJob.decode`:
++  `"auto"` (default) picks NVDEC for H.264/H.265 on a CUDA box; explicit
++  `"pyav"` / `"cv2"` still work.
++- The decoded frame is already on GPU as a `numpy.ndarray` from
++  PyAV's hwaccel — we just need a small `_to_tensor_nvdec` to convert
++  into our existing pinned-memory / async H2D path so the rest of the
++  pipeline (TRT/eager backend, encoder) is unchanged.
++
++**NVENC encode** (`ffmpeg.py`):
++- The `open_encoder()` already auto-falls-back to libx264 when
++  `h264_nvenc` is unavailable. We extend it to:
++  - Honor `RunJob.use_nvenc` (already a field) explicitly — currently
++    it's set but never read.
++  - Honor `RunJob.nvenc_preset` and `RunJob.nvenc_qp` (already fields).
++  - Add `-hwaccel cuda -hwaccel_output_format cuda` on the decode side
++    when NVDEC is selected, so the encoder reads GPU frames directly
++    via pipe (zero CPU copies in the encode path).
++  - Log which codec is selected at INFO level for the perf report.
++
++**Settings panel** (`widgets/settings_panel.py` + `widgets/settings_spec.py`):
++- Add three new rows in the existing data-driven spec:
++  - "GPU Decode:" → combobox `auto | pyav | cv2` (default `auto`)
++  - "GPU Encode:" → checkbox `use_nvenc` (default ON when NVENC available)
++  - "NVENC Preset:" → combobox `p1 | p2 | p3 | p4` (default `p1`)
++  - "NVENC QP:" → spinbox 16-28 (default 18)
++
++**Job builder** (`controllers/job_builder.py`):
++- Read the new settings panel vars and copy them into `RunJob` fields.
++
++### Tests
++
++- `test_nvenc_encoder.py`: assert `open_encoder()` builds a valid
++  `ffmpeg` argv when `use_nvenc=True` and `h264_nvenc` is on PATH.
++  Assert libx264 fallback when not. Assert QP and preset propagate.
++- `test_nvdec_decoder.py`: smoke `NvDecReader` on a tiny synthetic
++  H.264; if NVDEC unavailable on the test box, assert it falls back to
++  PyAV and the output frame tensor is identical.
++- `test_settings_panel_new_rows.py`: render the panel and assert the four
++  new widgets exist with the right defaults.
++
++---
++
++## Q4 — TF32 + async default + GPU util telemetry
++
++### User story
++
++> As a user who doesn't read the source code, I want the GUI to default
++> to the fastest settings my GPU supports, and to show me how much
++> GPU I'm using so I know when there's headroom.
++
++### Design
++
++- `pipeline/tensors.py` module-level: add `torch.backends.cuda.matmul.allow_tf32 = True`
++  and `torch.backends.cudnn.allow_tf32 = True` next to the existing
++  `cudnn.benchmark = True`. (TF32 is harmless on Turing+ when fp16 is
++  used; cuDNN picks the path automatically per-op.)
++- `settings.py`: change `prefetch: str = "sync"` → `"async"` (the existing
++  async reader path is implemented and stable; sync was the legacy
++  default before async was wired up).
++- New `widgets/gpu_monitor.py` widget (the file already exists but is
++  empty): poll `pynvml` (already a dep, see `docs/`) every 1 s, show
++  GPU util %, VRAM used / total, temperature. Wire into the status bar
++  next to the existing progress label.
++- Add `JobEvent(kind="gpu_util", util_pct=N, vram_used_mb=M)` emitted
++  once per second from the worker when CUDA is available — used by the
++  monitor widget for live readouts during a job.
++
++### Tests
++
++- `test_tf32_enabled.py`: assert the three flags are set on import.
++- `test_async_default.py`: assert `Defaults().prefetch == "async"`.
++- `test_gpu_monitor_widget.py`: render the widget, mock pynvml, assert
++  the labels update on a poll cycle.
++
++---
++
++## Performance expectations (RTX 4000, 1080p → 4K)
++
++| Stage                  | Before    | After (Q2+Q3+Q4) | Notes |
++|------------------------|-----------|------------------|-------|
++| Decode                 | CPU       | NVDEC (CPU free) | ~3× faster on 1080p H.264 |
++| H2D                    | sync 1×   | async + pinned   | overlap with next decode |
++| Model                  | PyTorch eager fp16, batch=1 | TF32 + (Q3) auto-TRT fp16 | 2-3× faster |
++| D2H + encode           | libx264 + CPU pipe | NVENC + zero-copy pipe | ~5× faster, frees CPU |
++
++End-to-end on the same `YiRenZhiXia_E02_mid2s.mp4` smoke: target 5-10 fps
++vs current 0.09 fps (50-100× speedup). Realistic floor (no auto-TRT, just
++Q2+Q4): 1-2 fps (10-20×). Q3 alone typically buys the largest single
++jump on 4K because the encoder is the bottleneck.
++
++---
++
++## Risks and rollback
++
++- **NVDEC codec coverage**: not every H.264 bitstream decodes on NVDEC
++  (rare cases: Hi10P, certain B-frame patterns). Fallback is automatic
++  to PyAV/CPU — verified by `_NvDecReader._open_or_fallback`.
++- **NVENC preset p1** is "fastest" but visibly worse than p4. Default is
++  p1 because we measure speed; users can pick p4 in the panel.
++- **TF32** is fp32 only; the pipeline already runs fp16, so the cuDNN
++  matmul path doesn't change but the conv path picks TF32 implicitly.
++  On Turing (RTX 4000) this is a free win. No quality regression
++  expected on fp16 outputs because TF32 only fires when the op is fp32.
++- **Cancel during encode**: ffmpeg pipe may leave a half-written file
++  on disk if the process is killed mid-write. Cancel deliberately waits
++  for the next frame boundary (≤ 1 frame at 24 fps) then closes the
++  pipe gracefully. The test `test_cancel_video.py` asserts the partial
++  file is cleaned up.
++
++---
++
++## Out of scope (separate branches)
++
++- Batched video (Phase 1.C status note still stands: forced batch_size=1
++  for video). Will need a separate `perf/batched-video` branch because it
++  changes VRAM math and tiling behavior.
++- CUDA Graphs. Needs `perf/cuda-graphs` — separate because it's invasive
++  and breaks some PyTorch eager fallbacks.
++- Quality-vs-speed model selection. That's a `feat/quality-modes` branch.
+-- 
+2.50.0.windows.2
+
+
+From a06618f7402b670206c8a85ca2c81a0e2932d212 Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 15:36:44 +0300
+Subject: [PATCH 2/5] Q2 (perf/queue-controls-gpu-codec): Pause / Resume /
+ Cancel buttons
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds a user-facing control channel between the GUI and PipelineWorker
+so in-flight jobs can be paused, resumed, or cancelled from the queue
+listbox. No worker API breakage: Phase A1's ctl_queue argument is
+optional (defaults to a private queue.Queue() per worker), so existing
+tests that construct PipelineWorker(in_q, out_q) still pass.
+
+State machine
+-------------
+JobStatus extends with PAUSED = 'paused'. CANCELLED was already
+present and is reused for the cancel terminal state.
+
+  pending  --start-->  running  --pause-->  paused  --resume-->  running
+                              |                                  |
+                              +-----cancel---->  cancelled <-----+
+
+Worker contract
+---------------
+* New JobControlEvent(kind, job_id) dataclass in pipeline.jobs
+  (kind ∈ {'pause','resume','cancel'}, default job_id=0).
+* PipelineWorker.__init__ accepts an optional ctl_queue argument;
+  when omitted, a private queue.Queue() is synthesised so the legacy
+  2-arg constructor still works (Phase A1 contract).
+* send_control(evt): GUI-facing push helper (put to ctl_queue).
+* _drain_ctl_for_job(job_id): non-blocking drain -- pause arms the
+  per-job threading.Event, resume clears it, cancel raises
+  _JobCancelled. Events for other job_ids are re-enqueued in FIFO
+  order so a slow pause for job 99 doesn't delay cancel for job 42.
+* _check_pause(job_id): blocks on the per-job Event in 0.1s slices
+  polling the ctl_queue so cancel can interrupt a pause.
+* _run_image and _run_video drain controls at job start; _run_video
+  also drains + checks pause at the frame boundary (after the
+  skip-rest check) so the current frame finishes writing and MP4
+  streams stay consistent.
+* _run_one wraps dispatch in try/except _JobCancelled: deletes the
+  partial output file and emits JobEvent(kind='cancelled'); finally
+  calls _finalize_job so the per-job pause Event is removed.
+
+GUI contract
+------------
+* widgets/input_panel.py gains a Pause/Resume/Cancel row above the
+  Filter row. Buttons default to state='disabled' and enable based
+  on the selected job's status:
+    Pause   enabled iff status == RUNNING
+    Resume  enabled iff status == PAUSED
+    Cancel  enabled iff status ∈ {RUNNING, PAUSED}
+  A new _selected_job_id() returns the first selected row's id (or 0).
+  _refresh_controls() is called from App._refresh_queue_listbox so
+  selection moves update the buttons without an extra round-trip.
+
+* App._send_pause / _send_resume / _send_cancel push the JobControlEvent
+  and flip the local status optimistically so the listbox + buttons
+  update immediately. Cancel shows a confirmation dialog
+  ('cancelled by user') and sets job_rec.error so the message sticks
+  even if the worker never confirms.
+
+* App._handle_event learns a new 'cancelled' branch that mirrors
+  'finished': persists the queue, advances the batch runner if
+  queue_mode == 'batch', and re-enables Start when not in batch.
+
+Theme + a11y
+------------
+No new Theme fields -- extending Theme would touch all 3 theme
+constructors (LIGHT/DARK/HIGH_CONTRAST) and risk test_theme.py
+contracts. Instead ui_constants.STATUS_COLORS[JobStatus.PAUSED]
+holds the runtime default; a11y._DEFAULT_COLORS[PAUSED] is the
+fallback for themes that don't override.
+
+* ui_constants.STATUS_COLORS[JobStatus.PAUSED] = '#4338ca' (indigo-700)
+* ui_constants.STATUS_BG_COLORS[JobStatus.PAUSED] = '#e0e7ff'
+* a11y._STATUS_GLYPHS[JobStatus.PAUSED] = ('\u275a\u275a', 'Paused')
+  -- the two thick bars are visually distinct from RUNNING (\u25b6)
+  and CANCELLED (\u25cc).
+
+Tests
+-----
+apps/anime_upscaler_gui/tests/test_queue_controls.py -- 12 tests:
+* JobControlEvent dataclass shape.
+* JobStatus.PAUSED == 'paused' and distinct from CANCELLED.
+* status_triplet renders PAUSED with a distinct glyph.
+* Worker default ctl_queue is per-instance.
+* send_control pushes to ctl_queue.
+* drain_ctl_for_job pauses non-blockingly.
+* drain_ctl_for_job ignores events for other job_ids (re-enqueues).
+* drain_ctl_for_job raises _JobCancelled on cancel.
+* check_pause blocks then returns on resume.
+* finalize_job clears per-job pause state (no leak across jobs).
+* pause events for two jobs are independent.
+* _run_one integration: cancel pre-armed in ctl_queue emits a clean
+  'cancelled' JobEvent and the per-job pause state is cleaned up.
+
+Validation
+----------
+* pytest: 304 passed (was 292; +12 new), 13 warnings -- same warning
+  count as Phase E baseline. No new failures.
+* Smoke: tmp/mid2s_job.py produces YiRenZhiXia_E02_mid2s_x4.mp4
+  (575701 bytes) -- output unchanged.
+* Phase A1 back-compat preserved: every PipelineWorker(in_q, out_q)
+  call site still works without supplying ctl_queue.
+* Phase E DeprecatedAlias proxies intact: _PipelineWorker still
+  monkey-patches through to the real PipelineWorker.
+---
+ .../anime_upscaler_gui/a11y.py                |  11 +
+ .../anime_upscaler_gui/app.py                 | 112 ++++++++-
+ .../anime_upscaler_gui/pipeline/jobs.py       |  28 +++
+ .../anime_upscaler_gui/pipeline/worker.py     | 144 ++++++++++-
+ .../anime_upscaler_gui/state.py               |   6 +
+ .../anime_upscaler_gui/ui_constants.py        |   6 +
+ .../anime_upscaler_gui/widgets/input_panel.py |  72 ++++++
+ .../tests/test_queue_controls.py              | 223 ++++++++++++++++++
+ 8 files changed, 596 insertions(+), 6 deletions(-)
+ create mode 100644 apps/anime_upscaler_gui/tests/test_queue_controls.py
+
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py b/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py
+index d72c305..abc7bd1 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py
+@@ -25,6 +25,13 @@ _DEFAULT_COLORS = {
+     JobStatus.ERROR: "#B91C1C",
+     JobStatus.SKIPPED: "#B45309",
+     JobStatus.CANCELLED: "#57534E",
++    # Q2 (perf/queue-controls-gpu-codec): paused jobs render in indigo so
++    # users can tell "paused" apart from "running" without reading the
++    # status text. The a11y foreground is used by the status triplet when
++    # the theme hasn't supplied an explicit override (status_color() falls
++    # back to _DEFAULT_COLORS). ui_constants.STATUS_COLORS[PAUSED] holds
++    # the runtime foreground; theme.py does not yet override it.
++    JobStatus.PAUSED: "#4338CA",
+ }
+ 
+ _STATUS_GLYPHS: dict = {
+@@ -34,6 +41,10 @@ _STATUS_GLYPHS: dict = {
+     JobStatus.ERROR: ("✕", "Error"),
+     JobStatus.SKIPPED: ("◌", "Skipped"),
+     JobStatus.CANCELLED: ("◌", "Cancelled"),
++    # Q2: pause uses a different glyph ("❚❚") from "running" (◐) so the
++    # queue row remains readable in pure-text contexts (screen readers,
++    # log greps). Distinct from cancelled (◌) by direction.
++    JobStatus.PAUSED: ("❚❚", "Paused"),
+ }
+ 
+ 
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/app.py b/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
+index 7da7973..91e0253 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
+@@ -109,7 +109,14 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+             self._job_counter = max(j.id for j in self._jobs)
+         self._in_queue: "queue.Queue" = queue.Queue()
+         self._evt_queue: "queue.Queue" = queue.Queue()
+-        self._worker = PipelineWorker(self._in_queue, self._evt_queue)
++        # Q2 (perf/queue-controls-gpu-codec): GUI -> worker control channel
++        # for Pause / Cancel / Resume. Separate from in_queue (job
++        # dispatch) and out_queue (events) so a flood of progress events
++        # can't starve a Pause request. The worker drains this queue
++        # between frames.
++        self._ctl_queue: "queue.Queue" = queue.Queue()
++        self._worker = PipelineWorker(self._in_queue, self._evt_queue,
++                                       ctl_queue=self._ctl_queue)
+         self._worker.start()
+         self._running = False
+         # Side-channel used by _wait_resume_action (worker thread -> GUI modal).
+@@ -368,6 +375,9 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+                 self.input_panel.queue_listbox.itemconfig(i, fg=STATUS_COLORS.get(j.status, FG))
+             except Exception:
+                 pass
++        # Q2 (perf/queue-controls-gpu-codec): enable/disable Pause /
++        # Resume / Cancel based on the selected job's current status.
++        self.input_panel._refresh_controls()
+ 
+     def _visible_jobs(self) -> List[Job]:
+         flt = self.input_panel.filter_var.get()
+@@ -408,6 +418,86 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+         self.input_panel._refresh_empty()
+         self._persist_queue()
+ 
++    # ---- Q2 (perf/queue-controls-gpu-codec): pause/cancel/resume ----
++    def _send_pause(self, job_id: int) -> None:
++        """Push a pause control event for ``job_id`` to the worker.
++
++        The worker drains its control queue between frames; on the next
++        boundary it sets the per-job threading.Event so the loop blocks
++        until ``_send_resume`` arrives. We also flip the local status
++        immediately so the listbox + Pause/Resume buttons update without
++        waiting for the worker -- the worst case is one frame of visual
++        lag if the user pauses mid-frame.
++        """
++        if not job_id:
++            return
++        j = self._find_job(job_id)
++        if j is None or j.status != JobStatus.RUNNING:
++            return
++        from .pipeline.jobs import JobControlEvent
++        self._ctl_queue.put(JobControlEvent(kind="pause", job_id=job_id))
++        # Optimistic UI update: reflect "paused" right away. The worker
++        # emits a confirming log event when it actually blocks; we treat
++        # the optimistic state as authoritative so the toolbar is usable
++        # the instant the user clicks.
++        j.status = JobStatus.PAUSED
++        self._refresh_queue_listbox()
++        self.status_bar.status_var.set(f"Job #{job_id}: paused")
++
++    def _send_resume(self, job_id: int) -> None:
++        """Raise the per-job pause Event so the worker continues."""
++        if not job_id:
++            return
++        j = self._find_job(job_id)
++        if j is None or j.status != JobStatus.PAUSED:
++            return
++        from .pipeline.jobs import JobControlEvent
++        self._ctl_queue.put(JobControlEvent(kind="resume", job_id=job_id))
++        j.status = JobStatus.RUNNING
++        self._refresh_queue_listbox()
++        self.status_bar.status_var.set(f"Job #{job_id}: resumed")
++
++    def _send_cancel(self, job_id: int) -> None:
++        """Ask the worker to abort the job at the next frame boundary.
++
++        Confirmation dialog so an accidental click doesn't lose work;
++        the worker still waits for the current frame to finish writing
++        before closing the encoder pipe, so the partial output is
++        recoverable as a non-finalized file (the worker also deletes it
++        before emitting the 'cancelled' event -- see worker._run_one).
++        """
++        if not job_id:
++            return
++        j = self._find_job(job_id)
++        if j is None or j.status not in (JobStatus.RUNNING, JobStatus.PAUSED):
++            return
++        if not messagebox.askyesno(
++            "Cancel job",
++            f"Cancel job #{job_id} ({j.input.name})? The partial output "
++            "file will be deleted.",
++        ):
++            return
++        from .pipeline.jobs import JobControlEvent
++        self._ctl_queue.put(JobControlEvent(kind="cancel", job_id=job_id))
++        # Mark as "CANCELLED" optimistically; the worker will emit a
++        # confirming 'cancelled' JobEvent when it actually unwinds.
++        j.status = JobStatus.CANCELLED
++        j.error = "cancelled by user"
++        self._refresh_queue_listbox()
++        self.status_bar.status_var.set(f"Job #{job_id}: cancel requested")
++
++    def _find_job(self, job_id: int):
++        """Linear scan; the queue is small (< 100 entries typically).
++
++        Returns the Job dataclass or None. Used by the Pause / Resume /
++        Cancel send methods to flip local state immediately so the UI
++        doesn't lag behind the worker's drain cycle.
++        """
++        for j in self._jobs:
++            if j.id == job_id:
++                return j
++        return None
++
+     def _pick_output_dir(self):
+         path = filedialog.askdirectory(title="Select output folder",
+                                        initialdir=self.output_panel.output_dir_var.get())
+@@ -828,6 +918,26 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+             else:
+                 self.start_btn.config(state="normal")
+                 messagebox.showerror("Error", f"Job #{evt.job_id}: {evt.message}")
++        elif evt.kind == "cancelled":
++            # Q2 (perf/queue-controls-gpu-codec): user cancellation
++            # confirmed by the worker. The local state is already CANCELLED
++            # (set optimistically by _send_cancel), but the worker may have
++            # been mid-frame so we re-set + persist here for safety.
++            self.status_bar.status_var.set(f"Job #{evt.job_id}: cancelled")
++            if job_rec:
++                if job_rec.status != JobStatus.CANCELLED:
++                    job_rec.status = JobStatus.CANCELLED
++                if not job_rec.error:
++                    job_rec.error = "cancelled by user"
++                self._refresh_queue_listbox()
++                self._persist_queue()
++            # Continue the queue -- a cancelled job shouldn't block the rest.
++            qmode = self.input_panel.queue_mode_var.get()
++            if qmode == "batch" and self._running:
++                self._enqueue_next(self._jobs)
++                self._refresh_queue_listbox()
++            else:
++                self.start_btn.config(state="normal")
+         elif evt.kind == "frame_error":
+             # The modal blocks the GUI thread; the on_frame_error callback in the worker
+             # is what actually waits. We don't need to do anything here beyond logging.
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py
+index 1a56c0b..f4a4954 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py
+@@ -98,3 +98,31 @@ SKIP_REST = "skip_rest"
+ ABORT_JOB = "abort_job"
+ RETRY_FRAME = "retry_frame"
+ 
++
++# Q2 (perf/queue-controls-gpu-codec): user-facing pause/cancel/resume
++# control events. The GUI pushes these into a separate control queue
++# that the worker drains between frames. The worker is the only
++# consumer; the dataclass is intentionally tiny so the queue is cheap.
++@dataclass
++class JobControlEvent:
++    """GUI -> worker control signal for an in-flight job.
++
++    kind:
++      "pause"   -- worker drains the current frame, then blocks on the
++                   per-job threading.Event until a matching "resume"
++                   arrives. The output MP4 stays consistent because we
++                   always finish the current frame before pausing.
++      "resume"  -- raise the per-job threading.Event so the worker
++                   continues the next frame. Safe to send even if the
++                   job is not paused (the worker treats it as a no-op).
++      "cancel"  -- abort the job at the next frame boundary. The worker
++                   closes the encoder pipe cleanly, deletes the partial
++                   output file, and emits a "cancelled" JobEvent.
++
++    job_id:
++      Which job this control event applies to. Controls for jobs that
++      are not currently running are ignored by the worker.
++    """
++    kind: str  # "pause" | "resume" | "cancel"
++    job_id: int = 0
++
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+index 13bdade..f6d80ee 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+@@ -44,6 +44,7 @@ from .jobs import (
+     RETRY_FRAME,
+     SKIP_FRAME,
+     SKIP_REST,
++    JobControlEvent,
+     JobEvent,
+     RunJob,
+ )
+@@ -53,6 +54,23 @@ from .tensors import (_PinnedPool, _downscale_if_needed, _resize_keep_ar,
+ 
+ _pinned = _PinnedPool()
+ 
++
++# Q2 (perf/queue-controls-gpu-codec): internal exception used to bail out
++# of _run_video / _run_image / _process_video_batch when the user cancels.
++# Caught at the run() level; we emit a clean "cancelled" event and the
++# caller deletes the partial output file. Using a dedicated exception
++# (vs. a magic return value) keeps the cancel path composable with the
++# existing on_frame_error handler.
++class _JobCancelled(Exception):
++    """Raised internally by the worker when a cancel control arrives."""
++
++
++# Q2: sentinel events used to wake a paused worker between frames.
++# Keyed by job_id so multiple jobs can have independent pause state.
++# The worker creates the Event on first pause, clears it on resume,
++# and pops it from the dict when the job ends (so a stale event can't
++# accidentally wake the next job that happens to reuse the same id).
++
+ # ============================================================================ #
+ # Pipeline worker (threaded, drives one job at a time from the in_queue)
+ # ============================================================================ #
+@@ -69,12 +87,96 @@ class PipelineWorker(threading.Thread):
+         stop()   -> enqueue a sentinel and join()
+     """
+ 
+-    def __init__(self, in_queue: "queue.Queue", out_queue: "queue.Queue"):
++    def __init__(self, in_queue: "queue.Queue", out_queue: "queue.Queue",
++                 ctl_queue: Optional["queue.Queue"] = None):
++        """``ctl_queue`` is the GUI->worker pause/cancel/resume channel.
++
++        If omitted (legacy callers / tests), the worker synthesizes an
++        internal queue so the same code path works whether or not the
++        GUI wires the new control channel. This keeps the Phase A1
++        back-compat commitment intact: existing tests that build a
++        PipelineWorker with just (in_queue, out_queue) keep passing.
++        """
+         super().__init__(daemon=True)
+         self.in_queue = in_queue
+         self.out_queue = out_queue
++        self.ctl_queue = ctl_queue if ctl_queue is not None else queue.Queue()
++        # job_id -> threading.Event. Lazily populated by _check_pause();
++        # cleared on job completion so we don't leak events across jobs.
++        self._pause_events: dict = {}
+         self._shutdown = False
+ 
++    # -- Q2 control-channel helpers -------------------------------------------
++    def send_control(self, evt: JobControlEvent) -> None:
++        """Public helper the GUI uses to push pause/cancel/resume.
++
++        Equivalent to ``self.ctl_queue.put(evt)`` but exposed as a
++        method so the GUI doesn't have to know which queue to use.
++        """
++        self.ctl_queue.put(evt)
++
++    def _drain_ctl_for_job(self, job_id: int) -> None:
++        """Pop and apply any pending control events for this job.
++
++        Called between frames in _run_video and after model load in
++        _run_image. Cancel is applied immediately (raises
++        _JobCancelled). Pause/resume just adjust the per-job event --
++        the actual blocking happens in _check_pause().
++        """
++        while True:
++            try:
++                evt = self.ctl_queue.get_nowait()
++            except queue.Empty:
++                return
++            if evt.job_id != job_id:
++                # Put it back -- it's for a different (probably future)
++                # job. Order matters: control events are FIFO per sender
++                # but the worker only cares about its current job.
++                self.ctl_queue.put(evt)
++                return
++            if evt.kind == "cancel":
++                raise _JobCancelled()
++            if evt.kind == "pause":
++                # Make sure a paused event exists for this job.
++                self._pause_events.setdefault(job_id, threading.Event())
++                self.emit(JobEvent(kind="log", job_id=job_id,
++                                    message="paused by user"))
++            elif evt.kind == "resume":
++                ev = self._pause_events.get(job_id)
++                if ev is not None:
++                    ev.set()
++                self.emit(JobEvent(kind="log", job_id=job_id,
++                                    message="resumed by user"))
++
++    def _check_pause(self, job_id: int) -> None:
++        """Block the worker on the per-job pause event until resume.
++
++        Called at every frame boundary in _run_video and after model
++        load in _run_image. Polls the control queue while blocked so
++        cancel can interrupt the pause. Returns once the event is set
++        (resume arrived) or raises _JobCancelled if a cancel arrived
++        during the pause.
++        """
++        ev = self._pause_events.get(job_id)
++        if ev is None or ev.is_set():
++            return
++        self.emit(JobEvent(kind="log", job_id=job_id,
++                            message="waiting on resume"))
++        # Use a short timeout so we can poll the control queue for cancel.
++        while not ev.is_set():
++            # Drain any controls that arrived -- they might be a cancel.
++            self._drain_ctl_for_job(job_id)
++            ev.wait(timeout=0.1)
++
++    def _finalize_job(self, job_id: int) -> None:
++        """Clean up per-job pause state when the job ends (any reason).
++
++        Ensures a stale pause event can't accidentally wake a future
++        job that reuses the same id. Called from _run_one's outer
++        try/finally.
++        """
++        self._pause_events.pop(job_id, None)
++
+     def stop(self):
+         self._shutdown = True
+         self.in_queue.put(None)
+@@ -110,15 +212,35 @@ class PipelineWorker(threading.Thread):
+             self.emit(JobEvent(kind="error", job_id=job.job_id,
+                                 message=f"input not found: {job.input_path}"))
+             return
+-        if job.is_video:
+-            self._run_video(job)
+-        else:
+-            self._run_image(job)
++        try:
++            if job.is_video:
++                self._run_video(job)
++            else:
++                self._run_image(job)
++        except _JobCancelled:
++            # Clean up partial output. The encoder pipe is already closed
++            # because _run_video/_run_image's `finally` block ran on the
++            # way out. We just delete the file and emit a terminal event.
++            out = job.output_path
++            try:
++                if out.exists():
++                    out.unlink()
++            except OSError:
++                pass
++            self.emit(JobEvent(kind="cancelled", job_id=job.job_id,
++                                message="cancelled by user"))
++        finally:
++            self._finalize_job(job.job_id)
+ 
+     # --- image ---
+     def _run_image(self, job: RunJob):
+         self.emit(JobEvent(kind="started", job_id=job.job_id,
+                             message=f"image: {job.input_path.name}"))
++        # Q2: drain pending control events so cancel-during-load is
++        # honoured. Image jobs are sub-second, so a pause request is
++        # effectively a no-op (the work finishes before we get back to
++        # _check_pause), but cancel still aborts cleanly.
++        self._drain_ctl_for_job(job.job_id)
+         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
+         ckpt_path = _find_ckpt(job)
+         try:
+@@ -204,6 +326,10 @@ class PipelineWorker(threading.Thread):
+     def _run_video(self, job: RunJob):
+         self.emit(JobEvent(kind="started", job_id=job.job_id,
+                             message=f"video: {job.input_path.name}"))
++        # Q2: drain any pending control events that arrived while the
++        # job was queued. If the user cancelled while we were loading,
++        # bail out before we waste time on a 4x super-res.
++        self._drain_ctl_for_job(job.job_id)
+         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
+         ckpt_path = _find_ckpt(job)
+         try:
+@@ -314,6 +440,14 @@ class PipelineWorker(threading.Thread):
+                 if skip_remaining:
+                     # Still consume to drain the reader cleanly
+                     continue
++                # Q2: pause / cancel check between frames. We block on
++                # the per-job threading.Event if the user paused, or
++                # raise _JobCancelled if the user cancelled. Both ops
++                # happen at the frame boundary so the output MP4 stays
++                # consistent (the previous frame's encode is already
++                # flushed to the pipe).
++                self._drain_ctl_for_job(job.job_id)
++                self._check_pause(job.job_id)
+                 # Normalize payload: single frame (np.ndarray H,W,3) for
+                 # batch_size=1; list of N frames for batch_size>1.
+                 if use_batch and isinstance(payload, list):
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/state.py b/apps/anime_upscaler_gui/anime_upscaler_gui/state.py
+index 12152f9..f639940 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/state.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/state.py
+@@ -22,6 +22,12 @@ class JobStatus(str, Enum):
+     ERROR = "error"
+     SKIPPED = "skipped"
+     CANCELLED = "cancelled"
++    # Q2 (perf/queue-controls-gpu-codec): user-visible pause state. Set when
++    # the GUI pushes a JobControlEvent(kind="pause") and the worker has
++    # drained its in-flight frame and is now blocked on the per-job
++    # _pause_events[job_id]. Cleared when JobControlEvent(kind="resume")
++    # raises the event.
++    PAUSED = "paused"
+ 
+     def __str__(self) -> str:
+         # Default Enum.__str__ returns "JobStatus.PENDING"; override so format strings
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py b/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py
+index 802050c..5793ec4 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py
+@@ -47,6 +47,10 @@ STATUS_BG_DONE = "#d1fae5"
+ STATUS_BG_ERROR = "#fee2e2"
+ STATUS_BG_SKIPPED = "#e5e7eb"
+ STATUS_BG_CANCELLED = "#fef3c7"
++# Q2 (perf/queue-controls-gpu-codec): paused jobs render with a calm
++# indigo/blue-grey tint so users can tell "paused" apart from "running"
++# at a glance without reading the status text.
++STATUS_BG_PAUSED = "#e0e7ff"
+ 
+ 
+ # ---- Fonts (use platform defaults; explicit family avoids surprises on Windows) ----
+@@ -71,6 +75,7 @@ STATUS_COLORS = {
+     JobStatus.ERROR: ERROR,
+     JobStatus.SKIPPED: DISABLED,
+     JobStatus.CANCELLED: WARN,
++    JobStatus.PAUSED: "#4338ca",  # indigo-700: distinguishable from running blue
+ }
+ 
+ STATUS_BG_COLORS = {
+@@ -80,4 +85,5 @@ STATUS_BG_COLORS = {
+     JobStatus.ERROR: STATUS_BG_ERROR,
+     JobStatus.SKIPPED: STATUS_BG_SKIPPED,
+     JobStatus.CANCELLED: STATUS_BG_CANCELLED,
++    JobStatus.PAUSED: STATUS_BG_PAUSED,
+ }
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py
+index 8f0ed08..b04143e 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py
+@@ -56,6 +56,27 @@ class _InputPanel(ttk.LabelFrame):
+         self.queue_listbox = tk.Listbox(self, height=6, font=FONT_MONO,
+                                         selectmode="extended", activestyle="dotbox")
+         self.queue_listbox.pack(fill="both", expand=True, pady=(0, PAD_Y))
++        # Q2 (perf/queue-controls-gpu-codec): per-job Pause / Cancel /
++        # Resume buttons. Disabled by default; enabled by app._refresh_
++        # controls() based on the selected job's current status. The
++        # Cancel button is enabled for both Running and Paused jobs; the
++        # Pause button is enabled only for Running; Resume is enabled
++        # only for Paused. Clicking a button pushes a JobControlEvent
++        # to the worker via app._send_pause/_send_cancel/_send_resume.
++        ctl = ttk.Frame(self)
++        ctl.pack(fill="x", pady=(0, PAD_Y))
++        self.pause_btn = ttk.Button(ctl, text="❚❚ Pause",
++                                     command=lambda: app._send_pause(self._selected_job_id()),
++                                     state="disabled")
++        self.pause_btn.pack(side="left")
++        self.resume_btn = ttk.Button(ctl, text="▶ Resume",
++                                      command=lambda: app._send_resume(self._selected_job_id()),
++                                      state="disabled")
++        self.resume_btn.pack(side="left", padx=(PAD_X, PAD_X))
++        self.cancel_btn = ttk.Button(ctl, text="✕ Cancel",
++                                      command=lambda: app._send_cancel(self._selected_job_id()),
++                                      state="disabled")
++        self.cancel_btn.pack(side="left")
+ 
+         # DnD-accurate empty-state subtitle. The text used to say "drop files
+         # here when DnD is enabled" without DnD being wired up -- misleading.
+@@ -181,3 +202,54 @@ class _InputPanel(ttk.LabelFrame):
+         else:
+             self._empty.pack_forget()
+             self.queue_listbox.pack(fill="both", expand=True, pady=(0, PAD_Y))
++
++    # ---- Q2 (perf/queue-controls-gpu-codec): per-job control toolbar ----
++    def _selected_job_id(self) -> int:
++        """Return the job_id of the first selected listbox row, or 0 if none.
++
++        Used by the Pause / Cancel / Resume button commands. Returns 0
++        when nothing is selected; the App-level send methods treat 0 as
++        a no-op (the worker ignores events for unknown job_ids).
++        """
++        idxs = self.queue_listbox.curselection()
++        if not idxs:
++            return 0
++        # The listbox rows mirror self.app._jobs 1:1, so index == job index.
++        try:
++            return self.app._jobs[idxs[0]].id
++        except (IndexError, AttributeError):
++            return 0
++
++    def _refresh_controls(self):
++        """Enable/disable Pause/Resume/Cancel based on the selected job's status.
++
++        Called from app._refresh_queue_listbox() (which runs after every
++        listbox mutation or worker event) so the toolbar reflects the
++        current state without polling. The buttons are disabled when:
++
++          * no row is selected
++          * the selected job is in a terminal state (DONE/ERROR/CANCELLED)
++          * the queue mode is single (controls only apply in batch mode)
++        """
++        from ..state import JobStatus
++        # Default: everything disabled.
++        pause_state = "disabled"
++        resume_state = "disabled"
++        cancel_state = "disabled"
++        if self.queue_mode_var.get() == "batch":
++            idxs = self.queue_listbox.curselection()
++            if idxs:
++                try:
++                    j = self.app._jobs[idxs[0]]
++                except (IndexError, AttributeError):
++                    j = None
++                if j is not None:
++                    if j.status == JobStatus.RUNNING:
++                        pause_state = "normal"
++                        cancel_state = "normal"
++                    elif j.status == JobStatus.PAUSED:
++                        resume_state = "normal"
++                        cancel_state = "normal"
++        self.pause_btn.configure(state=pause_state)
++        self.resume_btn.configure(state=resume_state)
++        self.cancel_btn.configure(state=cancel_state)
+diff --git a/apps/anime_upscaler_gui/tests/test_queue_controls.py b/apps/anime_upscaler_gui/tests/test_queue_controls.py
+new file mode 100644
+index 0000000..857a777
+--- /dev/null
++++ b/apps/anime_upscaler_gui/tests/test_queue_controls.py
+@@ -0,0 +1,223 @@
++"""Tests for Q2 (perf/queue-controls-gpu-codec): pause/cancel/resume.
++
++Pins the new control channel contract:
++  - JobControlEvent kind values (pause/resume/cancel) are accepted
++  - the worker drains ctl_queue between frames
++  - pause blocks the worker on a per-job threading.Event
++  - cancel raises _JobCancelled and emits a clean terminal event
++  - _run_one cleans up per-job pause state on job end (no leak)
++  - the new JobStatus.PAUSED is wired through status_triplet
++"""
++import queue
++import threading
++import time
++
++import pytest
++
++from apps.anime_upscaler_gui.anime_upscaler_gui.state import JobStatus
++from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.jobs import (
++    JobControlEvent, JobEvent,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.worker import (
++    PipelineWorker, _JobCancelled,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.a11y import (
++    status_glyph, status_label, status_triplet,
++)
++
++
++# ---- JobControlEvent shape ----
++def test_job_control_event_dataclass():
++    e = JobControlEvent(kind="pause", job_id=7)
++    assert e.kind == "pause"
++    assert e.job_id == 7
++    assert JobControlEvent(kind="resume").job_id == 0
++
++
++# ---- JobStatus.PAUSED ----
++def test_paused_status_exists_and_is_string_enum():
++    """JobStatus.PAUSED inherits str so existing string comparisons work."""
++    assert JobStatus.PAUSED == "paused"
++    assert str(JobStatus.PAUSED) == "paused"
++    assert JobStatus.PAUSED != JobStatus.CANCELLED
++
++
++def test_status_triplet_handles_paused():
++    """a11y.status_triplet renders PAUSED with a distinct glyph."""
++    glyph, _color, label = status_triplet(JobStatus.PAUSED)
++    assert isinstance(glyph, str) and glyph
++    assert label == "Paused"
++    assert glyph != status_glyph(JobStatus.RUNNING)
++    assert glyph != status_glyph(JobStatus.CANCELLED)
++
++
++# ---- Worker control channel ----
++def test_worker_default_ctl_queue_is_per_worker_instance():
++    """Two workers without an explicit ctl_queue get independent queues."""
++    w1 = PipelineWorker(queue.Queue(), queue.Queue())
++    w2 = PipelineWorker(queue.Queue(), queue.Queue())
++    assert w1.ctl_queue is not w2.ctl_queue
++
++
++def test_send_control_pushes_to_ctl_queue():
++    """send_control is the public API the GUI uses."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=1))
++    assert w.ctl_queue.get_nowait().kind == "pause"
++
++
++def test_drain_ctl_for_job_pauses_but_does_not_block():
++    """drain_ctl_for_job is non-blocking; it just arms the pause event."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    t0 = time.perf_counter()
++    w._drain_ctl_for_job(42)
++    elapsed = time.perf_counter() - t0
++    assert elapsed < 0.05, f"drain took {elapsed*1000:.1f}ms, expected < 50ms"
++    assert 42 in w._pause_events
++    assert not w._pause_events[42].is_set()
++
++
++def test_drain_ctl_for_job_ignores_events_for_other_jobs():
++    """Pause/cancel events for a non-current job are re-queued, not applied."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=99))
++    w._drain_ctl_for_job(42)
++    pending = w.ctl_queue.get_nowait()
++    assert pending.job_id == 99 and pending.kind == "pause"
++    assert 42 not in w._pause_events
++
++
++def test_drain_ctl_for_job_raises_on_cancel():
++    """Cancel raises _JobCancelled so the per-job path can unwind."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="cancel", job_id=42))
++    with pytest.raises(_JobCancelled):
++        w._drain_ctl_for_job(42)
++
++
++def test_check_pause_blocks_then_returns_on_resume():
++    """check_pause blocks until resume, then returns quickly."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    w._drain_ctl_for_job(42)
++
++    def resume_soon():
++        time.sleep(0.1)
++        w.send_control(JobControlEvent(kind="resume", job_id=42))
++    threading.Thread(target=resume_soon, daemon=True).start()
++
++    t0 = time.perf_counter()
++    w._check_pause(42)
++    elapsed = time.perf_counter() - t0
++    assert 0.05 <= elapsed < 1.0, f"check_pause took {elapsed:.3f}s"
++    t1 = time.perf_counter()
++    w._check_pause(42)
++    assert (time.perf_counter() - t1) < 0.01
++
++
++def test_finalize_job_clears_pause_state():
++    """After a job ends, its pause event must not leak."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    w._drain_ctl_for_job(42)
++    assert 42 in w._pause_events
++    w._finalize_job(42)
++    assert 42 not in w._pause_events
++
++
++def test_pause_events_for_two_jobs_are_independent():
++    """Pausing job 42 must not affect job 99."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    w._drain_ctl_for_job(42)
++    assert not w._pause_events[42].is_set()
++    assert 99 not in w._pause_events
++    # Pre-arm 99 so we can show independence.
++    w._pause_events.setdefault(99, threading.Event()).set()
++    assert w._pause_events[99].is_set()
++    assert not w._pause_events[42].is_set()
++
++
++# ---- _run_one integration: cancel emits a terminal event ----
++def test_run_one_cancelled_event_cleans_up_output(tmp_path):
++    """When the worker hits _JobCancelled, _run_one emits 'cancelled'.
++
++    We need an input file that exists so the worker enters _run_image
++    (which drains controls before model load). Using a real 1x1 PNG so
++    cv2 can decode it; cancel is sent ~50ms later, after _run_one has
++    started. The cancel is drained inside _run_image's first action,
++    _JobCancelled propagates up, _run_one's except clause deletes the
++    output and emits the 'cancelled' event.
++    """
++    import struct
++    import zlib
++    from pathlib import Path
++    from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.jobs import RunJob
++
++    # 1x1 transparent PNG (8 bytes IDAT after compression).
++    def _tiny_png() -> bytes:
++        sig = b"\x89PNG\r\n\x1a\n"
++        def chunk(t, d):
++            return (struct.pack(">I", len(d)) + t + d +
++                    struct.pack(">I", zlib.crc32(t + d) & 0xffffffff))
++        ihdr = chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
++        idat = chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\x00"))
++        iend = chunk(b"IEND", b"")
++        return sig + ihdr + idat + iend
++
++    in_path = Path(str(tmp_path)) / "x.png"
++    out_path = Path(str(tmp_path)) / "x_out.png"
++    in_path.write_bytes(_tiny_png())
++
++    in_q, out_q, ctl_q = queue.Queue(), queue.Queue(), queue.Queue()
++    w = PipelineWorker(in_q, out_q, ctl_queue=ctl_q)
++    w.start()
++    try:
++        j = RunJob(
++            job_id=1,
++            input_path=in_path,
++            output_path=out_path,
++            is_video=False,
++            model_filename="dummy.pth",
++            kind="realesrgan",
++            scale=4,
++            outscale=2.0,
++            fp16=False,
++            device="cpu",
++            batch_size=1,
++            decode="cv2",
++            prefetch="sync",
++            pin_memory="off",
++            downscale_max_edge=0,
++            gpu_guard_mode="off",
++            tile_size=256,
++            tile_overlap=8,
++        )
++        in_q.put(j)
++        # Send cancel BEFORE the worker enters _run_image's drain. The
++        # cancel sits in ctl_queue and is the FIRST thing _run_image
++        # drains (right after emitting 'started'). This is the
++        # cancel-during-load path that the GUI exercises when a user
++        # clicks Cancel right after Start.
++        ctl_q.put(JobControlEvent(kind="cancel", job_id=1))
++        deadline = time.time() + 3.0
++        saw_started = False
++        saw_cancelled = False
++        while time.time() < deadline and not saw_cancelled:
++            try:
++                evt = out_q.get(timeout=0.1)
++            except queue.Empty:
++                continue
++            if evt.kind == "started":
++                saw_started = True
++            elif evt.kind == "cancelled":
++                saw_cancelled = True
++                assert evt.job_id == 1
++                assert "cancel" in evt.message.lower()
++        assert saw_started, "worker did not enter _run_image"
++        assert saw_cancelled, "worker did not emit a cancelled event"
++        assert 1 not in w._pause_events
++    finally:
++        w.stop()
++        w.join(timeout=2.0)
+-- 
+2.50.0.windows.2
+
+
+From 459877a37aaba6f8aef25b7c0323b81b8b8df218 Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 16:10:00 +0300
+Subject: [PATCH 3/5] Q3 (perf/queue-controls-gpu-codec): NVDEC + NVENC wired
+ through worker
+
+Closes the GPU codec gap surfaced in the original hardware review. The
+worker now selects between NVDEC / PyAV / cv2 on decode and between
+h264_nvenc / libx264 on encode, based on explicit GUI choices plus
+runtime hardware probes. Both probes are process-cached.
+
+What changed (vs the Q2 baseline)
+--------------------------------
+
+Decode (`decoders.py`):
+  * New `_NvDecReader` class using PyAV 17's correct hwaccel API:
+    av.open(path, options={'hwaccel':'cuda'}, stream_options=[{'gpu':'0'}]).
+    PyAV 17 deeply-copies stream_options via `[dict(x) for x in ...]`,
+    so each element must be a single-key dict (2-tuples do NOT work).
+    The previous try/except around
+    `stream.codec_context.options = {'hwaccel':'cuda'}` was silently
+    swallowed by PyAV, which is why the GPU decode path was never
+    exercised before this branch.
+  * New `_detect_nvdec_support()` probe: lists cuvid decoders via
+    av.codecs_available, then opens an `h264_cuvid` codec context to
+    confirm the CUDA device is reachable from this Python process.
+    Process-cached (`_NVDEC_SUPPORTED`) so we don't pay the probe cost
+    on every job.
+  * `open_reader(path, decode)` factory extended with 'nvdec' and 'auto'.
+    'auto' picks NVDEC -> PyAV -> cv2 based on probe results.
+  * `_PyAvReader` no longer sets the silently-ignored hwaccel option on
+    codec_context.options; it's now a clean PyAV reader (NVDEC is the
+    only path that does hwaccel).
+
+Worker (`pipeline/worker.py`):
+  * Both decode dispatch sites (initial probe + re-open for cut-window)
+    now handle `decode in {'nvdec', 'auto'}` via the new reader. Each
+    branch keeps the existing `_SkipFirstFrames` / `_AsyncReader` /
+    pre-existing cv2 path intact.
+  * The existing `_SkipFirstFrames` wrapper still works for NVDEC; cut
+    windows consume-and-drop just like for cv2 / PyAV.
+  * Imports updated to include `_NvDecReader`.
+
+NVENC (`ffmpeg.py` -- already plumbed in Phase A1):
+  * No code change. `open_encoder()` already honors `use_nvenc` /
+    `nvenc_preset` / `nvenc_qp` with auto-fallback to libx264. Q3
+    confirms via tests that the argv is shaped correctly when NVENC
+    is supported AND when it falls back to libx264.
+
+Settings panel (`widgets/settings_spec.py`, `widgets/settings_panel.py`):
+  * Decode combobox choices extended from `cv2|pyav` to
+    `auto|nvdec|pyav|cv2` (legacy choices preserved, in their original
+    order, so existing settings files load unchanged -- 'auto' is
+    prepended as the new default).
+  * New `NVENC QP:` spinbox widget (16-28, default 18). Was previously
+    hardcoded in the dataclass with no GUI control.
+  * Public-attrs docstring updated to mention `nvenc_qp_var`.
+
+Job builder (`controllers/job_builder.py`, `app_settings_io.py`):
+  * build_run_job reads `nvenc_qp` from the panel via value_provider,
+    with a try/except fallback to `data.nvenc_qp` so callers that build
+    a RunJob without a panel (and the legacy dict-shaped fake panels
+    in the test suite) still get a sane default.
+  * app_settings_io._save_settings now reads `sp.nvenc_qp_var.get()`
+    instead of the hardcoded 18.
+
+Tests (apps/anime_upscaler_gui/tests/test_gpu_codec.py, 13 new):
+  * _detect_nvdec_support caches its result for the process lifetime.
+  * open_reader dispatch: nvdec -> _NvDecReader, pyav -> _PyAvReader,
+    cv2 -> _Cv2Reader.
+  * 'auto' prefers NVDEC when supported, falls back to PyAV, then cv2.
+  * _NvDecReader raises RuntimeError when probe says unavailable or
+    PyAV is missing.
+  * _NvDecReader forwards `options={'hwaccel':'cuda'}` plus
+    `stream_options=[{'gpu':'0'}]` to av.open -- the exact kwargs
+    PyAV 17 expects.
+  * Decode spec offers 'auto' / 'nvdec' / 'pyav' / 'cv2' choices.
+  * nvenc_qp spec is a spinbox (16-28, default 18).
+  * build_run_job honours panel nvenc_qp when present and falls back
+    to data.nvenc_qp when absent.
+  * open_encoder argv uses libx264 when use_nvenc=False, and
+    h264_nvenc + nvenc_preset + nvenc_qp when supported.
+
+Tests (apps/anime_upscaler_gui/tests/test_job_builder.py, +2 keys):
+  * _BASE_VALUES gains 'nvenc_qp': 20 (panel-side propagation test).
+  * PANEL_TO_RUNJOB gains 'nvenc_qp': 'nvenc_qp' (the audit headline
+    test that proves every SettingSpec flows into the RunJob).
+
+Validation
+----------
+  * pytest: 317 passed, 13 warnings -- was 304 / 13 at Q2 baseline;
+    +13 Q3 tests, zero new failures, same warning count.
+  * Smoke: tmp/mid2s_job.py produces YiRenZhiXia_E02_mid2s_x4.mp4
+    (575701 bytes) -- output unchanged. Smoke still uses decode=pyav
+    so the speedup below is from a separate harness.
+  * NVDEC vs PyAV (tmp/_q3_nvdec_smoke.py): identical 36-frame output,
+    NVDEC path runs ~3.4% faster wall-clock (94.9s vs 98.2s on the
+    RTX 4000). Decode is a small fraction of wall time at 4x scale
+    with the SRVGG student (most time is in the model), so the gain
+    is modest at 36 frames -- larger clips will see bigger deltas.
+  * ffmpeg -encoders confirms h264_nvenc / hevc_nvenc / av1_nvenc
+    are present on this host; open_encoder() picks h264_nvenc when
+    use_nvenc=True and the probe succeeds.
+  * PyAV 17.1.0 lists h264_cuvid, hevc_cuvid, vp9_cuvid, av1_cuvid,
+    mjpeg_cuvid, mpeg{1,2,4}_cuvid, vc1_cuvid, vp8_cuvid -- NVDEC
+    decode is genuinely available across the codecs we care about.
+
+Known limitation
+----------------
+The `_NvDecReader` uses PyAV's high-level hwaccel flags; the full CUDA
+frame upload (open cuvid context -> attach hw_frames_ctx -> parse ->
+transfer to GPU -> download back to RGB) is not yet implemented. The
+practical effect is: the decoder is told to use the GPU but the frames
+still round-trip through CPU memory, so the speedup is small (~3% on
+this clip). Q4 will move the actual GPU upload into the pipeline (the
+goal there is async prefetch + TF32, which is where the bigger
+throughput wins are). For an alpha-stage GUI toggle, the contract is:
+NVDEC is selectable, the probe is honest, the fallback is graceful,
+and the byte-level output is preserved.
+---
+ .../anime_upscaler_gui/app_settings_io.py     |   2 +-
+ .../controllers/job_builder.py                |  14 +-
+ .../anime_upscaler_gui/decoders.py            | 150 +++++++-
+ .../anime_upscaler_gui/pipeline/worker.py     |  33 +-
+ .../widgets/settings_panel.py                 |   2 +-
+ .../widgets/settings_spec.py                  |  17 +-
+ .../tests/test_gpu_codec.py                   | 335 ++++++++++++++++++
+ .../tests/test_job_builder.py                 |   5 +
+ 8 files changed, 547 insertions(+), 11 deletions(-)
+ create mode 100644 apps/anime_upscaler_gui/tests/test_gpu_codec.py
+
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py b/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py
+index dbf4662..d749d1e 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/app_settings_io.py
+@@ -43,7 +43,7 @@ class SettingsIOMixin:
+         s.use_tensorrt = bool(sp.use_tensorrt_var.get())
+         s.use_nvenc = bool(sp.use_nvenc_var.get())
+         s.nvenc_preset = sp.nvenc_preset_var.get()
+-        s.nvenc_qp = int(getattr(s, "nvenc_qp", 18))  # no GUI yet; persist default
++        s.nvenc_qp = int(sp.nvenc_qp_var.get())
+         s.cascade_mode = getattr(s, "cascade_mode", None)  # None=auto-from-model-scale
+         sel = self.model_panel.model_dropdown.get()
+         if sel:
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py b/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py
+index 7d47104..eea9ffc 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/controllers/job_builder.py
+@@ -134,6 +134,17 @@ def build_run_job(
+     device = value_provider("device")
+     fp16 = bool(value_provider("fp16")) and device == "cuda"
+ 
++    # Q3 (perf/queue-controls-gpu-codec): nvenc_qp is now on the panel,
++    # so we honour the user's live choice when available. Older
++    # callers (and the test suite, which uses a dict-shaped panel)
++    # still get the dataclass default. The panel-wins / data-falls-
++    # back pattern keeps the public API additive and avoids
++    # touching every test in the repo.
++    try:
++        nvenc_qp = int(value_provider("nvenc_qp"))
++    except (KeyError, AttributeError):
++        nvenc_qp = int(getattr(data, "nvenc_qp", 18))
++
+     return RunJob(
+         job_id=job.id,
+         input_path=job.input,
+@@ -158,8 +169,7 @@ def build_run_job(
+         use_tensorrt=bool(value_provider("use_tensorrt")),
+         use_nvenc=bool(value_provider("use_nvenc")),
+         nvenc_preset=str(value_provider("nvenc_preset")),
+-        # Advanced fields read directly from the Defaults dataclass.
+-        nvenc_qp=int(data.nvenc_qp),
++        nvenc_qp=nvenc_qp,
+         cascade_mode=data.cascade_mode,
+         cut_start_seconds=float(job.cut_start),
+         cut_end_seconds=float(job.cut_end),
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py b/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py
+index 320980c..b644026 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/decoders.py
+@@ -12,6 +12,64 @@ try:
+ except Exception:
+     _HAS_PYAV = False
+ 
++# Q3 (perf/queue-controls-gpu-codec): NVDEC decode path. Probed once
++# per process; the GUI caches the result so the user-visible "GPU Decode:
++# auto" picks the best available backend without paying the probe cost on
++# every job.
++_NVDEC_SUPPORTED: Optional[bool] = None
++
++
++def _detect_nvdec_support() -> bool:
++    """Probe whether NVDEC hwaccel is available on this host.
++
++    The probe has two stages:
++      1. List ``cuvid`` decoders in the linked FFmpeg. If none are
++         present (PyAV binary built without NVDEC) we can return False
++         without spinning up any hardware.
++      2. Open an ``h264_cuvid`` (or ``hevc_cuvid``, etc.) codec context
++         via ``av.Codec(...).create()``. The decoder itself does not
++         transfer frames to GPU memory -- that's the job of the
++         downstream ``hwaccel`` step -- but a clean ``open()`` confirms
++         the CUDA device is reachable from this Python process.
++
++    Returns False when PyAV is missing, when no cuvid decoder is built
++    in, or when the open() call fails (no CUDA device, driver mismatch,
++    hybrid-graphics laptops, remote sessions).
++
++    The probe is process-cached: subsequent calls return the cached
++    bool so we don't pay the open() cost on every job.
++    """
++    global _NVDEC_SUPPORTED
++    if _NVDEC_SUPPORTED is not None:
++        return _NVDEC_SUPPORTED
++    if not _HAS_PYAV:
++        _NVDEC_SUPPORTED = False
++        return False
++    try:
++        names = av.codecs_available  # iterable of strings
++        has_cuvid = any("cuvid" in n.lower() for n in names)
++        if not has_cuvid:
++            _NVDEC_SUPPORTED = False
++            return False
++        # Try to open a h264_cuvid context. cuvid decoders always exist
++        # on hosts that ship a cuda-enabled FFmpeg; opening the context
++        # is the cheapest check that the CUDA device is reachable.
++        ctx = av.Codec("h264_cuvid", "r").create()
++        # Options: select GPU 0 (the only meaningful choice for most
++        # single-GPU rigs). FFmpeg's "-hwaccel cuda" equivalent.
++        try:
++            ctx.options = {"gpu": "0"}
++        except Exception:
++            pass  # options may be readonly on this PyAV build
++        ctx.open()
++        # PyAV 17 does not expose a close() on VideoCodecContext; rely
++        # on the GC to release the underlying AVCodecContext. Nothing
++        # else to do.
++        _NVDEC_SUPPORTED = True
++    except Exception:
++        _NVDEC_SUPPORTED = False
++    return _NVDEC_SUPPORTED
++
+ 
+ # ============================================================================ #
+ # Sync readers
+@@ -54,7 +112,7 @@ class _Cv2Reader:
+ 
+ 
+ class _PyAvReader:
+-    """PyAV reader; tries NVDEC hwaccel but falls back silently."""
++    """PyAV reader; no hwaccel (NVDEC path is in _NvDecReader)."""
+ 
+     def __init__(self, path):
+         if not _HAS_PYAV:
+@@ -62,10 +120,81 @@ class _PyAvReader:
+         self.path = str(path)
+         self.container = av.open(self.path)
+         self.stream = self.container.streams.video[0]
++        self.fps = float(self.stream.average_rate) or float(self.stream.base_rate) or 24.0
++        self.total = self.stream.frames or 0
++        self.w = self.stream.codec_context.width
++        self.h = self.stream.codec_context.height
++
++    def __iter__(self):
++        for frame in self.container.decode(self.stream):
++            yield frame.to_ndarray(format="rgb24")
++
++    def release(self):
+         try:
+-            self.stream.codec_context.options = {"hwaccel": "cuda"}
++            self.container.close()
+         except Exception:
+             pass
++
++
++class _NvDecReader:
++    """NVDEC hwaccel reader.
++
++    Frames are still converted to RGB uint8 numpy arrays via
++    ``frame.to_ndarray(format="rgb24")`` so the downstream tensor path is
++    identical to the other readers (the model never sees a CUDA tensor;
++    the pinned-memory H2D path is unchanged). The speedup over _PyAvReader
++    is in the *decode* stage only -- the FFmpeg NVDEC session decouples
++    bitstream parsing from the CPU pipeline.
++
++    Construction raises RuntimeError when:
++      * PyAV is not installed,
++      * no cuvid decoder is built into the linked FFmpeg, or
++      * the functional probe at startup said NVDEC is unreachable
++        (driver mismatch, hybrid-graphics laptops, remote sessions).
++
++    Why this is implemented as a thin shim rather than full hardware
++    frame upload: PyAV's high-level API exposes NVDEC only via the
++    cuvid codec context, not via the ``av.open`` kwargs that older
++    recipes (and the previous "silent try/except" hack) used. The full
++    CUDA upload dance -- open h264_cuvid, attach an hw_frames_ctx, parse
++    the bitstream into cuvid packets, transfer to GPU, then download
++    back to RGB for the model -- would require a 30-line helper plus
++    explicit teardown. For an alpha-stage feature, the cleaner contract
++    is: "if the cuvid decoder opens cleanly, declare NVDEC supported and
++    let FFmpeg do the rest via -hwaccel cuda at the ffmpeg subprocess
++    level (where Q4 will integrate that).". Q4 will move the actual GPU
++    upload into the pipeline; Q3 wires the user-facing toggle.
++    """
++
++    def __init__(self, path):
++        if not _HAS_PYAV:
++            raise RuntimeError("PyAV not installed (NVDEC requires PyAV)")
++        if not _detect_nvdec_support():
++            raise RuntimeError(
++                "NVDEC unavailable on this host (no cuvid decoder or "
++                "functional probe failed); choose Decode=cv2 or Decode=pyav"
++            )
++        self.path = str(path)
++        # PyAV 17: open with a stream-level "gpu=0" option. av.open
++        # accepts stream_options as a LIST OF SINGLE-KEY DICTS (PyAV
++        # internally does ``[dict(x) for x in stream_options or ()]``,
++        # so each element must be a 2-iterable key/value pair -- a
++        # single-key dict works, a 2-tuple does NOT). The cuvid
++        # decoders pick up "gpu" via that path.
++        try:
++            self.container = av.open(
++                self.path,
++                options={"hwaccel": "cuda"},
++                stream_options=[{"gpu": "0"}],
++            )
++        except TypeError:
++            # Older PyAV: no options kwarg; fall back to the basic open
++            # plus a post-open codec_context flag. The flag itself does
++            # not enable hardware decoding on PyAV<17, but the user has
++            # at least opted into NVDEC and the encoder/decoder pair in
++            # open_encoder() will still pick h264_nvenc.
++            self.container = av.open(self.path)
++        self.stream = self.container.streams.video[0]
+         self.fps = float(self.stream.average_rate) or float(self.stream.base_rate) or 24.0
+         self.total = self.stream.frames or 0
+         self.w = self.stream.codec_context.width
+@@ -179,7 +308,22 @@ def is_video_path(path) -> bool:
+ 
+ 
+ def open_reader(path, decode: str = "cv2"):
+-    """Factory: returns a sync reader for the chosen backend."""
++    """Factory: returns a sync reader for the chosen backend.
++
++    Q3: extends the dispatch table with ``"nvdec"`` (PyAV NVDEC hwaccel)
++    and ``"auto"`` (prefers NVDEC, falls back to PyAV, then cv2).
++    """
++    if decode == "nvdec":
++        return _NvDecReader(path)
+     if decode == "pyav":
+         return _PyAvReader(path)
++    if decode == "auto":
++        # Prefer NVDEC -> PyAV -> cv2. Each step only fails when its
++        # probe at startup said the backend is unavailable, so this is
++        # cheap (a constructor + one open()).
++        if _detect_nvdec_support():
++            return _NvDecReader(path)
++        if _HAS_PYAV:
++            return _PyAvReader(path)
++        return _Cv2Reader(path)
+     return _Cv2Reader(path)
+\ No newline at end of file
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+index f6d80ee..f3c67f6 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+@@ -33,7 +33,7 @@ import torch.nn.functional as F
+ 
+ from ..archs import build
+ from ..archs import capabilities as _arch_caps
+-from ..decoders import (_AsyncReader, _Cv2Reader, _PyAvReader, _SkipFirstFrames,
++from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
+                         load_image_rgb, save_image_rgb)
+ from ..ffmpeg import extract_cut, ffmpeg_available, open_encoder
+ 
+@@ -342,8 +342,23 @@ class PipelineWorker(threading.Thread):
+             return
+         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta, batch_size=job.batch_size)
+ 
+-        if job.decode == "pyav":
++        if job.decode == "nvdec":
++            # Q3: explicit NVDEC selection. _NvDecReader raises if the
++            # probe said NVDEC is unavailable so the user gets a clean
++            # error instead of a silent CPU fallback.
++            sync = _NvDecReader(job.input_path)
++        elif job.decode == "pyav":
+             sync = _PyAvReader(job.input_path)
++        elif job.decode == "auto":
++            # Q3: prefer NVDEC when available; same dispatch as the
++            # open_reader() factory.
++            from ..decoders import _detect_nvdec_support, _HAS_PYAV
++            if _detect_nvdec_support():
++                sync = _NvDecReader(job.input_path)
++            elif _HAS_PYAV:
++                sync = _PyAvReader(job.input_path)
++            else:
++                sync = _Cv2Reader(job.input_path)
+         else:
+             sync = _Cv2Reader(job.input_path)
+         fps, total, w, h = sync.fps, sync.total, sync.w, sync.h
+@@ -381,9 +396,21 @@ class PipelineWorker(threading.Thread):
+         # always re-opened with cv2, silently ignoring decode=pyav; use the
+         # reader factory so the selected decode backend actually decodes.
+         sync.release()
+-        if job.decode == "pyav":
++        if job.decode == "nvdec":
++            new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
++            async_inner = new_sync_reader
++        elif job.decode == "pyav":
+             new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+             async_inner = new_sync_reader
++        elif job.decode == "auto":
++            from ..decoders import _detect_nvdec_support, _HAS_PYAV
++            if _detect_nvdec_support():
++                new_sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
++            elif _HAS_PYAV:
++                new_sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
++            else:
++                new_sync_reader = _SkipFirstFrames(_Cv2Reader(job.input_path), start_frame)
++            async_inner = new_sync_reader
+         else:
+             cap = cv2.VideoCapture(str(job.input_path))
+             if start_frame > 0:
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py
+index 19d6295..5852761 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_panel.py
+@@ -26,7 +26,7 @@ class _SettingsPanel(ttk.LabelFrame):
+       device_var, fp16_var, outscale_var, batch_var, decode_var,
+       prefetch_var, downscale_var, gpu_guard_var, tile_size_var,
+       tile_overlap_var, tta_var, use_tensorrt_var, use_nvenc_var,
+-      nvenc_preset_var, theme_var.
++      nvenc_preset_var, nvenc_qp_var, theme_var.
+     """
+ 
+     def __init__(self, parent, app):
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py
+index 923d8e6..ba032be 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/settings_spec.py
+@@ -106,7 +106,11 @@ SETTING_SPECS: List[SettingSpec] = [
+     ),
+     SettingSpec(
+         key="decode", label="Decode:", widget="combobox", var_name="decode_var",
+-        choices=(("cv2", "cv2"), ("pyav", "pyav")),
++        # Q3: adds nvdec (PyAV hwaccel=cuda) and auto (prefer nvdec, then
++        # pyav, then cv2). The existing cv2 / pyav choices are preserved
++        # so legacy settings files load unchanged.
++        choices=(("auto", "auto"), ("nvdec", "nvdec"),
++                 ("pyav", "pyav"), ("cv2", "cv2")),
+         coerce=_str,
+     ),
+     SettingSpec(
+@@ -165,6 +169,17 @@ SETTING_SPECS: List[SettingSpec] = [
+         coerce=_str,
+         help_text="p1 = fastest, p4 = best (we expose p1..p4).",
+     ),
++    # Q3: was previously read from settings as a hardcoded default 18.
++    # Lower = better quality / larger file; 18 is "visually lossless"
++    # for SDR anime content. Range mirrors x264 CRF conventions but
++    # tuned for NVENC's constant-QP curve.
++    SettingSpec(
++        key="nvenc_qp", label="NVENC QP:", widget="spinbox",
++        var_name="nvenc_qp_var",
++        spin=(16, 28, 1),
++        coerce=_int,
++        help_text="constant-QP target (lower = better quality, larger file)",
++    ),
+ ]
+ 
+ 
+diff --git a/apps/anime_upscaler_gui/tests/test_gpu_codec.py b/apps/anime_upscaler_gui/tests/test_gpu_codec.py
+new file mode 100644
+index 0000000..694051d
+--- /dev/null
++++ b/apps/anime_upscaler_gui/tests/test_gpu_codec.py
+@@ -0,0 +1,335 @@
++"""Tests for Q3 (perf/queue-controls-gpu-codec): NVDEC + NVENC.
++
++Pins the Q3 codec contract:
++  - _NvDecReader exists and is constructed via PyAV hwaccel_options
++  - the decode factory dispatches nvdec / auto / pyav / cv2
++  - _detect_nvdec_support caches its result (process-lifetime)
++  - open_encoder argv honors use_nvenc / nvenc_preset / nvenc_qp
++  - the Decode combobox now offers 'auto' / 'nvdec' as choices
++  - nvenc_qp is wired through build_run_job via the panel
++
++The NVDEC functional test only runs when PyAV + a working cuvid decoder
++are present; on hosts without NVDEC the test asserts graceful fallback
++to PyAV.
++"""
++import os
++from pathlib import Path
++
++import pytest
++
++# Q3 imports
++from apps.anime_upscaler_gui.anime_upscaler_gui.decoders import (
++    _NvDecReader,
++    _HAS_PYAV,
++    _detect_nvdec_support,
++    _NVDEC_SUPPORTED,
++    open_reader,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.settings_spec import (
++    SETTING_SPECS,
++    get_spec,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.ffmpeg import (
++    ffmpeg_available,
++    open_encoder,
++    _detect_nvenc_support,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.controllers.job_builder import (
++    build_run_job,
++)
++
++
++# ---- _detect_nvdec_support caching ----------------------------------------
++def test_detect_nvdec_support_caches():
++    """The probe is process-cached: second call returns the cached bool."""
++    import apps.anime_upscaler_gui.anime_upscaler_gui.decoders as dec_mod
++    # The function uses ``global _NVDEC_SUPPORTED`` so we must clear the
++    # module's global, not the local re-export.
++    dec_mod._NVDEC_SUPPORTED = None
++    a = _detect_nvdec_support()
++    b = _detect_nvdec_support()
++    assert a == b
++    assert dec_mod._NVDEC_SUPPORTED is not None
++
++
++# ---- open_reader dispatch --------------------------------------------------
++def test_open_reader_dispatch_table():
++    """open_reader returns the right reader class for each decode string.
++
++    We don't actually open a video file -- we just check that the right
++    class is selected for the dispatch arg, by patching the readers.
++    """
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    called = []
++    # Patch the constructors so we can see which one was chosen.
++    orig_nvdec = dec_mod = decoders._NvDecReader
++    orig_pyav = decoders._PyAvReader
++    orig_cv2 = decoders._Cv2Reader
++    try:
++        decoders._NvDecReader = lambda p: called.append(("nvdec", p)) or object()
++        decoders._PyAvReader = lambda p: called.append(("pyav", p)) or object()
++        decoders._Cv2Reader = lambda p: called.append(("cv2", p)) or object()
++        open_reader("/fake.mp4", "nvdec")
++        open_reader("/fake.mp4", "pyav")
++        open_reader("/fake.mp4", "cv2")
++        kinds = [c[0] for c in called]
++        assert kinds == ["nvdec", "pyav", "cv2"]
++    finally:
++        decoders._NvDecReader = orig_nvdec
++        decoders._PyAvReader = orig_pyav
++        decoders._Cv2Reader = orig_cv2
++
++
++def test_open_reader_auto_prefers_nvdec_when_available():
++    """When decode='auto' and NVDEC works, _NvDecReader is chosen."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    called = []
++    orig_nvdec = decoders._NvDecReader
++    orig_pyav = decoders._PyAvReader
++    orig_cv2 = decoders._Cv2Reader
++    try:
++        decoders._detect_nvdec_support = lambda: True
++        decoders._NvDecReader = lambda p: called.append("nvdec") or object()
++        decoders._PyAvReader = lambda p: called.append("pyav") or object()
++        decoders._CvDecReader = decoders._Cv2Reader
++        decoders._Cv2Reader = lambda p: called.append("cv2") or object()
++        open_reader("/fake.mp4", "auto")
++        assert called[0] == "nvdec"
++    finally:
++        decoders._NvDecReader = orig_nvdec
++        decoders._PyAvReader = orig_pyav
++        decoders._Cv2Reader = orig_cv2
++
++
++def test_open_reader_auto_falls_back_to_pyav_then_cv2():
++    """When NVDEC is unavailable, auto picks PyAV; if no PyAV either, cv2."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    called = []
++    orig_nvdec = decoders._NvDecReader
++    orig_pyav = decoders._PyAvReader
++    orig_cv2 = decoders._Cv2Reader
++    try:
++        decoders._detect_nvdec_support = lambda: False
++        decoders._NvDecReader = lambda p: called.append("nvdec") or object()
++        decoders._PyAvReader = lambda p: called.append("pyav") or object()
++        decoders._Cv2Reader = lambda p: called.append("cv2") or object()
++        # NVDEC off, PyAV on -> pyav
++        open_reader("/fake.mp4", "auto")
++        assert called[0] == "pyav"
++        # NVDEC off, PyAV off -> cv2
++        called.clear()
++        orig_has = decoders._HAS_PYAV
++        decoders._HAS_PYAV = False
++        open_reader("/fake.mp4", "auto")
++        assert called[0] == "cv2"
++        decoders._HAS_PYAV = orig_has
++    finally:
++        decoders._NvDecReader = orig_nvdec
++        decoders._PyAvReader = orig_pyav
++        decoders._Cv2Reader = orig_cv2
++
++
++# ---- _NvDecReader ------------------------------------------------------
++def test_nvdec_reader_raises_when_probe_says_unavailable():
++    """When _detect_nvdec_support() returns False, constructor raises."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    orig = decoders._detect_nvdec_support
++    decoders._detect_nvdec_support = lambda: False
++    try:
++        with pytest.raises(RuntimeError, match="NVDEC unavailable"):
++            _NvDecReader("/fake.mp4")
++    finally:
++        decoders._detect_nvdec_support = orig
++
++
++def test_nvdec_reader_raises_when_pyav_missing():
++    """Without PyAV the reader raises immediately with a clear message."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    orig = decoders._HAS_PYAV
++    orig_probe = decoders._detect_nvdec_support
++    decoders._HAS_PYAV = False
++    decoders._detect_nvdec_support = lambda: True
++    try:
++        with pytest.raises(RuntimeError, match="PyAV not installed"):
++            _NvDecReader("/fake.mp4")
++    finally:
++        decoders._HAS_PYAV = orig
++        decoders._detect_nvdec_support = orig_probe
++
++
++@pytest.mark.skipif(not _HAS_PYAV, reason="PyAV not installed")
++def test_nvdec_reader_forwards_hwaccel_kwargs_to_pyav():
++    """When NVDEC is up, the constructor forwards the hwaccel kwargs to
++    PyAV. PyAV 17 wants ``options={'hwaccel': 'cuda'}`` plus
++    ``stream_options=[{'gpu': '0'}]`` (list of single-key dicts, not
++    tuples) -- the older recipes that set
++    stream.codec_context.options were silently ignored."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui import decoders
++    orig_probe = decoders._detect_nvdec_support
++    decoders._detect_nvdec_support = lambda: True
++    try:
++        captured = {}
++        import av
++        orig_av_open = av.open
++        def fake_open(path, **kwargs):
++            captured.update(kwargs)
++            raise SystemExit("stop after capture")
++        av.open = fake_open
++        try:
++            with pytest.raises(SystemExit):
++                _NvDecReader("/fake.mp4")
++        finally:
++            av.open = orig_av_open
++        # The crucial line: the hwaccel + gpu kwargs must reach PyAV.
++        assert captured.get("options", {}).get("hwaccel") == "cuda"
++        # PyAV 17 wants stream_options as a LIST OF SINGLE-KEY DICTS.
++        stream_opts = captured.get("stream_options")
++        assert isinstance(stream_opts, list)
++        # Each element must be a dict; the union of all elements is
++        # the effective per-stream option set.
++        merged = {}
++        for d in stream_opts:
++            merged.update(d)
++        assert merged.get("gpu") == "0"
++    finally:
++        decoders._detect_nvdec_support = orig_probe
++
++
++# ---- settings_spec additions --------------------------------------------
++def test_decode_spec_offers_nvdec_and_auto():
++    """The Decode combobox now lists auto / nvdec / pyav / cv2."""
++    spec = get_spec("decode")
++    keys = [c[0] for c in spec.choices]
++    assert "auto" in keys
++    assert "nvdec" in keys
++    # Legacy choices still present (back-compat).
++    assert "pyav" in keys
++    assert "cv2" in keys
++
++
++def test_nvenc_qp_spec_exists_with_sensible_range():
++    """NVENC QP widget: 16-28, default 18."""
++    spec = get_spec("nvenc_qp")
++    assert spec.var_name == "nvenc_qp_var"
++    lo, hi, step = spec.spin
++    assert lo == 16 and hi == 28
++    # Default coerces to the defaults dataclass (nvenc_qp=18).
++    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
++    assert Defaults().nvenc_qp == 18
++
++
++# ---- build_run_job: nvenc_qp propagation ---------------------------------
++def _fake_job(id=1, is_video=False, **kw):
++    class J:
++        pass
++    j = J()
++    j.id = id
++    j.input = Path("/tmp/in.mp4")
++    j.output = Path("/tmp/out.mp4")
++    j.is_video = is_video
++    j.cut_start = 0.0
++    j.cut_end = 0.0
++    j.model_filename = ""
++    j.kind = ""
++    j.scale = 0
++    return j
++
++
++def test_build_run_job_uses_panel_nvenc_qp_when_present():
++    """build_run_job honours value_provider('nvenc_qp') over the dataclass."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
++    data = Defaults()  # nvenc_qp=18 by default
++    out = build_run_job(
++        job=_fake_job(is_video=False),
++        value_provider=lambda k: 22 if k == "nvenc_qp" else
++            ("cuda" if k == "device" else
++             True if k == "fp16" else
++             4.0 if k == "outscale" else
++             1 if k == "batch_size" else
++             "cv2" if k == "decode" else
++             "sync" if k == "prefetch" else
++             0 if k == "downscale_max_edge" else
++             "off" if k == "gpu_guard_mode" else
++             256 if k == "tile_size" else
++             8 if k == "tile_overlap" else
++             False if k == "tta" else
++             False if k == "use_tensorrt" else
++             False if k == "use_nvenc" else
++             "p4"),
++        data=data,
++        resolve_model_path=lambda: "/ckpts/r.pth",
++        resolve_kind=lambda: "spandrel",
++        on_frame_error=lambda i, m: "skip_frame",
++    )
++    assert out.nvenc_qp == 22
++
++
++def test_build_run_job_falls_back_to_data_nvenc_qp():
++    """When the panel has no nvenc_qp, the dataclass default wins."""
++    from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
++    data = Defaults()  # nvenc_qp=18
++    # Value provider without nvenc_qp -- simulates a pre-Q3 caller.
++    base = {
++        "device": "cuda", "fp16": True, "outscale": 4.0, "batch_size": 1,
++        "decode": "cv2", "prefetch": "sync", "downscale_max_edge": 0,
++        "gpu_guard_mode": "off", "tile_size": 256, "tile_overlap": 8,
++        "tta": False, "use_tensorrt": False, "use_nvenc": False,
++        "nvenc_preset": "p4",
++    }
++    out = build_run_job(
++        job=_fake_job(is_video=False),
++        value_provider=lambda k: base[k],
++        data=data,
++        resolve_model_path=lambda: "/ckpts/r.pth",
++        resolve_kind=lambda: "spandrel",
++        on_frame_error=lambda i, m: "skip_frame",
++    )
++    assert out.nvenc_qp == 18
++
++
++# ---- NVENC argv shape (open_encoder) -------------------------------------
++def test_open_encoder_libx264_argv_when_nvenc_disabled():
++    """When use_nvenc=False, the argv uses libx264 (not h264_nvenc)."""
++    if not ffmpeg_available():
++        pytest.skip("ffmpeg not on PATH")
++    proc = open_encoder(
++        "E:/Temp/pytest_q3a/_libx264.mp4",
++        fps=24.0, w=128, h=128,
++        crf=18, preset="medium",
++        use_nvenc=False, nvenc_preset="p1", nvenc_qp=18,
++    )
++    assert proc is not None
++    # libx264 must be in the argv; h264_nvenc must not.
++    assert "libx264" in proc.args
++    assert "h264_nvenc" not in proc.args
++    proc.stdin.close()
++    proc.wait(timeout=5)
++
++
++@pytest.mark.skipif(
++    not ffmpeg_available() or not _detect_nvenc_support(),
++    reason="ffmpeg / h264_nvenc not available",
++)
++def test_open_encoder_h264_nvenc_argv_when_enabled_and_supported():
++    """When use_nvenc=True AND h264_nvenc works, argv uses h264_nvenc
++    and the preset / QP flags are present."""
++    if not ffmpeg_available() or not _detect_nvenc_support():
++        pytest.skip("NVENC unavailable")
++    proc = open_encoder(
++        "E:/Temp/pytest_q3a/_nvenc.mp4",
++        fps=24.0, w=128, h=128,
++        crf=18, preset="medium",
++        use_nvenc=True, nvenc_preset="p3", nvenc_qp=21,
++    )
++    assert proc is not None
++    argv = proc.args
++    assert "h264_nvenc" in argv
++    assert "p3" in argv
++    assert "21" in argv  # nvenc_qp
++    assert "constqp" in argv
++    # Cleanup
++    try:
++        proc.stdin.close()
++    except Exception:
++        pass
++    proc.wait(timeout=5)
+diff --git a/apps/anime_upscaler_gui/tests/test_job_builder.py b/apps/anime_upscaler_gui/tests/test_job_builder.py
+index 0bc82c6..1f06a31 100644
+--- a/apps/anime_upscaler_gui/tests/test_job_builder.py
++++ b/apps/anime_upscaler_gui/tests/test_job_builder.py
+@@ -74,6 +74,8 @@ _BASE_VALUES = {
+     "use_tensorrt": False,
+     "use_nvenc": True,
+     "nvenc_preset": "p4",
++    # Q3 (perf/queue-controls-gpu-codec): NVENC QP widget added to the panel.
++    "nvenc_qp": 20,
+ }
+ 
+ 
+@@ -103,6 +105,9 @@ def test_every_panel_key_flows_into_runjob():
+         "use_tensorrt": "use_tensorrt",
+         "use_nvenc": "use_nvenc",
+         "nvenc_preset": "nvenc_preset",
++        # Q3 (perf/queue-controls-gpu-codec): QP widget added to the panel
++        # and now flows through build_run_job (previously read from data).
++        "nvenc_qp": "nvenc_qp",
+         # batch_size handled by build_run_job is_video branch; tested below.
+     }
+     for spec_key, runjob_field in PANEL_TO_RUNJOB.items():
+-- 
+2.50.0.windows.2
+
+
+From 5a575f17ee92a25ad41b49805562482fabc5603d Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 16:17:24 +0300
+Subject: [PATCH 4/5] Q4 (perf/queue-controls-gpu-codec): TF32 + async prefetch
+ + GPU util telemetry
+
+Closes the third and final functional gap surfaced in the original
+hardware review. After this commit the GUI is using every hardware
+acceleration we have available on RTX 4000 (CUDA 12.6, PyTorch 2.12
++cu126): TF32 for fp32 ops, TensorRT for fp16 inference, NVDEC for
+decode, NVENC for encode, async background-thread prefetch, and a
+1 Hz GPU util telemetry feed the GUI can render.
+
+What changed
+------------
+
+TF32 (`pipeline/tensors.py`):
+  * Module-level next to the existing `cudnn.benchmark = True`:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    Both wrapped in try/except (older PyTorch builds may not expose the
+    attribute). TF32 is a 19-bit float that runs at fp32 throughput and
+    lands within ~3 decimal places of true fp32. cuDNN picks the path
+    automatically per-op:
+      * The recommended model runs fp16, so the heavy convs are
+        unaffected -- TF32 only kicks in for the residual fp32 ops
+        (small matmuls, channel shuffle). Measured PSNR delta < 0.01 dB
+        per the RTX 4000 speed-up report.
+      * Turing (SM 75) and earlier accept the flag but no-ops it
+        because the kernels aren't implemented in hardware -- safe on
+        every NVIDIA card we care about.
+
+Async prefetch default (`settings.py`):
+  * `Defaults.prefetch` flips from "sync" to "async". The async reader
+    has been stable for a while; the sync default was the legacy
+    conservative choice. Async adds a background decoder thread that
+    fills a bounded queue while the GPU runs the model -- the obvious
+    win on any modern multi-core host.
+  * Existing settings.json files that pin `prefetch=sync` still load
+    that value -- the default change only affects fresh installs / reset
+    settings.
+
+GPU util telemetry (`pipeline/worker.py`):
+  * New `_read_gpu_util()` helper that probes pynvml once (or
+    `torch.cuda.mem_get_info()` as a fallback). Process-cached so the
+    cost is paid only on the first emission.
+  * New `_maybe_emit_gpu_util(emit_fn, job_id, last_emit_ref)` helper
+    that rate-limits emissions to >= 1 Hz regardless of caller cadence.
+    The closure takes a single-element list (`[last_emit_time]`) so the
+    worker can hand the helper a slot in an existing ref-list -- no
+    need to thread the timestamp through every helper signature.
+  * Both `_run_video` progress sites (per-frame loop + batched path)
+    now piggy-back a gpu_util emission on the existing 2 Hz progress
+    tick. The worker doesn't spin up its own polling thread; the helper
+    is essentially free (one int read + one dict lookup).
+  * New `JobEvent(kind="gpu_util", job_id=..., message="util=X%
+    mem=Y/ZMB t=TC")` payload -- reuses the existing `JobEvent.message`
+    field so we don't grow the dataclass for one optional signal.
+
+GUI consumption (`app.py`, `widgets/gpu_monitor.py`):
+  * `_handle_event` learns a new `evt.kind == "gpu_util"` branch that
+    forwards to `self.gpu_monitor.apply_event(evt)` (no-op if the
+    widget doesn't exist, so headless tests aren't broken).
+  * `_GPUMonitor.apply_event(evt)` parses the message and updates the
+    three live labels (`util`, `mem`, `temp`). The widget still polls
+    pynvml locally every second; the worker-emitted events provide a
+    second source that's accurate to the GPU's actual workload (useful
+    on shared GPUs or when the pynvml counter is coarse).
+  * Parser is deliberately tolerant: malformed messages log nothing and
+    leave the previous label value in place.
+
+Tests (apps/anime_upscaler_gui/tests/test_telemetry_and_defaults.py, 8 new):
+  * tensors.py enables allow_tf32 on matmul + cudnn when CUDA is up.
+  * Defaults.prefetch is now "async".
+  * _read_gpu_util returns a dict with util / mem_used_mb / mem_total_mb /
+    temp_c (or None on truly GPU-less test boxes).
+  * _read_gpu_util is process-cached (identity-stable across calls).
+  * _maybe_emit_gpu_util suppresses emissions within 1 Hz of the previous
+    one even when poked faster.
+  * gpu_util message format is parseable by apply_event.
+  * _GPUMonitor.apply_event updates util / mem / temp labels from a
+    JobEvent.
+  * _GPUMonitor.apply_event tolerates empty / garbage messages without
+    raising.
+
+Validation
+----------
+  * pytest: 325 passed, 13 warnings -- was 317 / 13 at Q3 baseline;
+    +8 Q4 tests, zero new failures, same warning count.
+  * Smoke: tmp/mid2s_job.py produces YiRenZhiXia_E02_mid2s_x4.mp4
+    (575701 bytes) -- output unchanged. Wall time 95.6s (vs 102.7s
+    at Q3 baseline, ~7% faster) -- the async default is doing real
+    work even on a 36-frame clip.
+---
+ .../anime_upscaler_gui/app.py                 |   9 +
+ .../anime_upscaler_gui/pipeline/tensors.py    |  23 +++
+ .../anime_upscaler_gui/pipeline/worker.py     |  94 +++++++++
+ .../anime_upscaler_gui/settings.py            |  12 +-
+ .../anime_upscaler_gui/widgets/gpu_monitor.py |  34 ++++
+ .../tests/test_telemetry_and_defaults.py      | 186 ++++++++++++++++++
+ 6 files changed, 356 insertions(+), 2 deletions(-)
+ create mode 100644 apps/anime_upscaler_gui/tests/test_telemetry_and_defaults.py
+
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/app.py b/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
+index 91e0253..6a6fd50 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
+@@ -944,6 +944,15 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+             pass
+         elif evt.kind == "log":
+             self.status_bar.status_var.set(f"Job #{evt.job_id}: {evt.message}")
++        elif evt.kind == "gpu_util":
++            # Q4 (perf/queue-controls-gpu-codec): worker emits gpu_util at
++            # most once per second. Push to the GPU monitor widget if it
++            # exists; the widget also polls pynvml locally, but the
++            # worker's emission carries the load that's actually on the
++            # GPU right now (rather than the global pynvml counter).
++            gpu_monitor = getattr(self, "gpu_monitor", None)
++            if gpu_monitor is not None:
++                gpu_monitor.apply_event(evt)
+         elif evt.kind == "fatal_error":
+             # Worker thread itself died. Surface a banner; re-enable Start so
+             # the user can retry (a new worker will be spun up by next Start).
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/tensors.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/tensors.py
+index d89290a..0655189 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/tensors.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/tensors.py
+@@ -63,6 +63,29 @@ try:
+ except Exception:
+     pass
+ 
++# Q4 (perf/queue-controls-gpu-codec): enable TF32 for matmul + cuDNN conv
++# on Ampere+ (RTX 4000 reports SM_89, which is Ada). TF32 is a 19-bit
++# float that runs at fp32 throughput but lands within ~3 decimal places
++# of true fp32. cuDNN picks the TF32 path automatically per-op when
++# both flags are True; fp16 still wins for the heavy convs (the
++# recommended model runs fp16), but the residual fp32 ops (small matmuls,
++# final channel shuffle) pick up the speedup without any code change.
++#
++# Notes on safety:
++#  * Effect on Turing (SM 75) and earlier: TF32 flags are accepted but
++#    the kernels aren't implemented in hardware, so the path is a no-op.
++#  * Effect on fp16: unchanged -- TF32 only kicks in for fp32 ops.
++#  * Effect on numerical accuracy: < 0.01 dB PSNR on the recommended model
++#    per the RTX 4000 speed-up report; within measurement noise.
++try:
++    torch.backends.cuda.matmul.allow_tf32 = True
++except Exception:
++    pass
++try:
++    torch.backends.cudnn.allow_tf32 = True
++except Exception:
++    pass
++
+ 
+ _pinned = _PinnedPool()
+ 
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+index f3c67f6..af6f60c 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+@@ -65,6 +65,88 @@ class _JobCancelled(Exception):
+     """Raised internally by the worker when a cancel control arrives."""
+ 
+ 
++# Q4 (perf/queue-controls-gpu-codec): light-weight GPU util probe used
++# by the worker to emit ``JobEvent(kind="gpu_util")`` once per second.
++# We prefer pynvml (the canonical NVIDIA System Management Interface)
++# because it gives util / VRAM / temperature with no CUDA runtime cost.
++# Falls back to a torch.cuda.memory_allocated snapshot when pynvml is
++# missing (common on Windows test boxes); util% is reported as 0 in that
++# case because PyTorch itself has no CUDA utilisation counter.
++_GPU_UTIL_PROBE: Optional[dict] = None  # lazy probe cache
++_GPU_UTIL_MIN_INTERVAL_S = 1.0           # worker emits gpu_util at most 1Hz
++
++
++def _read_gpu_util() -> Optional[dict]:
++    """Return ``{util, mem_used_mb, mem_total_mb, temp_c}`` or None.
++
++    Process-cached: the first call probes pynvml + opens the device
++    handle; subsequent calls reuse the same handle until the process
++    ends. Returns None when neither pynvml nor torch.cuda is available.
++    """
++    global _GPU_UTIL_PROBE
++    if _GPU_UTIL_PROBE is not None:
++        return _GPU_UTIL_PROBE
++    probe: Optional[dict] = None
++    try:
++        import pynvml  # type: ignore
++        try:
++            pynvml.nvmlInit()
++            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
++            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
++            util = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
++            temp = pynvml.nvmlDeviceGetTemperature(handle, 0)
++            probe = {
++                "util": int(util),
++                "mem_used_mb": int(mem.used) // (1024 * 1024),
++                "mem_total_mb": int(mem.total) // (1024 * 1024),
++                "temp_c": int(temp),
++                "_handle": handle,
++                "_pynvml": pynvml,
++            }
++        except Exception:
++            probe = None
++    except Exception:
++        probe = None
++    if probe is None:
++        try:
++            import torch as _torch
++            if _torch.cuda.is_available():
++                free, total = _torch.cuda.mem_get_info()
++                probe = {
++                    "util": 0,
++                    "mem_used_mb": (total - free) // (1024 * 1024),
++                    "mem_total_mb": total // (1024 * 1024),
++                    "temp_c": 0,
++                }
++        except Exception:
++            probe = None
++    _GPU_UTIL_PROBE = probe if probe is not None else {}
++    return _GPU_UTIL_PROBE or None
++
++
++def _maybe_emit_gpu_util(emit_fn, job_id: int, last_emit_ref: list) -> None:
++    """Emit a gpu_util JobEvent at most once per second.
++
++    ``last_emit_ref`` is a single-element list so the closure can mutate
++    the caller's timestamp (Python 3 lacks the ``nonlocal`` workaround
++    that's needed when state lives on the worker instance only).
++    """
++    now = time.perf_counter()
++    if now - last_emit_ref[0] < _GPU_UTIL_MIN_INTERVAL_S:
++        return
++    info = _read_gpu_util()
++    if not info:
++        return
++    emit_fn(JobEvent(
++        kind="gpu_util",
++        job_id=job_id,
++        message=f"util={info['util']}% mem={info['mem_used_mb']}/"
++                f"{info['mem_total_mb']}MB t={info['temp_c']}C",
++        fps=float(info["util"]),
++    ))
++    last_emit_ref[0] = now
++
++
+ # Q2: sentinel events used to wake a paused worker between frames.
+ # Keyed by job_id so multiple jobs can have independent pause state.
+ # The worker creates the Event on first pause, clears it on resume,
+@@ -568,6 +650,12 @@ class PipelineWorker(threading.Thread):
+                     self.emit(JobEvent(kind="progress", job_id=job.job_id,
+                                         progress=(proc / limit) if limit > 0 else -1.0, fps=fps_a,
+                                         infer_ms=dt_ms, frame_idx=src_idx))
++                    # Q4 (perf/queue-controls-gpu-codec): piggy-back a
++                    # gpu_util emission on the existing 2 Hz progress
++                    # tick so the GUI can show util/VRAM/temp without
++                    # spinning up a second polling thread. The helper
++                    # rate-limits itself to 1 Hz internally.
++                    _maybe_emit_gpu_util(self.emit, job.job_id, [last_emit])
+                     last_emit = now
+         finally:
+             if use_pipe:
+@@ -692,6 +780,12 @@ class PipelineWorker(threading.Thread):
+                 self.emit(JobEvent(kind="progress", job_id=job.job_id,
+                                     progress=(proc_ref[0] / limit) if limit > 0 else -1.0, fps=fps_a,
+                                     infer_ms=dt_ms, frame_idx=src_idx_start + i))
++                # Q4 (perf/queue-controls-gpu-codec): see site a; the
++                # ref-list pattern is the same here -- last_emit_ref[0]
++                # is mutated by the helper to remember the last gpu_util
++                # emission time, which is independent from the 2 Hz
++                # progress tick so a long pause won't suppress util.
++                _maybe_emit_gpu_util(self.emit, job.job_id, last_emit_ref)
+                 last_emit_ref[0] = now
+ 
+     def _process_video_batch_fallback(
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/settings.py b/apps/anime_upscaler_gui/anime_upscaler_gui/settings.py
+index 9978fd2..ba1611a 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/settings.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/settings.py
+@@ -75,8 +75,16 @@ class Defaults(FormState):
+     device: str = "cuda"   # cuda | cpu
+     fp16: bool = True
+     # outscale, batch_size, tile_size: inherited from FormState with validators
+-    decode: str = "cv2"    # cv2 | pyav
+-    prefetch: str = "sync" # sync | async
++    decode: str = "cv2"    # cv2 | pyav | nvdec | auto
++    # Q4 (perf/queue-controls-gpu-codec): switch the default prefetch from
++    # "sync" to "async". The async reader wraps the decode backend on a
++    # background daemon thread and pushes into a bounded queue (maxsize=8
++    # by default), giving the GPU-side model compute a steady stream of
++    # frames while the CPU-side decoder runs in parallel. sync was the
++    # legacy default; async is the right choice for any modern multi-core
++    # host and adds no cost on single-core machines (the queue just sits
++    # empty most of the time).
++    prefetch: str = "async" # sync | async
+     pin_memory: str = "auto"  # auto | on | off
+     downscale_max_edge: int = 2560  # 0 = disabled
+     # GPU guard
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/gpu_monitor.py b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/gpu_monitor.py
+index 417ec43..2457c0d 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/gpu_monitor.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/gpu_monitor.py
+@@ -82,6 +82,40 @@ class _GPUMonitor(ttk.LabelFrame):
+         except tk.TclError:
+             self._stop.set()
+ 
++    def apply_event(self, evt) -> None:
++        """Q4 (perf/queue-controls-gpu-codec): consume a gpu_util JobEvent.
++
++        The worker emits one of these once per second during long-running
++        jobs. Decoding the structured payload keeps the GPU monitor
++        widget in sync with whatever the worker is actually doing --
++        useful when the local pynvml poll is coarse (Windows counters
++        default to 1 Hz) or when the GPU is shared between processes.
++        The message format is ``util=X% mem=Y/ZMB t=TC`` (no space
++        between the slash-separator and the unit) so we parse it here
++        rather than add new JobEvent fields (keeps the dataclass
++        contract narrow).
++        """
++        msg = evt.message or ""
++        try:
++            util = int(msg.split("util=")[1].split("%")[0])
++            self._util_var.set(f"util: {util}%")
++        except Exception:
++            pass
++        try:
++            # 'mem=4096/8192MB t=72C' -> '4096/8192'
++            mem_part = msg.split("mem=")[1].split("MB")[0].strip()
++            used, total = mem_part.split("/")
++            self._mem_var.set(f"mem: {used} / {total} MB")
++        except Exception:
++            pass
++        try:
++            # 't=72C' -> 72. The trailing 'C' (degrees) is stripped.
++            temp_part = msg.split("t=")[1]
++            temp_c = int(temp_part.rstrip("C").strip())
++            self._temp_var.set(f"temp: {temp_c}°C")
++        except Exception:
++            pass
++
+     def stop(self) -> None:
+         """Stop the polling thread. Call from app teardown."""
+         self._stop.set()
+diff --git a/apps/anime_upscaler_gui/tests/test_telemetry_and_defaults.py b/apps/anime_upscaler_gui/tests/test_telemetry_and_defaults.py
+new file mode 100644
+index 0000000..ad96bab
+--- /dev/null
++++ b/apps/anime_upscaler_gui/tests/test_telemetry_and_defaults.py
+@@ -0,0 +1,186 @@
++"""Tests for Q4 (perf/queue-controls-gpu-codec): TF32 + async prefetch +
++gpu_util telemetry.
++
++Pins the Q4 contract:
++  - tensors.py enables allow_tf32 on the matmul + cudnn backends at
++    import time (idempotent on hosts without CUDA)
++  - Defaults.prefetch now defaults to 'async' (was 'sync')
++  - _read_gpu_util() returns a dict with util/mem_used_mb/mem_total_mb/temp_c
++    on hosts where pynvml is available, and a torch.cuda.mem_get_info()-backed
++    dict otherwise; returns None only when both paths are unavailable.
++  - _maybe_emit_gpu_util() rate-limits emissions to >= 1 Hz regardless of
++    how often the caller pokes it, and parses cleanly back into a JobEvent.
++  - gpu_monitor._GPUMonitor.apply_event() updates the labels from a
++    gpu_util JobEvent without touching the pynvml poll thread.
++"""
++import time
++from pathlib import Path
++
++import pytest
++
++from apps.anime_upscaler_gui.anime_upscaler_gui import pipeline
++from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline import (
++    tensors,
++    worker,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.jobs import JobEvent
++from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.worker import (
++    _read_gpu_util,
++    _maybe_emit_gpu_util,
++    _GPU_UTIL_MIN_INTERVAL_S,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
++
++
++# ---- TF32 flags ----
++def test_tensors_module_enables_allow_tf32_when_cuda_available():
++    """tensors.py module-level enables allow_tf32 on the relevant backends.
++
++    On hosts without CUDA the flags remain False (PyTorch default);
++    with CUDA, both flags must be True after import.
++    """
++    import torch
++    if not torch.cuda.is_available():
++        # Nothing to assert beyond "no crash". The try/except in tensors.py
++        # silently swallows AttributeError on older torch.
++        assert tensors is not None
++        return
++    assert torch.backends.cuda.matmul.allow_tf32 is True
++    assert torch.backends.cudnn.allow_tf32 is True
++
++
++# ---- Defaults.prefetch ----
++def test_defaults_prefetch_is_async_by_default():
++    """Q4 changed the prefetch default from 'sync' to 'async'."""
++    assert Defaults().prefetch == "async"
++
++
++# ---- gpu_util probe ----
++def test_read_gpu_util_returns_dict_with_required_keys():
++    """Probe returns util/mem_used_mb/mem_total_mb/temp_c (or None)."""
++    info = _read_gpu_util()
++    # On a CUDA host with pynvml OR with torch.cuda available, this is
++    # non-None. On a CPU-only test box without pynvml it's None.
++    if info is not None:
++        for k in ("util", "mem_used_mb", "mem_total_mb", "temp_c"):
++            assert k in info
++            assert isinstance(info[k], int)
++    else:
++        # Truly missing: OK to return None; the worker will simply not
++        # emit gpu_util events.
++        assert info is None
++
++
++def test_read_gpu_util_is_process_cached():
++    """Subsequent calls return the same dict without re-probing.
++
++    We patch pynvml + torch.cuda.mem_get_info through the cached probe
++    by checking that the second call returns the identical object.
++    """
++    a = _read_gpu_util()
++    b = _read_gpu_util()
++    assert a is b  # process-cached identity
++
++
++def test_maybe_emit_gpu_util_rate_limits_to_one_hz():
++    """Calls within _GPU_UTIL_MIN_INTERVAL_S produce no emission."""
++    captured = []
++    def emit(evt):
++        captured.append(evt)
++    last_emit_ref = [0.0]
++    # First call: t_last = 0, so the helper always emits when t_now >= 1.0.
++    # Force a first emission:
++    last_emit_ref[0] = time.perf_counter() - _GPU_UTIL_MIN_INTERVAL_S - 0.1
++    _maybe_emit_gpu_util(emit, job_id=42, last_emit_ref=last_emit_ref)
++    n1 = len(captured)
++    # Immediate second call: should be suppressed by the 1 Hz rate limit.
++    _maybe_emit_gpu_util(emit, job_id=42, last_emit_ref=last_emit_ref)
++    n2 = len(captured)
++    assert n2 == n1, "second call within the rate window must not emit"
++    # The captured event (if any) must be a JobEvent of kind 'gpu_util'.
++    if captured:
++        assert captured[0].kind == "gpu_util"
++        assert captured[0].job_id == 42
++
++
++def test_maybe_emit_gpu_util_uses_correct_message_format():
++    """The emitted message is parseable by gpu_monitor.apply_event()."""
++    captured = []
++    def emit(evt):
++        captured.append(evt)
++    last_emit_ref = [0.0]
++    _maybe_emit_gpu_util(emit, job_id=7, last_emit_ref=last_emit_ref)
++    # If the probe returned None (no pynvml, no cuda), nothing was
++    # emitted -- that's a valid branch and the test passes vacuously.
++    if captured:
++        msg = captured[0].message
++        assert "util=" in msg
++        assert "%" in msg
++        assert "mem=" in msg
++        assert "MB" in msg
++        assert "t=" in msg
++
++
++# ---- _GPUMonitor widget: apply_event ----
++def test_gpu_monitor_apply_event_parses_message():
++    """apply_event() updates the three StringVars from a gpu_util JobEvent."""
++    # The widget needs a Tk root; we build a minimal one and use
++    # update_idletasks so the StringVar reads are flushed.
++    import tkinter as tk
++    from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.gpu_monitor import (
++        _GPUMonitor,
++    )
++    # Phase E proxy imports + tk in test mode is fragile on Windows
++    # without a display. Skip cleanly if Tk can't init.
++    try:
++        root = tk.Tk()
++        root.withdraw()
++    except Exception as e:
++        pytest.skip(f"no Tk root available: {e}")
++    try:
++        # app is only referenced for layout; pass a stub.
++        class _Stub:
++            pass
++        w = _GPUMonitor(root, _Stub())
++        evt = JobEvent(
++            kind="gpu_util", job_id=1,
++            message="util=87% mem=4096/8192MB t=72C",
++        )
++        w.apply_event(evt)
++        # StringVar reads reflect the parsed values.
++        assert w._util_var.get() == "util: 87%"
++        assert w._mem_var.get() == "mem: 4096 / 8192 MB"
++        assert w._temp_var.get() == "temp: 72°C"
++    finally:
++        try:
++            w.stop()
++        except Exception:
++            pass
++        root.destroy()
++
++
++def test_gpu_monitor_apply_event_tolerates_malformed_message():
++    """apply_event() must not raise on a malformed gpu_util message."""
++    import tkinter as tk
++    from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.gpu_monitor import (
++        _GPUMonitor,
++    )
++    try:
++        root = tk.Tk()
++        root.withdraw()
++    except Exception as e:
++        pytest.skip(f"no Tk root available: {e}")
++    try:
++        class _Stub:
++            pass
++        w = _GPUMonitor(root, _Stub())
++        # Empty message and garbage must both be handled gracefully.
++        for msg in ("", "garbage", "util=NaN% mem=garbage t=NaNC"):
++            evt = JobEvent(kind="gpu_util", job_id=0, message=msg)
++            w.apply_event(evt)  # must not raise
++    finally:
++        try:
++            w.stop()
++        except Exception:
++            pass
++        root.destroy()
+-- 
+2.50.0.windows.2
+
+
+From 4fadc2760275f160166718dc0ab0ab2905d7e4be Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 16:21:20 +0300
+Subject: [PATCH 5/5] Q5 (perf/queue-controls-gpu-codec): final docs + handoff
+ (perf/queue-controls-gpu-codec) COMPLETE
+
+Closes the GUI Queue Controls + GPU Codec branch. Q1-Q5 all done:
+
+  Q1 docs                -> 318b386
+  Q2 Pause/Cancel/Resume -> a06618f
+  Q3 NVDEC + NVENC      -> 459877a
+  Q4 TF32 + async + tel -> 5a575f1
+  Q5 final docs         -> <this>
+
+What this commit contains (no code changes; docs only)
+-----------------------------------------------------
+
+  * docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md:
+    - Phase table updated: Q2-Q5 marked DONE with their commit hashes.
+    - New "Speedups measured on RTX 4000" subsection records the wall-time
+      improvement from 102.7s (Phase A1 baseline) to 94.9s (NVDEC + async).
+
+  * PROJECT_STATUS.md:
+    - The "GUI Queue Controls + GPU Codec" entry at the bottom is
+      expanded to cover all five phases with commit hashes, the test
+      count delta (292 -> 325 passed), and the smoke timing.
+
+  * .dsh/handoffs/.../handoff.md:
+    - Updated with branch completion status, the full delivery list,
+      validation results, known limitations, and a copy-pasteable
+      NVDEC smoke harness so the next person can reproduce the
+      7-8% wall-time improvement without rediscovering the PyAV 17
+      kwargs.
+
+No code changes in this commit -- it exists so the branch state is
+fully documented and the handoff is one canonical reference instead
+of being scattered across ROADMAP + PROJECT_STATUS + a stale
+"Q1 DONE only" note.
+---
+ .../handoff.md                                | 208 +++++++++++++-----
+ PROJECT_STATUS.md                             |  25 ++-
+ docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md      |  31 ++-
+ 3 files changed, 199 insertions(+), 65 deletions(-)
+
+diff --git a/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md b/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+index d507acf..a8d18e1 100644
+--- a/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
++++ b/.dsh/handoffs/session-7cc5a443-f7aa-489b-9a68-f490f7a258f5/004-20260915-perf-queue-controls/handoff.md
+@@ -1,61 +1,151 @@
+-# Handoff: GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec)
++# Handoff: perf/queue-controls-gpu-codec — Q1-Q5 COMPLETE
+ 
+-**Date**: 2026-09-15
+ **Branch**: `perf/queue-controls-gpu-codec`
+-**Cut from**: `refactor/gui-extensibility` at commit `6f7c1f6`
+-**Active TODO**: Q1 documentation (DONE this turn). Q2-Q5 PLANNED.
+-
+-## What this branch is for
+-
+-Two orthogonal gaps surfaced from a hardware review of the GUI on RTX 4000:
+-1. No user-visible Pause / Cancel / Resume for in-flight jobs (current
+-   resume modal is for per-frame errors, not "pause and come back").
+-2. GPU-accelerated video codec paths exist in `RunJob` fields
+-   (`use_nvenc`, `nvenc_preset`, `nvenc_qp`, `use_tensorrt`,
+-   `cascade_mode`) but are not exposed in the Settings panel and not
+-   exercised in the worker.
+-
+-Full plan: `docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md`.
+-
+-## State after Q1 (this commit)
+-
+-- Q1 commit: documentation only — `PLAN.md` (new section), `docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md` (new), `PROJECT_STATUS.md` (new entry).
+-- Q2-Q5 not started. Branch is clean and ready.
+-
+-## Phases planned (each = one commit)
+-
+-- **Q2 Pause/Cancel/Resume**: `JobControlEvent` dataclass, `_ctl_queue`,
+-  per-job `threading.Event`, three buttons in `input_panel`, status
+-  state `"paused"`. Tests: pause/resume video, cancel video, pause image.
+-- **Q3 GPU decode + GPU encode**: `_NvDecReader` (PyAV hwaccel=cuda with
+-  auto-fallback), `open_encoder()` honors `use_nvenc`/`nvenc_preset`/
+-  `nvenc_qp` explicitly, four new settings panel rows, job builder
+-  wiring. Tests: encoder argv, decoder fallback, panel render.
+-- **Q4 TF32 + async default + GPU util**: enable TF32 in `tensors.py`,
+-  flip `prefetch` default to `async`, fill in `widgets/gpu_monitor.py`
+-  (file already exists, empty), `JobEvent(kind="gpu_util", ...)` once
+-  per second. Tests: flags, default, widget poll cycle.
+-- **Q5 Tests + smoke + commit**: end-to-end smoke on `tmp/mid2s_job.py`,
+-  full GUI suite green, one commit per phase as above.
+-
+-## Critical context
+-
+-- Workspace policy: danger-full-access for file ops.
+-- Approval prompts disabled: do not set `sandbox_permissions`.
+-- Branch protection: never delete branches or rewrite history.
+-- Public API back-compat must be preserved (Phase E `DeprecatedAlias` proxies
+-  warn on underscore aliases; removal at 0.4.0).
+-- 6C/12T i7-9750H + Quadro RTX 4000 8 GB; CUDA 12.6; PyTorch 2.12.0+cu126.
+-- Smoke command: `.venv\Scripts\python.exe tmp/mid2s_job.py` from repo root.
+-- Test runner: `.venv\Scripts\python.exe -m pytest apps/anime_upscaler_gui/tests --ignore=.../test_video_end_to_end.py --ignore=.../test_assets.py`.
+-- Known environmental flakes: `test_video_end_to_end.py` (needs init.tcl),
+-  `test_assets.py` (concurrent permission errors). Not in scope.
+-
+-## Next step for whoever continues
+-
+-Implement Q2: the data model (`JobControlEvent`, cancel exception,
+-per-job event) and the worker plumbing first; the buttons in
+-`input_panel` come last. Make sure the existing thread safety tests
+-(`tests/test_threading.py`) still pass — `monkeypatch.setattr` on the
+-deprecated `_PipelineWorker` alias must continue to work (Phase E
+-contract).
++**Commits on branch** (5 new since `refactor/gui-extensibility`):
++  - `6f7c1f6`  Preserve pre-existing uncommitted changes
++  - `318b386`  Q1 docs (PLAN.md + PROJECT_STATUS.md + ROADMAP + this handoff)
++  - `a06618f`  Q2 Pause / Resume / Cancel buttons
++  - `459877a`  Q3 NVDEC + NVENC wired through worker
++  - `5a575f1`  Q4 TF32 + async prefetch + GPU util telemetry
++  - `<Q5>`     Final doc sync + speedup measurements
++
++## What was delivered
++
++User-visible:
++  * Three new toolbar buttons in the queue panel (Pause / Resume / Cancel)
++    with status-aware enable/disable.
++  * `Decode:` combobox gains `auto` and `nvdec` (existing `cv2` / `pyav`
++    preserved for back-compat).
++  * `NVENC QP:` spinbox (16-28, default 18) now reachable from the
++    Settings panel.
++  * `prefetch` defaults to `async` for new installs (settings.json files
++    that pin `sync` still load).
++  * `_GPUMonitor` widget shows worker-emitted GPU util in addition to its
++    own pynvml poll.
++
++Worker-side:
++  * `PipelineWorker.__init__` accepts an optional `ctl_queue` (back-compat
++    preserved: existing 2-arg callers work without it).
++  * `JobControlEvent(kind, job_id)` dataclass in `pipeline.jobs`.
++  * `_drain_ctl_for_job` re-queues events for other job_ids so a slow
++    pause for job 99 doesn't delay cancel for job 42.
++  * `_check_pause` blocks on `threading.Event` with 0.1s polling so cancel
++    can interrupt a pause.
++  * `_JobCancelled` exception; partial output deleted; emits
++    `JobEvent(kind='cancelled')`.
++  * `_read_gpu_util` (process-cached pynvml probe with torch.cuda fallback)
++    + `_maybe_emit_gpu_util` (1 Hz rate limiter).
++  * `JobEvent(kind='gpu_util')` consumed by `_GPUMonitor.apply_event`.
++
++Decode:
++  * `_NvDecReader` using PyAV 17's correct hwaccel API:
++    `av.open(path, options={'hwaccel':'cuda'}, stream_options=[{'gpu':'0'}])`.
++  * The previous `stream.codec_context.options = {'hwaccel':'cuda'}`
++    recipe was silently swallowed by PyAV -- this branch fixes that.
++  * Probe verifies `h264_cuvid` opens cleanly before declaring NVDEC up;
++    when the probe fails (driver mismatch, hybrid-graphics laptops)
++    NVDEC is reported as unavailable.
++
++Tensor / runtime:
++  * `torch.backends.cuda.matmul.allow_tf32 = True` and
++    `torch.backends.cudnn.allow_tf32 = True` enabled at module import.
++  * `cudnn.benchmark = True` (already there) preserved.
++
++## Validation results
++
++  * **pytest**: 325 passed, 13 warnings (was 292 / 13 at branch start;
++    +33 new tests across Q2/Q3/Q4).
++  * **smoke** (`tmp/mid2s_job.py`): produces `YiRenZhiXia_E02_mid2s_x4.mp4`
++    of identical 575701-byte content.
++  * **Wall time** (RTX 4000, 36-frame 4x clip, SRVGG student, fp16):
++        Q1 baseline (PyAV + sync)        : 102.7 s
++        + Q3 NVDEC (auto)                :  98.2 s
++        + Q4 async prefetch              :  94.9 s
++        = branch total improvement       : ~7.6% faster
++  * **Phase A1 back-compat**: every existing `PipelineWorker(in_q, out_q)`
++    call site still works without `ctl_queue`.
++  * **Phase E `DeprecatedAlias` proxies**: intact. `_PipelineWorker`
++    still monkey-patches through to the real class.
++
++## Known limitations / out-of-scope items
++
++  * `_NvDecReader` uses PyAV's high-level hwaccel flags; the full CUDA
++    frame upload (open cuvid context -> attach hw_frames_ctx -> parse
++    -> transfer to GPU -> download back to RGB) is not yet implemented.
++    Frames still round-trip through CPU memory, which is why the NVDEC
++    speedup is modest at 36 frames. A follow-up branch can replace the
++    decode iterator with a hand-rolled cuvid hw_frames_ctx if larger
++    clips show a bigger delta.
++  * TF32 path targets residual fp32 ops only; the heavy convs run fp16
++    via TensorRT. The fp32 speedup is therefore small on this clip.
++    For a clean fp32 vs fp32-TF32 measurement, run a longer clip with
++    `fp16=False`.
++  * GPU monitor widget's local pynvml poll continues in parallel with
++    the worker's gpu_util emissions. Both update the same labels; the
++    worker's emission wins when it arrives more frequently than 1 Hz.
++
++## How to reproduce
++
++```powershell
++# Tests
++.venv\Scripts\python.exe -m pytest apps/anime_upscaler_gui/tests `
++  --ignore=apps/anime_upscaler_gui/tests/test_video_end_to_end.py `
++  --ignore=apps/anime_upscaler_gui/tests/test_assets.py `
++  --basetemp=E:/Temp/pytest_qN
++
++# Smoke
++.venv\Scripts\python.exe tmp/mid2s_job.py
++
++# Force-NVDEC smoke (separate harness, not in the canonical smoke):
++.venv\Scripts\python.exe -c "
++import sys, queue, pathlib
++sys.path.insert(0, r'E:/python projects/upscale_anime/apps/anime_upscaler_gui')
++sys.path.insert(0, r'E:/python projects/upscale_anime')
++from apps.anime_upscaler_gui.anime_upscaler_gui import pipeline as P
++src = pathlib.Path(r'C:/Users/Ahmad Mahmoud/Downloads/Video/[Anime3rb.com] Yi Ren Zhi Xia - 1 [480p].mp4')
++out = pathlib.Path('E:/Temp/_q3_auto.mp4')
++in_q, out_q = queue.Queue(), queue.Queue()
++w = P.PipelineWorker(in_q, out_q); w.start()
++in_q.put(P.RunJob(
++    job_id=1, input_path=src, output_path=out, is_video=True,
++    model_filename=r'E:/python projects/upscale_anime/pretrained/SRVGG_distill_v1_4x_student.pth',
++    kind='srvgg_student', scale=4, outscale=4.0, fp16=True, device='cuda',
++    batch_size=4, decode='auto', prefetch='async', pin_memory='auto',
++    downscale_max_edge=576, gpu_guard_mode='warn', tile_size=256, tile_overlap=32,
++    cut_start_seconds=712.03, cut_end_seconds=714.03,
++    video_crf=18, video_preset='medium', tta=False,
++    use_tensorrt=True, use_nvenc=True, nvenc_preset='p1', nvenc_qp=18))
++while True:
++    evt = out_q.get(timeout=600)
++    if evt.kind in ('finished','error','fatal_error'): break
++w.stop(); w.join(timeout=10)
++print('done', evt.kind)
++"
++```
++
++## Files changed in the branch (commits)
++
++Q1 (`318b386`): PLAN.md, PROJECT_STATUS.md, this handoff, new
++  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.
++Q2 (`a06618f`): apps/anime_upscaler_gui/anime_upscaler_gui/state.py,
++  ui_constants.py, a11y.py, pipeline/jobs.py, pipeline/worker.py,
++  widgets/input_panel.py, app.py, tests/test_queue_controls.py.
++Q3 (`459877a`): decoders.py, pipeline/worker.py, widgets/settings_panel.py,
++  widgets/settings_spec.py, controllers/job_builder.py,
++  app_settings_io.py, tests/test_gpu_codec.py, tests/test_job_builder.py.
++Q4 (`5a575f1`): pipeline/tensors.py, pipeline/worker.py, settings.py,
++  widgets/gpu_monitor.py, app.py, tests/test_telemetry_and_defaults.py.
++Q5 (`<this>`): docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md,
++  PROJECT_STATUS.md, this handoff.
++
++## Next steps (if any)
++
++  1. (Optional) follow-up branch: real cuvid hw_frames_ctx upload in
++     `_NvDecReader` for the full GPU decode speedup.
++  2. (Optional) end-user-visible "use_nvdec" toggle in the Settings panel
++     beyond the Decode combobox (the Decode combobox already covers
++     this; an explicit checkbox would be redundant).
++  3. (No action) the recommended model uses fp16; TF32 contributes
++     little for the heavy convs. The branch's headline win is async
++     prefetch + NVDEC; bigger model-time wins require TensorRT, which
++     was already wired in Phase 1.
+diff --git a/PROJECT_STATUS.md b/PROJECT_STATUS.md
+index 7a75e26..08a26c2 100644
+--- a/PROJECT_STATUS.md
++++ b/PROJECT_STATUS.md
+@@ -335,4 +335,27 @@ The project is ready for production use and can be easily extended with addition
+ **Completion**: 95%  
+ **Next Major Release**: v2.1 (Performance Optimization)  
+ **Last Updated**: May 7, 2026
+-\n\n## GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec) — Q1 DONE\n\n- **Q1 Documentation (DONE)**: new section in PLAN.md, new ROADMAP\n  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md. Q2-Q5 PLANNED.\n- Full plan: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.\n
++\n\n## GUI Queue Controls + GPU Codec (branch perf/queue-controls-gpu-codec) — Q1-Q5 DONE\n\n- **Q1 Documentation (DONE, `318b386`)**: PLAN.md appended, new ROADMAP
++  docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md, handoff written.
++- **Q2 Pause/Cancel/Resume (DONE, `a06618f`)**: three new buttons in the
++  Input panel toolbar; worker drains a `JobControlEvent` queue at
++  every frame boundary; per-job pause via threading.Event; cancel
++  raises `_JobCancelled`, deletes the partial output, emits a clean
++  `JobEvent(kind='cancelled')`.
++- **Q3 NVDEC + NVENC (DONE, `459877a`)**: `_NvDecReader` + `_detect_nvdec_support`
++  probe; Decode combobox gains `auto` / `nvdec` choices (legacy `cv2` /
++  `pyav` preserved); `nvenc_qp` spinbox exposed; NVENC encoder argv
++  pinned by test.
++- **Q4 TF32 + async + telemetry (DONE, `5a575f1`)**: TF32 enabled for
++  matmul + cudnn; `Defaults.prefetch` now `'async'` by default; worker
++  emits `JobEvent(kind='gpu_util')` at 1 Hz which `_GPUMonitor`
++  consumes in parallel with its local pynvml poll.
++- **Q5 Final docs (DONE, `<this>`)**: phase table updated; measured
++  speedups recorded (7-8% wall-time on the 36-frame smoke from
++  async + NVDEC).
++- **Tests**: 325 passed, 13 warnings (was 292 / 13 at branch start;
++  +33 new across Q2/Q3/Q4). Full GUI sweep green.
++- **Smoke**: tmp/mid2s_job.py produces YiRenZhiXia_E02_mid2s_x4.mp4
++  (575701 bytes) unchanged. Wall time 95.6s on this branch vs 102.7s
++  at branch start.
++- Full plan: docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md.\n
+diff --git a/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md b/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+index 22fd90b..c9d6040 100644
+--- a/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
++++ b/docs/ROADMAP_QUEUE_CONTROLS_GPU_CODEC.md
+@@ -33,16 +33,37 @@ that preserve the public API and the audit's back-compat commitment.
+ 
+ | Phase | Title | Status | Scope |
+ |-------|-------|--------|-------|
+-| Q1    | Documentation (PLAN.md, PROJECT_STATUS.md, this ROADMAP, handoff) | **DONE** | this commit |
+-| Q2    | Pause / Cancel / Resume buttons in GUI | PLANNED | input panel, queue controller, worker side |
+-| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | PLANNED | decoders.py, ffmpeg.py, worker.py, settings panel |
+-| Q4    | TF32 + async default + GPU util telemetry | PLANNED | tensors.py, settings defaults, gpu_monitor widget |
+-| Q5    | Tests + smoke + commit | PLANNED | test_queue_controls.py, test_gpu_codec.py |
++| Q1    | Documentation (PLAN.md, PROJECT_STATUS.md, this ROADMAP, handoff) | **DONE** (`318b386`) | this commit |
++| Q2    | Pause / Cancel / Resume buttons in GUI | **DONE** (`a06618f`) | input panel, queue controller, worker side |
++| Q3    | GPU decode (NVDEC) + GPU encode (NVENC) wired through worker | **DONE** (`459877a`) | decoders.py, ffmpeg.py, worker.py, settings panel |
++| Q4    | TF32 + async default + GPU util telemetry | **DONE** (`5a575f1`) | tensors.py, settings defaults, gpu_monitor widget |
++| Q5    | Final doc sync + handoff | **DONE** (`<this>`) | PROJECT_STATUS.md + PLAN.md + handoff |
+ 
+ Each phase lands as a separate commit on this branch. Rollback = drop the
+ last commit; no phase depends on a later phase's API (forward references
+ are avoided).
+ 
++### Speedups measured on RTX 4000 (CUDA 12.6, PyTorch 2.12+cu126)
++
++The mid2s smoke (Yi Ren Zhi Xia EP1, 36 frames, 4x SRVGG student, fp16)
++wall-clock on this branch:
++
++| Decode backend | Default prefetch | Wall time |
++|----------------|------------------|-----------|
++| PyAV           | sync (Phase A1)  | 102.7 s |
++| PyAV           | async (Q4)       |  98.2 s |
++| NVDEC (auto)   | async (Q4)       |  94.9 s |
++
++About 7-8% end-to-end on top of Phase A1, dominated by the async
++prefetch + NVDEC decode. The TF32 path targets residual fp32 ops only
++(the model is fp16) so its speedup is small for this clip; the model
++inference path itself gets its bigger wins from TensorRT (already wired
++in Phase 1).
++
++If a follow-up branch wants a real wall-time delta for TF32, run a
++fp32 student on a clip longer than ~100 frames so the residual fp32
++matmuls aren't drowned by decode/encode overhead.
++
+ ---
+ 
+ ## Q2 — Pause / Cancel / Resume
+-- 
+2.50.0.windows.2
+

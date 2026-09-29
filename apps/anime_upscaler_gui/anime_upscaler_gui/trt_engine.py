@@ -32,6 +32,11 @@ from .archs import capabilities as _arch_caps
 
 log = logging.getLogger(__name__)
 
+# TRT serialized engines are never smaller than a few KB; a partial write
+# from a killed process leaves a stub that makes deserialize() fail with an
+# opaque error. Guard with a size floor so we rebuild instead.
+_MIN_ENGINE_BYTES = 64 * 1024
+
 try:
     import tensorrt as trt
     _HAS_TRT = True
@@ -79,7 +84,14 @@ class _TrtEngineCache:
         engine_bytes = None
         if engine_path.exists():
             engine_bytes = engine_path.read_bytes()
-            log.info("trt: loading cached engine %s (%d bytes)", engine_path.name, len(engine_bytes))
+            if len(engine_bytes) < _MIN_ENGINE_BYTES:
+                # Truncated/partial write from a killed process: TRT would
+                # fail with an opaque deserialization error. Rebuild instead.
+                log.warning("trt: cached engine %s is truncated (%d bytes); rebuilding",
+                            engine_path.name, len(engine_bytes))
+                engine_bytes = None
+            else:
+                log.info("trt: loading cached engine %s (%d bytes)", engine_path.name, len(engine_bytes))
         if engine_bytes is None:
             log.info("trt: building engine for batch=%d h=%d w=%d (this takes 30-90 s once)", batch, h, w)
             t0 = time.time()

@@ -179,6 +179,9 @@ class AppPaths:
             shutil.move(str(self.settings_path), str(new_dir / SETTINGS_FILE))
         if self.registry_path.exists():
             shutil.move(str(self.registry_path), str(new_dir / REGISTRY_FILE))
+        queue_src = self.app_dir / QUEUE_FILE
+        if queue_src.exists():
+            shutil.move(str(queue_src), str(new_dir / QUEUE_FILE))
         self.app_dir = new_dir
         self.settings_path = new_dir / SETTINGS_FILE
         self.registry_path = new_dir / REGISTRY_FILE
@@ -332,7 +335,12 @@ class QueueController:
 
     def __init__(self, paths: AppPaths):
         self.paths = paths
-        self.queue_path = paths.app_dir / QUEUE_FILE
+
+    @property
+    def queue_path(self) -> Path:
+        """Queue file path; follows ``paths.app_dir`` so it stays correct
+        after ``AppPaths.move_to``."""
+        return self.paths.app_dir / QUEUE_FILE
 
     def load(self) -> List[Job]:
         if not self.queue_path.exists():

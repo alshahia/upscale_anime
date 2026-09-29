@@ -1,0 +1,895 @@
+From a06618f7402b670206c8a85ca2c81a0e2932d212 Mon Sep 17 00:00:00 2001
+From: Ahmad Mahmoud <alshahia@gmail.com>
+Date: Tue, 15 Sep 2026 15:36:44 +0300
+Subject: [PATCH 3/6] Q2 (perf/queue-controls-gpu-codec): Pause / Resume /
+ Cancel buttons
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds a user-facing control channel between the GUI and PipelineWorker
+so in-flight jobs can be paused, resumed, or cancelled from the queue
+listbox. No worker API breakage: Phase A1's ctl_queue argument is
+optional (defaults to a private queue.Queue() per worker), so existing
+tests that construct PipelineWorker(in_q, out_q) still pass.
+
+State machine
+-------------
+JobStatus extends with PAUSED = 'paused'. CANCELLED was already
+present and is reused for the cancel terminal state.
+
+  pending  --start-->  running  --pause-->  paused  --resume-->  running
+                              |                                  |
+                              +-----cancel---->  cancelled <-----+
+
+Worker contract
+---------------
+* New JobControlEvent(kind, job_id) dataclass in pipeline.jobs
+  (kind ∈ {'pause','resume','cancel'}, default job_id=0).
+* PipelineWorker.__init__ accepts an optional ctl_queue argument;
+  when omitted, a private queue.Queue() is synthesised so the legacy
+  2-arg constructor still works (Phase A1 contract).
+* send_control(evt): GUI-facing push helper (put to ctl_queue).
+* _drain_ctl_for_job(job_id): non-blocking drain -- pause arms the
+  per-job threading.Event, resume clears it, cancel raises
+  _JobCancelled. Events for other job_ids are re-enqueued in FIFO
+  order so a slow pause for job 99 doesn't delay cancel for job 42.
+* _check_pause(job_id): blocks on the per-job Event in 0.1s slices
+  polling the ctl_queue so cancel can interrupt a pause.
+* _run_image and _run_video drain controls at job start; _run_video
+  also drains + checks pause at the frame boundary (after the
+  skip-rest check) so the current frame finishes writing and MP4
+  streams stay consistent.
+* _run_one wraps dispatch in try/except _JobCancelled: deletes the
+  partial output file and emits JobEvent(kind='cancelled'); finally
+  calls _finalize_job so the per-job pause Event is removed.
+
+GUI contract
+------------
+* widgets/input_panel.py gains a Pause/Resume/Cancel row above the
+  Filter row. Buttons default to state='disabled' and enable based
+  on the selected job's status:
+    Pause   enabled iff status == RUNNING
+    Resume  enabled iff status == PAUSED
+    Cancel  enabled iff status ∈ {RUNNING, PAUSED}
+  A new _selected_job_id() returns the first selected row's id (or 0).
+  _refresh_controls() is called from App._refresh_queue_listbox so
+  selection moves update the buttons without an extra round-trip.
+
+* App._send_pause / _send_resume / _send_cancel push the JobControlEvent
+  and flip the local status optimistically so the listbox + buttons
+  update immediately. Cancel shows a confirmation dialog
+  ('cancelled by user') and sets job_rec.error so the message sticks
+  even if the worker never confirms.
+
+* App._handle_event learns a new 'cancelled' branch that mirrors
+  'finished': persists the queue, advances the batch runner if
+  queue_mode == 'batch', and re-enables Start when not in batch.
+
+Theme + a11y
+------------
+No new Theme fields -- extending Theme would touch all 3 theme
+constructors (LIGHT/DARK/HIGH_CONTRAST) and risk test_theme.py
+contracts. Instead ui_constants.STATUS_COLORS[JobStatus.PAUSED]
+holds the runtime default; a11y._DEFAULT_COLORS[PAUSED] is the
+fallback for themes that don't override.
+
+* ui_constants.STATUS_COLORS[JobStatus.PAUSED] = '#4338ca' (indigo-700)
+* ui_constants.STATUS_BG_COLORS[JobStatus.PAUSED] = '#e0e7ff'
+* a11y._STATUS_GLYPHS[JobStatus.PAUSED] = ('\u275a\u275a', 'Paused')
+  -- the two thick bars are visually distinct from RUNNING (\u25b6)
+  and CANCELLED (\u25cc).
+
+Tests
+-----
+apps/anime_upscaler_gui/tests/test_queue_controls.py -- 12 tests:
+* JobControlEvent dataclass shape.
+* JobStatus.PAUSED == 'paused' and distinct from CANCELLED.
+* status_triplet renders PAUSED with a distinct glyph.
+* Worker default ctl_queue is per-instance.
+* send_control pushes to ctl_queue.
+* drain_ctl_for_job pauses non-blockingly.
+* drain_ctl_for_job ignores events for other job_ids (re-enqueues).
+* drain_ctl_for_job raises _JobCancelled on cancel.
+* check_pause blocks then returns on resume.
+* finalize_job clears per-job pause state (no leak across jobs).
+* pause events for two jobs are independent.
+* _run_one integration: cancel pre-armed in ctl_queue emits a clean
+  'cancelled' JobEvent and the per-job pause state is cleaned up.
+
+Validation
+----------
+* pytest: 304 passed (was 292; +12 new), 13 warnings -- same warning
+  count as Phase E baseline. No new failures.
+* Smoke: tmp/mid2s_job.py produces YiRenZhiXia_E02_mid2s_x4.mp4
+  (575701 bytes) -- output unchanged.
+* Phase A1 back-compat preserved: every PipelineWorker(in_q, out_q)
+  call site still works without supplying ctl_queue.
+* Phase E DeprecatedAlias proxies intact: _PipelineWorker still
+  monkey-patches through to the real PipelineWorker.
+---
+ .../anime_upscaler_gui/a11y.py                |  11 +
+ .../anime_upscaler_gui/app.py                 | 112 ++++++++-
+ .../anime_upscaler_gui/pipeline/jobs.py       |  28 +++
+ .../anime_upscaler_gui/pipeline/worker.py     | 144 ++++++++++-
+ .../anime_upscaler_gui/state.py               |   6 +
+ .../anime_upscaler_gui/ui_constants.py        |   6 +
+ .../anime_upscaler_gui/widgets/input_panel.py |  72 ++++++
+ .../tests/test_queue_controls.py              | 223 ++++++++++++++++++
+ 8 files changed, 596 insertions(+), 6 deletions(-)
+ create mode 100644 apps/anime_upscaler_gui/tests/test_queue_controls.py
+
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py b/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py
+index d72c305..abc7bd1 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/a11y.py
+@@ -25,6 +25,13 @@ _DEFAULT_COLORS = {
+     JobStatus.ERROR: "#B91C1C",
+     JobStatus.SKIPPED: "#B45309",
+     JobStatus.CANCELLED: "#57534E",
++    # Q2 (perf/queue-controls-gpu-codec): paused jobs render in indigo so
++    # users can tell "paused" apart from "running" without reading the
++    # status text. The a11y foreground is used by the status triplet when
++    # the theme hasn't supplied an explicit override (status_color() falls
++    # back to _DEFAULT_COLORS). ui_constants.STATUS_COLORS[PAUSED] holds
++    # the runtime foreground; theme.py does not yet override it.
++    JobStatus.PAUSED: "#4338CA",
+ }
+ 
+ _STATUS_GLYPHS: dict = {
+@@ -34,6 +41,10 @@ _STATUS_GLYPHS: dict = {
+     JobStatus.ERROR: ("✕", "Error"),
+     JobStatus.SKIPPED: ("◌", "Skipped"),
+     JobStatus.CANCELLED: ("◌", "Cancelled"),
++    # Q2: pause uses a different glyph ("❚❚") from "running" (◐) so the
++    # queue row remains readable in pure-text contexts (screen readers,
++    # log greps). Distinct from cancelled (◌) by direction.
++    JobStatus.PAUSED: ("❚❚", "Paused"),
+ }
+ 
+ 
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/app.py b/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
+index 7da7973..91e0253 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/app.py
+@@ -109,7 +109,14 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+             self._job_counter = max(j.id for j in self._jobs)
+         self._in_queue: "queue.Queue" = queue.Queue()
+         self._evt_queue: "queue.Queue" = queue.Queue()
+-        self._worker = PipelineWorker(self._in_queue, self._evt_queue)
++        # Q2 (perf/queue-controls-gpu-codec): GUI -> worker control channel
++        # for Pause / Cancel / Resume. Separate from in_queue (job
++        # dispatch) and out_queue (events) so a flood of progress events
++        # can't starve a Pause request. The worker drains this queue
++        # between frames.
++        self._ctl_queue: "queue.Queue" = queue.Queue()
++        self._worker = PipelineWorker(self._in_queue, self._evt_queue,
++                                       ctl_queue=self._ctl_queue)
+         self._worker.start()
+         self._running = False
+         # Side-channel used by _wait_resume_action (worker thread -> GUI modal).
+@@ -368,6 +375,9 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+                 self.input_panel.queue_listbox.itemconfig(i, fg=STATUS_COLORS.get(j.status, FG))
+             except Exception:
+                 pass
++        # Q2 (perf/queue-controls-gpu-codec): enable/disable Pause /
++        # Resume / Cancel based on the selected job's current status.
++        self.input_panel._refresh_controls()
+ 
+     def _visible_jobs(self) -> List[Job]:
+         flt = self.input_panel.filter_var.get()
+@@ -408,6 +418,86 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+         self.input_panel._refresh_empty()
+         self._persist_queue()
+ 
++    # ---- Q2 (perf/queue-controls-gpu-codec): pause/cancel/resume ----
++    def _send_pause(self, job_id: int) -> None:
++        """Push a pause control event for ``job_id`` to the worker.
++
++        The worker drains its control queue between frames; on the next
++        boundary it sets the per-job threading.Event so the loop blocks
++        until ``_send_resume`` arrives. We also flip the local status
++        immediately so the listbox + Pause/Resume buttons update without
++        waiting for the worker -- the worst case is one frame of visual
++        lag if the user pauses mid-frame.
++        """
++        if not job_id:
++            return
++        j = self._find_job(job_id)
++        if j is None or j.status != JobStatus.RUNNING:
++            return
++        from .pipeline.jobs import JobControlEvent
++        self._ctl_queue.put(JobControlEvent(kind="pause", job_id=job_id))
++        # Optimistic UI update: reflect "paused" right away. The worker
++        # emits a confirming log event when it actually blocks; we treat
++        # the optimistic state as authoritative so the toolbar is usable
++        # the instant the user clicks.
++        j.status = JobStatus.PAUSED
++        self._refresh_queue_listbox()
++        self.status_bar.status_var.set(f"Job #{job_id}: paused")
++
++    def _send_resume(self, job_id: int) -> None:
++        """Raise the per-job pause Event so the worker continues."""
++        if not job_id:
++            return
++        j = self._find_job(job_id)
++        if j is None or j.status != JobStatus.PAUSED:
++            return
++        from .pipeline.jobs import JobControlEvent
++        self._ctl_queue.put(JobControlEvent(kind="resume", job_id=job_id))
++        j.status = JobStatus.RUNNING
++        self._refresh_queue_listbox()
++        self.status_bar.status_var.set(f"Job #{job_id}: resumed")
++
++    def _send_cancel(self, job_id: int) -> None:
++        """Ask the worker to abort the job at the next frame boundary.
++
++        Confirmation dialog so an accidental click doesn't lose work;
++        the worker still waits for the current frame to finish writing
++        before closing the encoder pipe, so the partial output is
++        recoverable as a non-finalized file (the worker also deletes it
++        before emitting the 'cancelled' event -- see worker._run_one).
++        """
++        if not job_id:
++            return
++        j = self._find_job(job_id)
++        if j is None or j.status not in (JobStatus.RUNNING, JobStatus.PAUSED):
++            return
++        if not messagebox.askyesno(
++            "Cancel job",
++            f"Cancel job #{job_id} ({j.input.name})? The partial output "
++            "file will be deleted.",
++        ):
++            return
++        from .pipeline.jobs import JobControlEvent
++        self._ctl_queue.put(JobControlEvent(kind="cancel", job_id=job_id))
++        # Mark as "CANCELLED" optimistically; the worker will emit a
++        # confirming 'cancelled' JobEvent when it actually unwinds.
++        j.status = JobStatus.CANCELLED
++        j.error = "cancelled by user"
++        self._refresh_queue_listbox()
++        self.status_bar.status_var.set(f"Job #{job_id}: cancel requested")
++
++    def _find_job(self, job_id: int):
++        """Linear scan; the queue is small (< 100 entries typically).
++
++        Returns the Job dataclass or None. Used by the Pause / Resume /
++        Cancel send methods to flip local state immediately so the UI
++        doesn't lag behind the worker's drain cycle.
++        """
++        for j in self._jobs:
++            if j.id == job_id:
++                return j
++        return None
++
+     def _pick_output_dir(self):
+         path = filedialog.askdirectory(title="Select output folder",
+                                        initialdir=self.output_panel.output_dir_var.get())
+@@ -828,6 +918,26 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
+             else:
+                 self.start_btn.config(state="normal")
+                 messagebox.showerror("Error", f"Job #{evt.job_id}: {evt.message}")
++        elif evt.kind == "cancelled":
++            # Q2 (perf/queue-controls-gpu-codec): user cancellation
++            # confirmed by the worker. The local state is already CANCELLED
++            # (set optimistically by _send_cancel), but the worker may have
++            # been mid-frame so we re-set + persist here for safety.
++            self.status_bar.status_var.set(f"Job #{evt.job_id}: cancelled")
++            if job_rec:
++                if job_rec.status != JobStatus.CANCELLED:
++                    job_rec.status = JobStatus.CANCELLED
++                if not job_rec.error:
++                    job_rec.error = "cancelled by user"
++                self._refresh_queue_listbox()
++                self._persist_queue()
++            # Continue the queue -- a cancelled job shouldn't block the rest.
++            qmode = self.input_panel.queue_mode_var.get()
++            if qmode == "batch" and self._running:
++                self._enqueue_next(self._jobs)
++                self._refresh_queue_listbox()
++            else:
++                self.start_btn.config(state="normal")
+         elif evt.kind == "frame_error":
+             # The modal blocks the GUI thread; the on_frame_error callback in the worker
+             # is what actually waits. We don't need to do anything here beyond logging.
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py
+index 1a56c0b..f4a4954 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/jobs.py
+@@ -98,3 +98,31 @@ SKIP_REST = "skip_rest"
+ ABORT_JOB = "abort_job"
+ RETRY_FRAME = "retry_frame"
+ 
++
++# Q2 (perf/queue-controls-gpu-codec): user-facing pause/cancel/resume
++# control events. The GUI pushes these into a separate control queue
++# that the worker drains between frames. The worker is the only
++# consumer; the dataclass is intentionally tiny so the queue is cheap.
++@dataclass
++class JobControlEvent:
++    """GUI -> worker control signal for an in-flight job.
++
++    kind:
++      "pause"   -- worker drains the current frame, then blocks on the
++                   per-job threading.Event until a matching "resume"
++                   arrives. The output MP4 stays consistent because we
++                   always finish the current frame before pausing.
++      "resume"  -- raise the per-job threading.Event so the worker
++                   continues the next frame. Safe to send even if the
++                   job is not paused (the worker treats it as a no-op).
++      "cancel"  -- abort the job at the next frame boundary. The worker
++                   closes the encoder pipe cleanly, deletes the partial
++                   output file, and emits a "cancelled" JobEvent.
++
++    job_id:
++      Which job this control event applies to. Controls for jobs that
++      are not currently running are ignored by the worker.
++    """
++    kind: str  # "pause" | "resume" | "cancel"
++    job_id: int = 0
++
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+index 13bdade..f6d80ee 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/pipeline/worker.py
+@@ -44,6 +44,7 @@ from .jobs import (
+     RETRY_FRAME,
+     SKIP_FRAME,
+     SKIP_REST,
++    JobControlEvent,
+     JobEvent,
+     RunJob,
+ )
+@@ -53,6 +54,23 @@ from .tensors import (_PinnedPool, _downscale_if_needed, _resize_keep_ar,
+ 
+ _pinned = _PinnedPool()
+ 
++
++# Q2 (perf/queue-controls-gpu-codec): internal exception used to bail out
++# of _run_video / _run_image / _process_video_batch when the user cancels.
++# Caught at the run() level; we emit a clean "cancelled" event and the
++# caller deletes the partial output file. Using a dedicated exception
++# (vs. a magic return value) keeps the cancel path composable with the
++# existing on_frame_error handler.
++class _JobCancelled(Exception):
++    """Raised internally by the worker when a cancel control arrives."""
++
++
++# Q2: sentinel events used to wake a paused worker between frames.
++# Keyed by job_id so multiple jobs can have independent pause state.
++# The worker creates the Event on first pause, clears it on resume,
++# and pops it from the dict when the job ends (so a stale event can't
++# accidentally wake the next job that happens to reuse the same id).
++
+ # ============================================================================ #
+ # Pipeline worker (threaded, drives one job at a time from the in_queue)
+ # ============================================================================ #
+@@ -69,12 +87,96 @@ class PipelineWorker(threading.Thread):
+         stop()   -> enqueue a sentinel and join()
+     """
+ 
+-    def __init__(self, in_queue: "queue.Queue", out_queue: "queue.Queue"):
++    def __init__(self, in_queue: "queue.Queue", out_queue: "queue.Queue",
++                 ctl_queue: Optional["queue.Queue"] = None):
++        """``ctl_queue`` is the GUI->worker pause/cancel/resume channel.
++
++        If omitted (legacy callers / tests), the worker synthesizes an
++        internal queue so the same code path works whether or not the
++        GUI wires the new control channel. This keeps the Phase A1
++        back-compat commitment intact: existing tests that build a
++        PipelineWorker with just (in_queue, out_queue) keep passing.
++        """
+         super().__init__(daemon=True)
+         self.in_queue = in_queue
+         self.out_queue = out_queue
++        self.ctl_queue = ctl_queue if ctl_queue is not None else queue.Queue()
++        # job_id -> threading.Event. Lazily populated by _check_pause();
++        # cleared on job completion so we don't leak events across jobs.
++        self._pause_events: dict = {}
+         self._shutdown = False
+ 
++    # -- Q2 control-channel helpers -------------------------------------------
++    def send_control(self, evt: JobControlEvent) -> None:
++        """Public helper the GUI uses to push pause/cancel/resume.
++
++        Equivalent to ``self.ctl_queue.put(evt)`` but exposed as a
++        method so the GUI doesn't have to know which queue to use.
++        """
++        self.ctl_queue.put(evt)
++
++    def _drain_ctl_for_job(self, job_id: int) -> None:
++        """Pop and apply any pending control events for this job.
++
++        Called between frames in _run_video and after model load in
++        _run_image. Cancel is applied immediately (raises
++        _JobCancelled). Pause/resume just adjust the per-job event --
++        the actual blocking happens in _check_pause().
++        """
++        while True:
++            try:
++                evt = self.ctl_queue.get_nowait()
++            except queue.Empty:
++                return
++            if evt.job_id != job_id:
++                # Put it back -- it's for a different (probably future)
++                # job. Order matters: control events are FIFO per sender
++                # but the worker only cares about its current job.
++                self.ctl_queue.put(evt)
++                return
++            if evt.kind == "cancel":
++                raise _JobCancelled()
++            if evt.kind == "pause":
++                # Make sure a paused event exists for this job.
++                self._pause_events.setdefault(job_id, threading.Event())
++                self.emit(JobEvent(kind="log", job_id=job_id,
++                                    message="paused by user"))
++            elif evt.kind == "resume":
++                ev = self._pause_events.get(job_id)
++                if ev is not None:
++                    ev.set()
++                self.emit(JobEvent(kind="log", job_id=job_id,
++                                    message="resumed by user"))
++
++    def _check_pause(self, job_id: int) -> None:
++        """Block the worker on the per-job pause event until resume.
++
++        Called at every frame boundary in _run_video and after model
++        load in _run_image. Polls the control queue while blocked so
++        cancel can interrupt the pause. Returns once the event is set
++        (resume arrived) or raises _JobCancelled if a cancel arrived
++        during the pause.
++        """
++        ev = self._pause_events.get(job_id)
++        if ev is None or ev.is_set():
++            return
++        self.emit(JobEvent(kind="log", job_id=job_id,
++                            message="waiting on resume"))
++        # Use a short timeout so we can poll the control queue for cancel.
++        while not ev.is_set():
++            # Drain any controls that arrived -- they might be a cancel.
++            self._drain_ctl_for_job(job_id)
++            ev.wait(timeout=0.1)
++
++    def _finalize_job(self, job_id: int) -> None:
++        """Clean up per-job pause state when the job ends (any reason).
++
++        Ensures a stale pause event can't accidentally wake a future
++        job that reuses the same id. Called from _run_one's outer
++        try/finally.
++        """
++        self._pause_events.pop(job_id, None)
++
+     def stop(self):
+         self._shutdown = True
+         self.in_queue.put(None)
+@@ -110,15 +212,35 @@ class PipelineWorker(threading.Thread):
+             self.emit(JobEvent(kind="error", job_id=job.job_id,
+                                 message=f"input not found: {job.input_path}"))
+             return
+-        if job.is_video:
+-            self._run_video(job)
+-        else:
+-            self._run_image(job)
++        try:
++            if job.is_video:
++                self._run_video(job)
++            else:
++                self._run_image(job)
++        except _JobCancelled:
++            # Clean up partial output. The encoder pipe is already closed
++            # because _run_video/_run_image's `finally` block ran on the
++            # way out. We just delete the file and emit a terminal event.
++            out = job.output_path
++            try:
++                if out.exists():
++                    out.unlink()
++            except OSError:
++                pass
++            self.emit(JobEvent(kind="cancelled", job_id=job.job_id,
++                                message="cancelled by user"))
++        finally:
++            self._finalize_job(job.job_id)
+ 
+     # --- image ---
+     def _run_image(self, job: RunJob):
+         self.emit(JobEvent(kind="started", job_id=job.job_id,
+                             message=f"image: {job.input_path.name}"))
++        # Q2: drain pending control events so cancel-during-load is
++        # honoured. Image jobs are sub-second, so a pause request is
++        # effectively a no-op (the work finishes before we get back to
++        # _check_pause), but cancel still aborts cleanly.
++        self._drain_ctl_for_job(job.job_id)
+         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
+         ckpt_path = _find_ckpt(job)
+         try:
+@@ -204,6 +326,10 @@ class PipelineWorker(threading.Thread):
+     def _run_video(self, job: RunJob):
+         self.emit(JobEvent(kind="started", job_id=job.job_id,
+                             message=f"video: {job.input_path.name}"))
++        # Q2: drain any pending control events that arrived while the
++        # job was queued. If the user cancelled while we were loading,
++        # bail out before we waste time on a 4x super-res.
++        self._drain_ctl_for_job(job.job_id)
+         device = torch.device(job.device if torch.cuda.is_available() else "cpu")
+         ckpt_path = _find_ckpt(job)
+         try:
+@@ -314,6 +440,14 @@ class PipelineWorker(threading.Thread):
+                 if skip_remaining:
+                     # Still consume to drain the reader cleanly
+                     continue
++                # Q2: pause / cancel check between frames. We block on
++                # the per-job threading.Event if the user paused, or
++                # raise _JobCancelled if the user cancelled. Both ops
++                # happen at the frame boundary so the output MP4 stays
++                # consistent (the previous frame's encode is already
++                # flushed to the pipe).
++                self._drain_ctl_for_job(job.job_id)
++                self._check_pause(job.job_id)
+                 # Normalize payload: single frame (np.ndarray H,W,3) for
+                 # batch_size=1; list of N frames for batch_size>1.
+                 if use_batch and isinstance(payload, list):
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/state.py b/apps/anime_upscaler_gui/anime_upscaler_gui/state.py
+index 12152f9..f639940 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/state.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/state.py
+@@ -22,6 +22,12 @@ class JobStatus(str, Enum):
+     ERROR = "error"
+     SKIPPED = "skipped"
+     CANCELLED = "cancelled"
++    # Q2 (perf/queue-controls-gpu-codec): user-visible pause state. Set when
++    # the GUI pushes a JobControlEvent(kind="pause") and the worker has
++    # drained its in-flight frame and is now blocked on the per-job
++    # _pause_events[job_id]. Cleared when JobControlEvent(kind="resume")
++    # raises the event.
++    PAUSED = "paused"
+ 
+     def __str__(self) -> str:
+         # Default Enum.__str__ returns "JobStatus.PENDING"; override so format strings
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py b/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py
+index 802050c..5793ec4 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/ui_constants.py
+@@ -47,6 +47,10 @@ STATUS_BG_DONE = "#d1fae5"
+ STATUS_BG_ERROR = "#fee2e2"
+ STATUS_BG_SKIPPED = "#e5e7eb"
+ STATUS_BG_CANCELLED = "#fef3c7"
++# Q2 (perf/queue-controls-gpu-codec): paused jobs render with a calm
++# indigo/blue-grey tint so users can tell "paused" apart from "running"
++# at a glance without reading the status text.
++STATUS_BG_PAUSED = "#e0e7ff"
+ 
+ 
+ # ---- Fonts (use platform defaults; explicit family avoids surprises on Windows) ----
+@@ -71,6 +75,7 @@ STATUS_COLORS = {
+     JobStatus.ERROR: ERROR,
+     JobStatus.SKIPPED: DISABLED,
+     JobStatus.CANCELLED: WARN,
++    JobStatus.PAUSED: "#4338ca",  # indigo-700: distinguishable from running blue
+ }
+ 
+ STATUS_BG_COLORS = {
+@@ -80,4 +85,5 @@ STATUS_BG_COLORS = {
+     JobStatus.ERROR: STATUS_BG_ERROR,
+     JobStatus.SKIPPED: STATUS_BG_SKIPPED,
+     JobStatus.CANCELLED: STATUS_BG_CANCELLED,
++    JobStatus.PAUSED: STATUS_BG_PAUSED,
+ }
+diff --git a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py
+index 8f0ed08..b04143e 100644
+--- a/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py
++++ b/apps/anime_upscaler_gui/anime_upscaler_gui/widgets/input_panel.py
+@@ -56,6 +56,27 @@ class _InputPanel(ttk.LabelFrame):
+         self.queue_listbox = tk.Listbox(self, height=6, font=FONT_MONO,
+                                         selectmode="extended", activestyle="dotbox")
+         self.queue_listbox.pack(fill="both", expand=True, pady=(0, PAD_Y))
++        # Q2 (perf/queue-controls-gpu-codec): per-job Pause / Cancel /
++        # Resume buttons. Disabled by default; enabled by app._refresh_
++        # controls() based on the selected job's current status. The
++        # Cancel button is enabled for both Running and Paused jobs; the
++        # Pause button is enabled only for Running; Resume is enabled
++        # only for Paused. Clicking a button pushes a JobControlEvent
++        # to the worker via app._send_pause/_send_cancel/_send_resume.
++        ctl = ttk.Frame(self)
++        ctl.pack(fill="x", pady=(0, PAD_Y))
++        self.pause_btn = ttk.Button(ctl, text="❚❚ Pause",
++                                     command=lambda: app._send_pause(self._selected_job_id()),
++                                     state="disabled")
++        self.pause_btn.pack(side="left")
++        self.resume_btn = ttk.Button(ctl, text="▶ Resume",
++                                      command=lambda: app._send_resume(self._selected_job_id()),
++                                      state="disabled")
++        self.resume_btn.pack(side="left", padx=(PAD_X, PAD_X))
++        self.cancel_btn = ttk.Button(ctl, text="✕ Cancel",
++                                      command=lambda: app._send_cancel(self._selected_job_id()),
++                                      state="disabled")
++        self.cancel_btn.pack(side="left")
+ 
+         # DnD-accurate empty-state subtitle. The text used to say "drop files
+         # here when DnD is enabled" without DnD being wired up -- misleading.
+@@ -181,3 +202,54 @@ class _InputPanel(ttk.LabelFrame):
+         else:
+             self._empty.pack_forget()
+             self.queue_listbox.pack(fill="both", expand=True, pady=(0, PAD_Y))
++
++    # ---- Q2 (perf/queue-controls-gpu-codec): per-job control toolbar ----
++    def _selected_job_id(self) -> int:
++        """Return the job_id of the first selected listbox row, or 0 if none.
++
++        Used by the Pause / Cancel / Resume button commands. Returns 0
++        when nothing is selected; the App-level send methods treat 0 as
++        a no-op (the worker ignores events for unknown job_ids).
++        """
++        idxs = self.queue_listbox.curselection()
++        if not idxs:
++            return 0
++        # The listbox rows mirror self.app._jobs 1:1, so index == job index.
++        try:
++            return self.app._jobs[idxs[0]].id
++        except (IndexError, AttributeError):
++            return 0
++
++    def _refresh_controls(self):
++        """Enable/disable Pause/Resume/Cancel based on the selected job's status.
++
++        Called from app._refresh_queue_listbox() (which runs after every
++        listbox mutation or worker event) so the toolbar reflects the
++        current state without polling. The buttons are disabled when:
++
++          * no row is selected
++          * the selected job is in a terminal state (DONE/ERROR/CANCELLED)
++          * the queue mode is single (controls only apply in batch mode)
++        """
++        from ..state import JobStatus
++        # Default: everything disabled.
++        pause_state = "disabled"
++        resume_state = "disabled"
++        cancel_state = "disabled"
++        if self.queue_mode_var.get() == "batch":
++            idxs = self.queue_listbox.curselection()
++            if idxs:
++                try:
++                    j = self.app._jobs[idxs[0]]
++                except (IndexError, AttributeError):
++                    j = None
++                if j is not None:
++                    if j.status == JobStatus.RUNNING:
++                        pause_state = "normal"
++                        cancel_state = "normal"
++                    elif j.status == JobStatus.PAUSED:
++                        resume_state = "normal"
++                        cancel_state = "normal"
++        self.pause_btn.configure(state=pause_state)
++        self.resume_btn.configure(state=resume_state)
++        self.cancel_btn.configure(state=cancel_state)
+diff --git a/apps/anime_upscaler_gui/tests/test_queue_controls.py b/apps/anime_upscaler_gui/tests/test_queue_controls.py
+new file mode 100644
+index 0000000..857a777
+--- /dev/null
++++ b/apps/anime_upscaler_gui/tests/test_queue_controls.py
+@@ -0,0 +1,223 @@
++"""Tests for Q2 (perf/queue-controls-gpu-codec): pause/cancel/resume.
++
++Pins the new control channel contract:
++  - JobControlEvent kind values (pause/resume/cancel) are accepted
++  - the worker drains ctl_queue between frames
++  - pause blocks the worker on a per-job threading.Event
++  - cancel raises _JobCancelled and emits a clean terminal event
++  - _run_one cleans up per-job pause state on job end (no leak)
++  - the new JobStatus.PAUSED is wired through status_triplet
++"""
++import queue
++import threading
++import time
++
++import pytest
++
++from apps.anime_upscaler_gui.anime_upscaler_gui.state import JobStatus
++from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.jobs import (
++    JobControlEvent, JobEvent,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.worker import (
++    PipelineWorker, _JobCancelled,
++)
++from apps.anime_upscaler_gui.anime_upscaler_gui.a11y import (
++    status_glyph, status_label, status_triplet,
++)
++
++
++# ---- JobControlEvent shape ----
++def test_job_control_event_dataclass():
++    e = JobControlEvent(kind="pause", job_id=7)
++    assert e.kind == "pause"
++    assert e.job_id == 7
++    assert JobControlEvent(kind="resume").job_id == 0
++
++
++# ---- JobStatus.PAUSED ----
++def test_paused_status_exists_and_is_string_enum():
++    """JobStatus.PAUSED inherits str so existing string comparisons work."""
++    assert JobStatus.PAUSED == "paused"
++    assert str(JobStatus.PAUSED) == "paused"
++    assert JobStatus.PAUSED != JobStatus.CANCELLED
++
++
++def test_status_triplet_handles_paused():
++    """a11y.status_triplet renders PAUSED with a distinct glyph."""
++    glyph, _color, label = status_triplet(JobStatus.PAUSED)
++    assert isinstance(glyph, str) and glyph
++    assert label == "Paused"
++    assert glyph != status_glyph(JobStatus.RUNNING)
++    assert glyph != status_glyph(JobStatus.CANCELLED)
++
++
++# ---- Worker control channel ----
++def test_worker_default_ctl_queue_is_per_worker_instance():
++    """Two workers without an explicit ctl_queue get independent queues."""
++    w1 = PipelineWorker(queue.Queue(), queue.Queue())
++    w2 = PipelineWorker(queue.Queue(), queue.Queue())
++    assert w1.ctl_queue is not w2.ctl_queue
++
++
++def test_send_control_pushes_to_ctl_queue():
++    """send_control is the public API the GUI uses."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=1))
++    assert w.ctl_queue.get_nowait().kind == "pause"
++
++
++def test_drain_ctl_for_job_pauses_but_does_not_block():
++    """drain_ctl_for_job is non-blocking; it just arms the pause event."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    t0 = time.perf_counter()
++    w._drain_ctl_for_job(42)
++    elapsed = time.perf_counter() - t0
++    assert elapsed < 0.05, f"drain took {elapsed*1000:.1f}ms, expected < 50ms"
++    assert 42 in w._pause_events
++    assert not w._pause_events[42].is_set()
++
++
++def test_drain_ctl_for_job_ignores_events_for_other_jobs():
++    """Pause/cancel events for a non-current job are re-queued, not applied."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=99))
++    w._drain_ctl_for_job(42)
++    pending = w.ctl_queue.get_nowait()
++    assert pending.job_id == 99 and pending.kind == "pause"
++    assert 42 not in w._pause_events
++
++
++def test_drain_ctl_for_job_raises_on_cancel():
++    """Cancel raises _JobCancelled so the per-job path can unwind."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="cancel", job_id=42))
++    with pytest.raises(_JobCancelled):
++        w._drain_ctl_for_job(42)
++
++
++def test_check_pause_blocks_then_returns_on_resume():
++    """check_pause blocks until resume, then returns quickly."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    w._drain_ctl_for_job(42)
++
++    def resume_soon():
++        time.sleep(0.1)
++        w.send_control(JobControlEvent(kind="resume", job_id=42))
++    threading.Thread(target=resume_soon, daemon=True).start()
++
++    t0 = time.perf_counter()
++    w._check_pause(42)
++    elapsed = time.perf_counter() - t0
++    assert 0.05 <= elapsed < 1.0, f"check_pause took {elapsed:.3f}s"
++    t1 = time.perf_counter()
++    w._check_pause(42)
++    assert (time.perf_counter() - t1) < 0.01
++
++
++def test_finalize_job_clears_pause_state():
++    """After a job ends, its pause event must not leak."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    w._drain_ctl_for_job(42)
++    assert 42 in w._pause_events
++    w._finalize_job(42)
++    assert 42 not in w._pause_events
++
++
++def test_pause_events_for_two_jobs_are_independent():
++    """Pausing job 42 must not affect job 99."""
++    w = PipelineWorker(queue.Queue(), queue.Queue())
++    w.send_control(JobControlEvent(kind="pause", job_id=42))
++    w._drain_ctl_for_job(42)
++    assert not w._pause_events[42].is_set()
++    assert 99 not in w._pause_events
++    # Pre-arm 99 so we can show independence.
++    w._pause_events.setdefault(99, threading.Event()).set()
++    assert w._pause_events[99].is_set()
++    assert not w._pause_events[42].is_set()
++
++
++# ---- _run_one integration: cancel emits a terminal event ----
++def test_run_one_cancelled_event_cleans_up_output(tmp_path):
++    """When the worker hits _JobCancelled, _run_one emits 'cancelled'.
++
++    We need an input file that exists so the worker enters _run_image
++    (which drains controls before model load). Using a real 1x1 PNG so
++    cv2 can decode it; cancel is sent ~50ms later, after _run_one has
++    started. The cancel is drained inside _run_image's first action,
++    _JobCancelled propagates up, _run_one's except clause deletes the
++    output and emits the 'cancelled' event.
++    """
++    import struct
++    import zlib
++    from pathlib import Path
++    from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.jobs import RunJob
++
++    # 1x1 transparent PNG (8 bytes IDAT after compression).
++    def _tiny_png() -> bytes:
++        sig = b"\x89PNG\r\n\x1a\n"
++        def chunk(t, d):
++            return (struct.pack(">I", len(d)) + t + d +
++                    struct.pack(">I", zlib.crc32(t + d) & 0xffffffff))
++        ihdr = chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
++        idat = chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\x00"))
++        iend = chunk(b"IEND", b"")
++        return sig + ihdr + idat + iend
++
++    in_path = Path(str(tmp_path)) / "x.png"
++    out_path = Path(str(tmp_path)) / "x_out.png"
++    in_path.write_bytes(_tiny_png())
++
++    in_q, out_q, ctl_q = queue.Queue(), queue.Queue(), queue.Queue()
++    w = PipelineWorker(in_q, out_q, ctl_queue=ctl_q)
++    w.start()
++    try:
++        j = RunJob(
++            job_id=1,
++            input_path=in_path,
++            output_path=out_path,
++            is_video=False,
++            model_filename="dummy.pth",
++            kind="realesrgan",
++            scale=4,
++            outscale=2.0,
++            fp16=False,
++            device="cpu",
++            batch_size=1,
++            decode="cv2",
++            prefetch="sync",
++            pin_memory="off",
++            downscale_max_edge=0,
++            gpu_guard_mode="off",
++            tile_size=256,
++            tile_overlap=8,
++        )
++        in_q.put(j)
++        # Send cancel BEFORE the worker enters _run_image's drain. The
++        # cancel sits in ctl_queue and is the FIRST thing _run_image
++        # drains (right after emitting 'started'). This is the
++        # cancel-during-load path that the GUI exercises when a user
++        # clicks Cancel right after Start.
++        ctl_q.put(JobControlEvent(kind="cancel", job_id=1))
++        deadline = time.time() + 3.0
++        saw_started = False
++        saw_cancelled = False
++        while time.time() < deadline and not saw_cancelled:
++            try:
++                evt = out_q.get(timeout=0.1)
++            except queue.Empty:
++                continue
++            if evt.kind == "started":
++                saw_started = True
++            elif evt.kind == "cancelled":
++                saw_cancelled = True
++                assert evt.job_id == 1
++                assert "cancel" in evt.message.lower()
++        assert saw_started, "worker did not enter _run_image"
++        assert saw_cancelled, "worker did not emit a cancelled event"
++        assert 1 not in w._pause_events
++    finally:
++        w.stop()
++        w.join(timeout=2.0)
+-- 
+2.50.0.windows.2
+

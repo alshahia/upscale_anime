@@ -155,7 +155,12 @@ class ModelBTrainer(BaseTrainer):
             
             with autocast('cuda', enabled=self.use_amp):
                 # Student forward with features
-                if hasattr(self.model, 'forward_with_features'):
+                student_dir_features = {}
+                if hasattr(self.model, 'forward_with_direction_features'):
+                    # Mamba-PAN: extract direction-specific features in a single forward pass
+                    student_pred, student_dir_features = self.model.forward_with_direction_features(lr)
+                    student_features = {}
+                elif hasattr(self.model, 'forward_with_features'):
                     student_pred, student_features = self.model.forward_with_features(lr)
                 else:
                     student_pred = self.model(lr)
@@ -192,18 +197,19 @@ class ModelBTrainer(BaseTrainer):
                     loss_dict.update(mtkd_dict)
                 
                 # Direction-aware FAKD
-                if self.fakd_loss is not None and len(student_features) > 0:
-                    # For Mamba, we have direction-specific features
-                    student_dir_features = {
-                        'h': student_features,
-                        'v': student_features,
-                        'rh': student_features,
-                        'rv': student_features,
-                    }
-                    fakd = self.fakd_loss(student_dir_features, teacher_features)
-                    fakd_weight = self.config.get('loss', {}).get('distillation', {}).get('fakd_weight', 0.5)
-                    loss = loss + fakd_weight * fakd
-                    loss_dict['fakd'] = fakd.item()
+                if self.fakd_loss is not None:
+                    if student_dir_features:
+                        # Mamba-PAN: direction-specific features from forward_with_direction_features
+                        fakd = self.fakd_loss(student_dir_features, teacher_features)
+                    elif len(student_features) > 0:
+                        fakd = self.fakd_loss(student_features, teacher_features)
+                    else:
+                        fakd = None
+
+                    if fakd is not None:
+                        fakd_weight = self.config.get('loss', {}).get('distillation', {}).get('fakd_weight', 0.5)
+                        loss = loss + fakd_weight * fakd
+                        loss_dict['fakd'] = fakd.item()
                 
                 # Cross-direction consistency loss
                 if self.consistency_loss is not None and len(direction_outputs) > 0:
@@ -222,10 +228,13 @@ class ModelBTrainer(BaseTrainer):
             # Backward
             if self.use_amp:
                 self.scaler.scale(loss).backward()
+                self.scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.scaler.step(optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
             
             # Update EMA
@@ -249,6 +258,9 @@ class ModelBTrainer(BaseTrainer):
             if batch_idx % self.log_interval == 0:
                 self.log_metrics(loss_dict, self.global_step, 'model_b_train')
         
+        if num_batches == 0:
+            return {'loss': 0.0, 'l1': 0.0, 'wavelet': 0.0, 'fakd': 0.0, 'consistency': 0.0}
+
         return {
             'loss': total_loss / num_batches,
             'l1': total_l1 / num_batches,
@@ -289,6 +301,7 @@ class ModelBTrainer(BaseTrainer):
                 loss = self.l1_loss(pred, hr)
                 
                 # PSNR (with epsilon for numerical stability)
+                pred = pred.clamp(0, 1)
                 mse = torch.mean((pred - hr) ** 2)
                 psnr = 10 * torch.log10(1.0 / (mse + 1e-10))
                 
@@ -323,6 +336,9 @@ class ModelBTrainer(BaseTrainer):
             # Recreate model as Mamba-PAN student
             self.stage = 2
             self.model = self._create_model(self.config).to(self.device)
+            # Recreate EMA for the new architecture (deepcopy of stage-1 model is incompatible)
+            if self.use_ema:
+                self.ema_model = self._create_ema_model()
             self.best_loss = float('inf')
             
             optimizer = self._create_optimizer()

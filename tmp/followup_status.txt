@@ -1,0 +1,2 @@
+Saved. Total: 18 queries. New follow-ups: 3
+Dumped to followup_dump.txt: 51 lines

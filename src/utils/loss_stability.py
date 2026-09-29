@@ -78,6 +78,13 @@ class LossStabilizer:
             # Replace Inf with max value
             loss = torch.tensor(self.max_loss_value, device=loss.device, dtype=loss.dtype)
         
+        # Scale loss if needed
+        if self.enable_scaling and loss.item() > 100:
+            loss = loss / 100.0
+            stability_info['was_scaled'] = True
+            if self.verbose:
+                warnings.warn(f"Loss scaled down by 100x for stability")
+        
         # Clamp loss values
         if self.enable_clamping:
             original_value = loss.item()
@@ -87,13 +94,6 @@ class LossStabilizer:
                 self.clamp_count += 1
                 if self.verbose and self.clamp_count <= 5:  # Limit warnings
                     warnings.warn(f"Loss clamped: {original_value:.6f} -> {loss.item():.6f}")
-        
-        # Scale loss if needed
-        if self.enable_scaling and loss.item() > 100:
-            loss = loss / 100.0
-            stability_info['was_scaled'] = True
-            if self.verbose:
-                warnings.warn(f"Loss scaled down by 100x for stability")
         
         stability_info['final_loss'] = loss.item()
         

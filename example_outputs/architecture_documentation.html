@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Super-Resolution - Architecture Documentation</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+            line-height: 1.6;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+        }
+        .header p {
+            margin: 15px 0 0 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        .section {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 15px;
+            margin-top: 0;
+            font-size: 1.8em;
+        }
+        .section h3 {
+            color: #764ba2;
+            margin-top: 25px;
+            font-size: 1.4em;
+        }
+        .model-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 25px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 5px solid #667eea;
+        }
+        .model-card h4 {
+            margin-top: 0;
+            color: #2d3748;
+            font-size: 1.3em;
+        }
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+        .feature-list li {
+            padding: 8px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        .feature-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        .stage-box {
+            background: #f7fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+        .stage-box h4 {
+            margin-top: 0;
+            color: #4a5568;
+        }
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+        }
+        .image-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        .image-container img {
+            max-width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .metric-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .metric-table th {
+            background: #667eea;
+            color: white;
+            padding: 15px;
+            text-align: left;
+        }
+        .metric-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .metric-table tr:nth-child(even) {
+            background: #f7fafc;
+        }
+        .highlight {
+            background: #fef3c7;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        .footer {
+            text-align: center;
+            color: #718096;
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 2px solid #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Anime Super-Resolution</h1>
+        <p>Complete Architecture Documentation & Training Pipeline Guide</p>
+    </div>
+
+    <div class="section">
+        <h2>Overview</h2>
+        <p>
+            This project implements a <span class="highlight">Progressive Ensemble Distillation</span> system
+            for anime super-resolution. It combines state-of-the-art architectures with advanced
+            knowledge distillation techniques to achieve high-quality upscaling with efficient inference.
+        </p>
+        
+        <div class="image-container">
+            <img src="architecture_pipeline.png" alt="Training Pipeline">
+            <p><em>Complete training pipeline from data ingestion to final ensemble model</em></p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Model Architectures</h2>
+        
+        <div class="model-card">
+            <h4>Model A: SPAN-Tiny with MTKD + FAKD</h4>
+            <p>NTIRE-winning architecture optimized for super-resolution with parameter-free attention.</p>
+            <ul class="feature-list">
+                <li><strong>Architecture:</strong> SPAN (Swift Parameter-free Attention Network)</li>
+                <li><strong>Parameters:</strong> ~250K (Tiny variant with 26 channels)</li>
+                <li><strong>Key Features:</strong> Parameter-free attention, ConvLoRA adaptation</li>
+                <li><strong>Training:</strong> 2-stage (Knowledge Aggregation → Student Distillation)</li>
+                <li><strong>Losses:</strong> L1 + MTKD (Wavelet) + FAKD (Feature Affinity)</li>
+                <li><strong>Inference Speed:</strong> 0.001-0.005s per 720p frame</li>
+            </ul>
+        </div>
+        
+        <div class="model-card">
+            <h4>Model B: Mamba-PAN with Directional Scanning</h4>
+            <p>State Space Model with linear complexity and 4-direction scanning mechanism.</p>
+            <ul class="feature-list">
+                <li><strong>Architecture:</strong> Mamba-PAN with hierarchical blocks</li>
+                <li><strong>Parameters:</strong> Variable based on configuration</li>
+                <li><strong>Key Features:</strong> 4-direction scanning (H, V, RH, RV), O(N) complexity</li>
+                <li><strong>Training:</strong> Direct student training with teacher guidance</li>
+                <li><strong>Losses:</strong> L1 + MTKD + Directional FAKD + Cross-Direction Consistency</li>
+                <li><strong>Advantage:</strong> Better long-range dependencies vs O(N²) attention</li>
+            </ul>
+        </div>
+        
+        <div class="model-card">
+            <h4>Ensemble: Meta-Teacher Distillation</h4>
+            <p>Combines Model A and Model B as frozen teachers for ultra-lightweight student.</p>
+            <ul class="feature-list">
+                <li><strong>Input:</strong> Frozen Model A + Model B checkpoints</li>
+                <li><strong>Output:</strong> Tiny Student (~100K parameters)</li>
+                <li><strong>Method:</strong> Ensemble predictions as soft targets</li>
+                <li><strong>Use Case:</strong> Maximum efficiency deployment</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Training Pipeline</h2>
+        
+        <div class="stage-box">
+            <h4>Stage 1: Knowledge Aggregation</h4>
+            <p>Train a network to fuse outputs from multiple teacher models (EDSR, RCAN, SwinIR).</p>
+            <div class="code-block">
+# Teachers: EDSR, RCAN, SwinIR (pretrained on DIV2K)
+# Aggregation: DCTSwin blocks with frequency-domain attention
+# Loss: L1 between aggregated output and ground truth HR
+
+output = AggregationNetwork([edsr(lr), rcan(lr), swinir(lr)])
+loss = L1Loss(output, hr)
+            </div>
+        </div>
+        
+        <div class="stage-box">
+            <h4>Stage 2: Student Distillation (Model A)</h4>
+            <p>Train SPAN-Tiny student with multi-teacher knowledge distillation.</p>
+            <div class="code-block">
+# MTKD: Multi-Teacher Knowledge Distillation (Wavelet-based)
+# FAKD: Feature Affinity Knowledge Distillation
+
+loss_l1 = L1Loss(student_output, hr)
+loss_mtkd = WaveletDistillation(student_output, teacher_output, hr)
+loss_fakd = FeatureAffinity(student_features, teacher_features)
+
+total_loss = loss_l1 + λ_mtkd * loss_mtkd + λ_fakd * loss_fakd
+            </div>
+        </div>
+        
+        <div class="stage-box">
+            <h4>Stage 2: Student Training (Model B)</h4>
+            <p>Train Mamba-PAN with direction-aware distillation.</p>
+            <div class="code-block">
+# Directional scanning: Horizontal, Vertical, Reverse-H, Reverse-V
+# Cross-direction consistency ensures stable predictions
+
+student_pred = MambaPAN(lr, direction=['h', 'v', 'rh', 'rv'])
+loss = L1 + MTKD + FAKD + Consistency(direction_outputs)
+            </div>
+        </div>
+        
+        <div class="stage-box">
+            <h4>Stage 3: Ensemble Training</h4>
+            <p>Create ensemble from frozen models and distill to tiny student.</p>
+            <div class="code-block">
+# Load frozen checkpoints
+model_a = load_checkpoint('model_a_best.pth')
+model_b = load_checkpoint('model_b_best.pth')
+
+# Ensemble as meta-teacher
+ensemble_pred = (model_a(lr) + model_b(lr)) / 2
+
+# Train tiny student with ensemble guidance
+student_loss = DistillationLoss(student_pred, ensemble_pred, hr)
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Loss Functions</h2>
+        
+        <table class="metric-table">
+            <tr>
+                <th>Loss</th>
+                <th>Type</th>
+                <th>Purpose</th>
+                <th>Weight</th>
+            </tr>
+            <tr>
+                <td>L1/L2</td>
+                <td>Pixel</td>
+                <td>Direct reconstruction quality</td>
+                <td>1.0</td>
+            </tr>
+            <tr>
+                <td>MTKD</td>
+                <td>Distillation</td>
+                <td>Wavelet-based teacher knowledge</td>
+                <td>1.0</td>
+            </tr>
+            <tr>
+                <td>FAKD</td>
+                <td>Distillation</td>
+                <td>Feature affinity matching</td>
+                <td>0.5</td>
+            </tr>
+            <tr>
+                <td>Perceptual (VGG)</td>
+                <td>Perceptual</td>
+                <td>High-level feature similarity</td>
+                <td>0.1</td>
+            </tr>
+            <tr>
+                <td>Adversarial</td>
+                <td>GAN</td>
+                <td>Realistic texture generation</td>
+                <td>0.1</td>
+            </tr>
+            <tr>
+                <td>Consistency</td>
+                <td>Regularization</td>
+                <td>Cross-direction stability (Mamba)</td>
+                <td>0.1</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Data Pipeline</h2>
+        
+        <h3>Degradation Model (RealESRGAN-style)</h3>
+        <p>Training uses realistic degradation to simulate real-world low-quality inputs:</p>
+        <ul class="feature-list">
+            <li><strong>Blur:</strong> Gaussian with varying kernel sizes (7-21) and sigma (0.1-3.0)</li>
+            <li><strong>Noise:</strong> Gaussian noise with sigma 0-50</li>
+            <li><strong>Resize:</strong> Random down/up-sampling (0.15x to 1.5x)</li>
+            <li><strong>JPEG:</strong> Compression artifacts (quality 60-100)</li>
+        </ul>
+        
+        <h3>Video Processing</h3>
+        <p>Supports training from video sources with automatic frame extraction:</p>
+        <ul class="feature-list">
+            <li><strong>Pre-extraction:</strong> Extract all frames before training (faster)</li>
+            <li><strong>On-demand:</strong> Extract frames during training (less storage)</li>
+            <li><strong>Quality filtering:</strong> Automatic blur and duplicate detection</li>
+            <li><strong>Formats:</strong> MP4, AVI, MKV, MOV, WebM</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Training Modes</h2>
+        
+        <table class="metric-table">
+            <tr>
+                <th>Mode</th>
+                <th>Description</th>
+                <th>VRAM</th>
+                <th>Time</th>
+            </tr>
+            <tr>
+                <td>model_a</td>
+                <td>Train SPAN with MTKD+FAKD</td>
+                <td>~6.5 GB</td>
+                <td>8-12 hours</td>
+            </tr>
+            <tr>
+                <td>model_b</td>
+                <td>Train Mamba-PAN</td>
+                <td>~7.2 GB</td>
+                <td>12-18 hours</td>
+            </tr>
+            <tr>
+                <td>both_parallel</td>
+                <td>Alternate batches between models</td>
+                <td>~8.0 GB</td>
+                <td>15-20 hours</td>
+            </tr>
+            <tr>
+                <td>both_sequential</td>
+                <td>Train A then B</td>
+                <td>~7.0 GB</td>
+                <td>20-30 hours</td>
+            </tr>
+            <tr>
+                <td>ensemble</td>
+                <td>Train from frozen A+B</td>
+                <td>~6.0 GB</td>
+                <td>2-4 hours</td>
+            </tr>
+            <tr>
+                <td>full</td>
+                <td>Complete pipeline (A → B → Ensemble)</td>
+                <td>~8.0 GB</td>
+                <td>30-50 hours</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Quick Start Commands</h2>
+        
+        <div class="code-block">
+# Train Model A (SPAN with MTKD+FAKD)
+python scripts/train.py --config configs/model_a_ntire.yaml
+
+# Train Model B (Mamba-PAN)
+python scripts/train.py --config configs/model_b_mamba.yaml
+
+# Train both models in parallel
+python scripts/train.py --config configs/both_parallel.yaml
+
+# Full pipeline
+python scripts/train.py --config configs/full_pipeline.yaml
+
+# With TensorBoard logging
+python scripts/train.py --config configs/model_a_ntire.yaml --tensorboard
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>Anime Super-Resolution Training System</p>
+        <p>Progressive Ensemble Distillation Architecture</p>
+    </div>
+</body>
+</html>

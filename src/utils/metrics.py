@@ -145,6 +145,9 @@ def calculate_ssim(
     sigma1_sq = F.conv2d(img1 ** 2, window, padding=window_size//2, groups=img1.size(1)) - mu1_sq
     sigma2_sq = F.conv2d(img2 ** 2, window, padding=window_size//2, groups=img2.size(1)) - mu2_sq
     sigma12 = F.conv2d(img1 * img2, window, padding=window_size//2, groups=img2.size(1)) - mu1_mu2
+    # Clamp variances to >= 0 to avoid NaN from floating-point roundoff.
+    sigma1_sq = sigma1_sq.clamp(min=0)
+    sigma2_sq = sigma2_sq.clamp(min=0)
     
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
                ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))

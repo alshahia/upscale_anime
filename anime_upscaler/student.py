@@ -221,7 +221,84 @@ class TinySRVGGStudent(nn.Module):
         return
 
 
-if __name__ == "__main__":
+def _build_srvgg(sd):
+    """TinySRVGGStudent with num_feat/num_conv/scale sniffed from weights."""
+    import math
+    num_feat = 52
+    first_w = sd.get("body.0.weight") if isinstance(sd, dict) else None
+    if first_w is not None and hasattr(first_w, "shape") and len(first_w.shape) == 4:
+        num_feat = int(first_w.shape[0])
+    # body.<i>.weight keys: even i are conv weights (0, 2, ..., 2*(num_conv+1))
+    body_conv_keys = sorted(
+        [k for k in sd.keys()
+         if k.startswith("body.") and k.endswith(".weight")
+         and k.split(".")[1].isdigit() and int(k.split(".")[1]) % 2 == 0],
+        key=lambda k: int(k.split(".")[1]))
+    # First is head, last is the upsample pre-shuffle conv; the middle
+    # [len(body_conv_keys) - 2] are the internal body convs.
+    num_conv = max(len(body_conv_keys) - 2, 1)
+    scale = 4
+    if len(body_conv_keys) >= 2:
+        last_w = sd[body_conv_keys[-1]]
+        if hasattr(last_w, "shape") and len(last_w.shape) == 4:
+            out_ch = int(last_w.shape[0])
+            ratio = out_ch // 3
+            sq = int(round(math.sqrt(max(ratio, 1))))
+            if sq * sq == ratio and sq in (2, 3, 4, 8):
+                scale = sq
+    return TinySRVGGStudent(num_feat=num_feat, num_conv=num_conv, scale=scale)
+
+
+def _build_rfdn(sd, args):
+    """RFDN with scale/shortcut_mode sniffed from weights and saved args."""
+    import math
+    shortcut_mode = "bicubic"
+    if isinstance(args, dict) and args.get("shortcut_mode") in ("bicubic", "nearest"):
+        shortcut_mode = args["shortcut_mode"]
+    scale = 4
+    ups_w = sd.get("upsampler.0.weight") if isinstance(sd, dict) else None
+    if ups_w is not None and hasattr(ups_w, "shape") and len(ups_w.shape) == 4:
+        out_ch = int(ups_w.shape[0])
+        ratio = out_ch // 3
+        sq = int(round(math.sqrt(max(ratio, 1))))
+        if sq * sq == ratio and sq in (2, 3, 4, 8):
+            scale = sq
+    return RFDN(scale=scale, shortcut_mode=shortcut_mode)
+
+
+def build_student(ckpt, arch=None):
+    """Rebuild the student module matching a distill.py checkpoint.
+
+    ckpt is the full checkpoint dict (with 'student' and 'args' keys) or a
+    bare state_dict. The architecture is resolved in this order:
+      1. explicit arch ('rfdn' or 'srvgg')
+      2. checkpoint args['arch'] (saved by distill.py)
+      3. structural sniff of the weight keys
+    """
+    if isinstance(ckpt, dict) and "student" in ckpt:
+        sd = ckpt["student"]
+        args = ckpt.get("args")
+    else:
+        sd = ckpt
+        args = None
+    if arch is None and isinstance(args, dict):
+        arch = args.get("arch")
+    if arch is None:
+        keys = set(sd.keys()) if isinstance(sd, dict) else set()
+        if "body.0.weight" in keys and "body.34.weight" not in keys:
+            arch = "srvgg"
+        elif any(k.startswith("blocks.") and ".d1.weight" in k for k in keys):
+            arch = "rfdn"
+    if arch == "srvgg":
+        return _build_srvgg(sd)
+    if arch == "rfdn":
+        return _build_rfdn(sd, args)
+    raise ValueError(
+        f"could not detect student architecture from checkpoint keys "
+        f"(got arch={arch!r}); pass arch='rfdn' or arch='srvgg'")
+
+
+if __name__ == "__main__":  # noqa
     torch.manual_seed(42)
     s = RFDN()
     n = s.num_params()

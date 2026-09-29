@@ -57,6 +57,10 @@ class FallbackMamba(nn.Module):
         # SSM parameters
         self.x_proj = nn.Linear(self.d_inner, d_state * 2, bias=False)
         self.dt_proj = nn.Linear(self.d_inner, self.d_inner, bias=True)
+        # A (negative semi-definite) and D (skip) for the selective scan
+        A = torch.arange(1, d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
+        self.A_log = nn.Parameter(torch.log(A))
+        self.D = nn.Parameter(torch.ones(self.d_inner))
         
         # Output projection
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
@@ -89,17 +93,30 @@ class FallbackMamba(nn.Module):
         z = x_and_z_and_rest[..., self.d_inner:self.d_inner*2]  # [B, L, d_inner]
         B_param = x_and_z_and_rest[..., self.d_inner*2:self.d_inner*2 + self.d_state]  # [B, L, d_state]
         C_param = x_and_z_and_rest[..., self.d_inner*2 + self.d_state:self.d_inner*2 + self.d_state*2]
-        dt = x_and_z_and_rest[..., self.d_inner*2 + self.d_state*2:]  # [B, L, d_inner]
-        
         # Convolution
         x_conv = x_proj.transpose(1, 2)  # [B, d_inner, L]
         x_conv = self.conv1d(x_conv)[..., :L]  # [B, d_inner, L]
         x_conv = x_conv.transpose(1, 2)  # [B, L, d_inner]
         x_conv = F.silu(x_conv)
         
-        # Simplified SSM step (not full Mamba algorithm)
-        # This is a simplified approximation
-        x_out = x_conv * torch.sigmoid(dt)
+        # Selective scan (S6): h_t = exp(delta_t * A) * h_{t-1} + delta_t * B_t * u_t
+        #                      y_t = C_t @ h_t
+        A = -torch.exp(self.A_log.float())  # [d_inner, d_state]
+        delta = F.softplus(self.dt_proj(x_conv))  # [B, L, d_inner]
+
+        h = x_conv.new_zeros(B, self.d_inner, self.d_state)
+        ys = []
+        for t in range(L):
+            delta_t = delta[:, t].unsqueeze(-1)  # [B, d_inner, 1]
+            dA = torch.exp(delta_t * A.unsqueeze(0))  # [B, d_inner, d_state]
+            dB_u = delta_t * B_param[:, t].unsqueeze(1) * x_conv[:, t].unsqueeze(-1)
+            h = dA * h + dB_u
+            y_t = (h * C_param[:, t].unsqueeze(1)).sum(dim=-1)  # [B, d_inner]
+            ys.append(y_t)
+        x_out = torch.stack(ys, dim=1)  # [B, L, d_inner]
+
+        # Skip connection
+        x_out = x_out + x_conv * self.D.view(1, -1)
         
         # Gating
         z = F.silu(z)

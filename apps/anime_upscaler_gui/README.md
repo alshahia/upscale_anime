@@ -66,7 +66,9 @@ The catalog also lists unsupported architectures so they are visible rather than
 
 `rfdn_student` is the in-house teacher-distilled RFDN student (~315K params, KD from SPAN V7, 40 epochs, 29.32 dB test PSNR). It is shipped as `pretrained/RFDN_distill_v1_4x_student.pth` and shows up automatically in the Models tab when the app opens. Best for fast, real-time, low-VRAM upscaling of anime frames.
 
-`srvgg_student` is the **current best** in-house model (Step-2 rebase of the pretrained-teacher plan): TinySRVGG student, 317K params, distilled from the `4xHFA2k_ludvae_realplksr_dysample` teacher for 50 epochs — 33.55 dB / 0.9146 SSIM on the held-out test split (bicubic 33.05), NIQE 7.38 on degraded real frames. Shipped as `pretrained/SRVGG_distill_v1_4x_student.pth` under the display name "SRVGG Distill v1 * Step-2 (HFA teacher)" in the Trained group of the Models tab; auto-detected from its state dict (no manual kind selection needed).
+`srvgg_student` is the **current best** in-house model (Step-2 rebase of the pretrained-teacher plan): TinySRVGG student, 317K params, distilled from the `4xHFA2k_ludvae_realplksr_dysample` teacher for 50 epochs — 33.55 dB / 0.9146 SSIM on the held-out test split (bicubic 33.05), NIQE 7.38 on degraded real frames, deployment-benchmarked at **51.8 fps on a real 25 fps episode at 2560x1440 output** (versus 42.3 fps for `realesr-animevideov3`). Shipped as `pretrained/SRVGG_distill_v1_4x_student.pth` under the display name "SRVGG Distill v1 * Step-2 (HFA teacher)" in the Trained group of the Models tab; auto-detected from its state dict (no manual kind selection needed).
+
+> Deployment note: run it with **TensorRT off** (ONNX-Runtime fp16 backend) — TensorRT 11's compiler backend mis-compiles this graph family on Turing/Windows (see `docs/ROADMAP_REALTIME_QUALITY.md`, section 7). The GPU also needs AC power; on DC the driver caps clocks ~6x below full speed.
 
 
 ### Adding a new model (without code changes)

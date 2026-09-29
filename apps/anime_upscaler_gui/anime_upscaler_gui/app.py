@@ -21,17 +21,20 @@ UI structure (Phase 2):
 """
 import logging
 import queue
+import threading
+import tkinter as tk
 
 
 # Phase 5: try to enable real drag-and-drop via tkinterdnd2. Falls back to plain
 # tk.Tk() if not installed (the input panel quietly disables DnD binding).
+# NOTE: `tkinter as tk` is imported above (not below) so the fallback branch
+# can reference `tk` -- importing it after the try/except would NameError.
 try:
     from tkinterdnd2 import TkinterDnD as _TkinterDnD
     _TK_BASE = _TkinterDnD.Tk
 except ImportError:
     _TK_BASE = tk.Tk
 import time
-import tkinter as tk
 import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -121,7 +124,13 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         self._running = False
         # Side-channel used by _wait_resume_action (worker thread -> GUI modal).
         # Keyed by job_id so concurrent frame errors don't trample each other.
+        # Guarded by a lock: the worker thread pops boxes while the GUI thread
+        # reads/schedules them (a race if unsynchronized).
         self._resume_boxes: dict = {}
+        self._resume_boxes_lock = threading.Lock()
+        # Download cancel flag: set by _cancel_download, checked by the
+        # registry's download loop between chunks.
+        self._dl_cancel = threading.Event()
 
         # Initialize logging before the UI so log messages are captured from
         # the first user action onward.
@@ -670,7 +679,8 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         the button callback sets `action` and `_done`, then destroys the modal.
         """
         from .pipeline import SKIP_FRAME, SKIP_REST, ABORT_JOB, RETRY_FRAME
-        result_box = self._resume_boxes.get(job_id)
+        with self._resume_boxes_lock:
+            result_box = self._resume_boxes.get(job_id)
         if result_box is None:
             # Race: worker cancelled its box before the GUI scheduled the modal.
             return
@@ -706,21 +716,48 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
 
         Each in-flight job gets its own `result_box` so concurrent frame errors
         on different jobs don't trample each other.
+
+        The poll loop also drains the GUI->worker control channel so a user
+        Cancel isn't swallowed for up to 120 s while the worker is parked
+        here. A cancel for this job resolves the box as ABORT_JOB; the cancel
+        event itself is left in the queue for the worker's own drain so the
+        job unwinds as a clean cancel rather than a worker crash.
         """
-        from .pipeline import SKIP_FRAME
+        from .pipeline import ABORT_JOB, SKIP_FRAME
         result_box = {"action": SKIP_FRAME, "_done": False}
-        self._resume_boxes[job_id] = result_box
+        with self._resume_boxes_lock:
+            self._resume_boxes[job_id] = result_box
         try:
             self.after(0, lambda: self._ask_frame_error_action(job_id, frame_idx, message))
         except Exception:
-            self._resume_boxes.pop(job_id, None)
+            with self._resume_boxes_lock:
+                self._resume_boxes.pop(job_id, None)
             return SKIP_FRAME
         deadline = time.time() + 120
         while time.time() < deadline:
             if result_box.get("_done"):
                 break
+            # The worker is parked in this wait; drain pending control
+            # events so a cancel is seen promptly. Events for other jobs
+            # (and the cancel itself) go back in FIFO order.
+            pending = []
+            try:
+                while True:
+                    pending.append(self._ctl_queue.get_nowait())
+            except queue.Empty:
+                pass
+            cancel = False
+            for evt in pending:
+                if evt.job_id == job_id and evt.kind == "cancel":
+                    cancel = True
+                self.ctl_queue.put(evt)
+            if cancel:
+                result_box["action"] = ABORT_JOB
+                result_box["_done"] = True
+                break
             time.sleep(0.05)
-        self._resume_boxes.pop(job_id, None)
+        with self._resume_boxes_lock:
+            self._resume_boxes.pop(job_id, None)
         return result_box.get("action", SKIP_FRAME)
 
     def _resolve_model_path_from_dropdown(self) -> str:
@@ -748,7 +785,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         if not is_supported_kind(p.kind):
             messagebox.showwarning("Unsupported", f"{pid} is kind={p.kind!r}; not enabled in this MVP.")
             return
-        self._start_download(p.url, p.filename, p.description)
+        self._start_download(p.url, p.filename, p.description, expected_sha256=p.sha256)
 
     def _download_custom_url(self):
         url = self.models_panel.custom_url_var.get().strip()
@@ -760,7 +797,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         fn = Path(urlparse(url).path).name or "downloaded.pth"
         self._start_download(url, fn, "custom URL")
 
-    def _start_download(self, url, filename, label):
+    def _start_download(self, url, filename, label, expected_sha256=None):
         import time as _time
         self.models_panel.dl_progress_var.set(0.0)
         self.models_panel.dl_status_var.set(f"Downloading {filename}...")
@@ -768,10 +805,13 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         self.models_panel.dl_eta_var.set("")
         self.models_panel.dl_cancel_btn.pack(fill="x", pady=(PAD_Y, 0))
         self._dl_state = {"start": _time.monotonic(), "last_written": 0, "last_t": _time.monotonic()}
+        # Fresh cancel flag per download; _cancel_download sets it.
+        self._dl_cancel = threading.Event()
         dl = ModelDownloader(self.registry)
 
         def _progress(written, total):
-            self.models_panel.dl_progress_var.set(written / total * 100.0)
+            if total > 0:
+                self.models_panel.dl_progress_var.set(written / total * 100.0)
             self.models_panel.dl_status_var.set(
                 f"{filename}: {written / 1e6:.1f} / {total / 1e6:.1f} MB"
             )
@@ -799,6 +839,10 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             self._refresh_model_dropdown()
 
         def _err(exc):
+            if self._dl_cancel.is_set():
+                # Cancel already surfaced by _cancel_download; don't pop a
+                # spurious "Download failed" dialog for it.
+                return
             self.models_panel.dl_status_var.set(f"FAIL: {exc}")
             self.models_panel.dl_speed_var.set("")
             self.models_panel.dl_eta_var.set("")
@@ -806,16 +850,19 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             messagebox.showerror("Download failed", _humanize_error(exc))
 
         self._dl_thread = dl.download_url(url, filename, on_progress=_progress,
-                                          on_done=_done, on_error=_err)
+                                          on_done=_done, on_error=_err,
+                                          expected_sha256=expected_sha256,
+                                          cancel_event=self._dl_cancel)
 
     def _cancel_download(self):
-        """Best-effort download cancel. Daemon thread; we just mark the UI as cancelled.
+        """Cancel an in-flight download.
 
-        True cancellation would need a stop signal plumbed into the registry's
-        download loop; for now this hides the bar and shows 'Cancelled' so
-        the user isn't stuck looking at a progress bar.
+        Sets a threading.Event the registry's download loop checks between
+        chunks; the loop then stops writing and removes the partial file so
+        a retry isn't fooled into thinking the download completed.
         """
-        self.models_panel.dl_status_var.set("Cancelled (download may still complete in background)")
+        self._dl_cancel.set()
+        self.models_panel.dl_status_var.set("Cancelled")
         self.models_panel.dl_speed_var.set("")
         self.models_panel.dl_eta_var.set("")
         try:
@@ -857,12 +904,19 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 except tk.TclError:
                     # Window destroyed mid-poll; drop remaining events.
                     return
+                except Exception:
+                    # Never let one bad event kill the poll loop -- log and
+                    # keep going so the GUI stays responsive.
+                    logging.getLogger(__name__).exception("Error handling event %s", evt)
         except queue.Empty:
             pass
-        try:
-            self.after(100, self._poll_events)
-        except tk.TclError:
-            pass
+        finally:
+            # Always reschedule (even after an error) so the poll loop
+            # never dies permanently.
+            try:
+                self.after(100, self._poll_events)
+            except tk.TclError:
+                pass
 
     def _handle_event(self, evt: JobEvent):
         # Find the job record by id

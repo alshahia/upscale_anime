@@ -25,26 +25,6 @@ class LogLevel(Enum):
     CRITICAL = "CRITICAL"
 
 
-class LoggingConfig:
-    """Centralized logging configuration with standardized levels."""
-    
-    DEFAULT_LEVELS = {
-        'root': LogLevel.INFO,
-        'super_resolution': LogLevel.DEBUG,
-        'training': LogLevel.INFO,
-        'inference': LogLevel.INFO,
-        'performance': LogLevel.INFO,
-    }
-    
-    PRODUCTION_LEVELS = {
-        'root': LogLevel.WARNING,
-        'super_resolution': LogLevel.INFO,
-        'training': LogLevel.INFO,
-        'inference': LogLevel.INFO,
-        'performance': LogLevel.WARNING,
-    }
-
-
 class ColoredFormatter(logging.Formatter):
     """Colored formatter for console output."""
     
@@ -97,7 +77,23 @@ class JSONFormatter(logging.Formatter):
 
 class LoggingConfig:
     """Centralized logging configuration."""
-    
+
+    DEFAULT_LEVELS = {
+        'root': LogLevel.INFO,
+        'super_resolution': LogLevel.DEBUG,
+        'training': LogLevel.INFO,
+        'inference': LogLevel.INFO,
+        'performance': LogLevel.INFO,
+    }
+
+    PRODUCTION_LEVELS = {
+        'root': LogLevel.WARNING,
+        'super_resolution': LogLevel.INFO,
+        'training': LogLevel.INFO,
+        'inference': LogLevel.INFO,
+        'performance': LogLevel.WARNING,
+    }
+
     def __init__(self, log_dir: str = "logs", app_name: str = "anime_sr"):
         self.log_dir = Path(log_dir)
         self.app_name = app_name

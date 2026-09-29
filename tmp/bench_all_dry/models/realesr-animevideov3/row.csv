@@ -1,0 +1,2 @@
+model_id,kind,ckpt,scale,params,status,backend,device,lr_in,sr_out,n_frames,load_s,warm_s,infer_total_s,mean_ms,min_ms,max_ms,p95_ms,ms_std,fps_1_over_mean,fps_throughput,encode_s,peak_vram_GB,clipiqa_mean,clipiqa_std,niqe_mean,niqe_n
+realesr-animevideov3,srvgg,realesr-animevideov3.pth,4,621424,ok,pytorch-fp16,cuda-RTX4000-ac,854x480,3416x1920,90,0.13,0.63,3.78,41.95,40.74,47.43,42.88,0.84,23.84,23.84,5.23,0.4,0.52,0.0,8.64,8

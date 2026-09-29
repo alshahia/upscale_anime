@@ -775,7 +775,7 @@ class BaseDataset(Dataset):
             hr = self._load_image(hr_path)
 
         if self.gpu_degradation:
-            hr = self._center_crop_if_needed(hr, self.crop_size)
+            hr = self._random_crop_if_needed(hr, self.crop_size)
             lr = None
         else:
             lr_path = self.lr_paths.get(hr_path)
@@ -803,8 +803,8 @@ class BaseDataset(Dataset):
             'name': hr_path.stem,
         }
     
-    def _center_crop_if_needed(self, img: np.ndarray, crop_size: int) -> np.ndarray:
-        """Center crop image if larger than crop_size."""
+    def _random_crop_if_needed(self, img: np.ndarray, crop_size: int) -> np.ndarray:
+        """Random crop image if larger than crop_size."""
         h, w = img.shape[:2]
         if h > crop_size or w > crop_size:
             # Random crop position (for training variety)
@@ -891,7 +891,7 @@ class BaseDataset(Dataset):
 
         if pm_mode == 'gpu_degradation':
             if self.gpu_degradation:
-                hr = self._center_crop_if_needed(hr, self.crop_size)
+                hr = self._random_crop_if_needed(hr, self.crop_size)
                 return hr, None
             hr_tensor = torch.from_numpy(hr.transpose(2, 0, 1)).float() / 255.0
             hr_tensor = hr_tensor.unsqueeze(0).to(pm.device)
@@ -908,10 +908,9 @@ class BaseDataset(Dataset):
     def _apply_standard_degradation(self, hr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Apply standard degradation pipeline."""
         if self.degrade_before_crop and self.degradation.get('enabled', False):
-            hr_original = hr.copy()
             if self.line_enhancer is not None and self.apply_to_gt:
                 hr = self.line_enhancer(hr)
-            lr = self._apply_degradation_full_image(hr_original, self.degradation, self.scale)
+            lr = self._apply_degradation_full_image(hr, self.degradation, self.scale)
             hr, lr = self._random_crop(hr, lr)
         else:
             if self.line_enhancer is not None and self.apply_to_gt:
@@ -1100,19 +1099,11 @@ class MultiDataset(Dataset):
                     ds.crop_size = min_crop_size
     
     def __len__(self) -> int:
-        # Approximate length
-        return max(len(d) for d in self.datasets) * len(self.datasets)
+        return sum(len(d) for d in self.datasets)
     
     def __getitem__(self, idx: int):
-        # Select dataset based on weights
-        r = random.random()
-        dataset_idx = 0
-        for i, cw in enumerate(self.cum_weights):
-            if r <= cw:
-                dataset_idx = i
-                break
-        
-        # Get random sample from selected dataset
-        dataset = self.datasets[dataset_idx]
-        sample_idx = random.randint(0, len(dataset) - 1)
-        return dataset[sample_idx]
+        for i, ds in enumerate(self.datasets):
+            if idx < len(ds):
+                return ds[idx]
+            idx -= len(ds)
+        raise IndexError

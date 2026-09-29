@@ -33,7 +33,7 @@ class GPUMonitor:
             'reserved_gb': reserved,
             'total_gb': total,
             'free_gb': total - reserved,
-            'utilization_percent': (reserved / total) * 100,
+            'utilization_percent': (reserved / total) * 100 if total > 0 else 0.0,
         }
     
     def get_device_name(self) -> str:

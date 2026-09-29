@@ -9,11 +9,9 @@ _IMPORT_WARNED = False
 
 def _warn_once(msg: str):
     global _IMPORT_WARNED
-    if not _IMPORT_WARNED and os.getpid() == os.getppid() or not _IMPORT_WARNED:
-        # Only warn if this is the main process or first import
-        if not _IMPORT_WARNED:
-            _IMPORT_WARNED = True
-            warnings.warn(msg, stacklevel=2)
+    if not _IMPORT_WARNED:
+        _IMPORT_WARNED = True
+        warnings.warn(msg, stacklevel=2)
 
 # Try to import from src package first
 try:
@@ -114,51 +112,16 @@ except ImportError as e:
             convert_spanf_checkpoint,
         )
     except ImportError as fallback_error:
-        # More specific error handling for fallback imports
+        # Both absolute and relative imports failed. Raise a clear error
+        # instead of silently degrading to stub functions that return None.
         missing_module = str(e).split("'")[1].split()[-1] if "'" in str(e) else str(e).split()[-1]
-        warnings.warn(f"Missing optional dependency: {missing_module}. Some features may be limited.")
-        # Provide minimal fallbacks
-        Config = None
-        calculate_psnr = None
-        calculate_ssim = None
-        calculate_batch_metrics = None
-        MetricsTracker = None
-        
-        # Create minimal stubs for missing dependencies
-        def stub_function(*args, **kwargs):
-            warnings.warn(f"Function {missing_module} not available. Install with: pip install {missing_module}")
-            return None
-        
-        tensor_to_image = stub_function
-        save_image_comparison = stub_function
-        plot_training_history = stub_function
-        create_grid_visualization = stub_function
-        visualize_degradation = stub_function
-        save_batch_comparison = stub_function
-        TrainingVisualizer = stub_function
-        print_welcome_message = stub_function
-        create_visualizer_for_training = stub_function
-        TrainingHistory = stub_function
-        HistoryCallback = stub_function
-        create_history_tracker = stub_function
-        load_history = stub_function
-        GPUMonitor = stub_function
-        SystemMonitor = stub_function
-        ResourceMonitor = stub_function
-        monitor_execution = stub_function
-        get_optimal_worker_count = stub_function
-        print_environment_info = stub_function
-        check_system_ready = stub_function
-        download_pretrained_model = stub_function
-        download_all_teacher_models = stub_function
-        get_teacher_model_path = stub_function
-        check_model_exists = stub_function
-        verify_model_weights = stub_function
-        list_available_models = stub_function
-        get_pretrained_dir = stub_function
-        load_pretrained_weights = stub_function
-        get_checkpoint_info = stub_function
-        convert_spanf_checkpoint = stub_function
+        raise ImportError(
+            f"Failed to import required utilities from src.utils. "
+            f"Missing dependency: {missing_module!r}. "
+            f"Original import error: {e}. "
+            f"Fallback import error: {fallback_error}. "
+            f"Ensure the package is installed and the working directory is the project root."
+        ) from fallback_error
 
 __all__ = [
     'Config',

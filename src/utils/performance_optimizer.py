@@ -66,6 +66,10 @@ class PerformanceOptimizer:
                     # Convert to half precision where safe
                     if 'weight' in name.lower() or 'bias' in name.lower():
                         continue  # Keep parameters in full precision
+                    # Skip BatchNorm running statistics: converting these to
+                    # half corrupts them and breaks normalization.
+                    if 'running_mean' in name or 'running_var' in name or 'num_batches_tracked' in name:
+                        continue
                     buffer.data = buffer.data.half()
             
             logger.info("Optimized buffer data types")
@@ -87,13 +91,42 @@ class PerformanceOptimizer:
         """Apply speed optimizations for inference."""
         logger.info("Applying speed optimizations...")
         
+        # Suppress compilation errors so torch.compile falls back to
+        # eager mode when no C compiler is available (e.g. minimal Windows
+        # installs without MSVC). Without this, the lazy compilation at
+        # first forward pass raises "cl is not found".
+        try:
+            import torch._dynamo
+            torch._dynamo.config.suppress_errors = True
+            logger.info(f"suppress_errors set to: {torch._dynamo.config.suppress_errors}")
+        except Exception as e:
+            logger.warning(f"Failed to set suppress_errors: {e}")
+
         # Compile model if using PyTorch 2.0+
+        original_model = model
         if hasattr(torch, 'compile'):
             try:
                 model = torch.compile(model, mode="max-autotune")
                 logger.info("Enabled model compilation (torch.compile)")
+                
+                # Test forward pass to verify compilation works.
+                # torch.compile is lazy — compilation happens on first forward.
+                # If no C compiler is available (e.g. minimal Windows installs
+                # without MSVC), this raises "cl is not found". suppress_errors
+                # should handle this, but as a safety net we test here and
+                # fall back to the original model if compilation fails.
+                try:
+                    with torch.no_grad():
+                        device = next(original_model.parameters()).device
+                        dummy = torch.zeros(1, 3, 4, 4, device=device)
+                        model(dummy)
+                    logger.info("Model compilation verified with test forward pass")
+                except Exception as e:
+                    logger.warning(f"torch.compile test forward failed, falling back to eager: {e}")
+                    model = original_model
             except Exception as e:
                 logger.warning(f"Could not compile model: {e}")
+                model = original_model
         
         # Set to evaluation mode
         model.eval()
@@ -168,7 +201,9 @@ class PerformanceOptimizer:
         if torch.cuda.is_available():
             info["gpu_memory_allocated_mb"] = torch.cuda.memory_allocated() / 1024 / 1024
             info["gpu_memory_reserved_mb"] = torch.cuda.memory_reserved() / 1024 / 1024
-            info["gpu_memory_cached_mb"] = torch.cuda.memory_cached() / 1024 / 1024
+            # The deprecated CUDA cache query was removed in modern PyTorch;
+            # memory_reserved() reports the caching allocator's held memory.
+            info["gpu_memory_cached_mb"] = torch.cuda.memory_reserved() / 1024 / 1024
         
         return info
     
@@ -252,7 +287,6 @@ class PerformanceOptimizer:
         strategies = {
             "single_batch": self._process_single_batch,
             "gradient_accumulation": self._process_with_gradient_accumulation,
-            "chunked_processing": self._process_in_chunks
         }
         
         results = {}
@@ -338,12 +372,7 @@ class PerformanceOptimizer:
             "chunks": num_chunks
         }
     
-    def _process_in_chunks(self, model: nn.Module, batch_size: int, input_size: tuple) -> Dict[str, Any]:
-        """Process batch in spatial chunks."""
-        # This would require model-specific implementation
-        # For now, just return the single batch result
-        return self._process_single_batch(model, batch_size, input_size)
-    
+
     def auto_tune_batch_size(self, model: nn.Module, input_size: tuple, 
                             max_batch_size: int = 32, memory_limit_mb: float = 8000) -> int:
         """Automatically find optimal batch size based on memory constraints."""
@@ -378,23 +407,41 @@ class PerformanceOptimizer:
         return optimal_batch_size
     
     def enable_mixed_precision(self, model: nn.Module) -> nn.Module:
-        """Enable mixed precision for the model."""
-        logger.info("Enabling mixed precision...")
-        
-        try:
-            # Convert model to half precision where safe
-            for name, module in model.named_modules():
-                if isinstance(module, (nn.Linear, nn.Conv2d)):
-                    # Keep first and last layers in full precision for stability
-                    if "conv_1" in name or "final_conv" in name:
-                        continue
-                    module.half()
-            
-            logger.info("Enabled mixed precision (FP16) for intermediate layers")
-        except Exception as e:
-            logger.warning(f"Could not enable mixed precision: {e}")
-        
+        """Enable mixed precision for the model using torch.autocast.
+
+        The model is kept in FP32; mixed precision is applied at forward-pass
+        time via :meth:`autocast_context`. Converting modules to half instead
+        would corrupt BatchNorm running statistics and lose precision on
+        sensitive layers, so autocast keeps master weights in FP32 while
+        running compute-heavy ops in FP16.
+        """
+        logger.info("Enabling mixed precision (torch.autocast)...")
+        model._mixed_precision_enabled = True
+        logger.info(
+            "Mixed precision enabled. Wrap forward passes in "
+            "optimizer.autocast_context(model) to apply FP16 autocast."
+        )
         return model
+
+    @contextmanager
+    def autocast_context(self, model: nn.Module, enabled: bool = True):
+        """Run forward passes under torch.autocast for mixed precision.
+
+        Args:
+            model: The model being run.
+            enabled: Whether to apply autocast. When False (or when the model
+                was not marked via :meth:`enable_mixed_precision`), this is a
+                no-op passthrough.
+        """
+        if not enabled or not getattr(model, "_mixed_precision_enabled", False):
+            yield model
+            return
+        if self.device.type == "cuda":
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                yield model
+        else:
+            with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                yield model
     
     def create_optimized_dataloader_config(self, dataset_size: int, 
                                         memory_limit_mb: float = 8000) -> Dict[str, Any]:

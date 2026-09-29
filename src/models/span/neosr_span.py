@@ -269,8 +269,8 @@ class NeosrSPAN(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.is_norm:
-            self.mean = self.mean.type_as(x)
-            x = (x - self.mean) * self.img_range
+            mean = self.mean.type_as(x)
+            x = (x - mean) * self.img_range
 
         out_feature = self.conv_1(x)
 
@@ -300,6 +300,8 @@ class NeosrSPAN(nn.Module):
         try:
             ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
         except Exception:
+            import warnings
+            warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         if isinstance(ckpt, dict):
