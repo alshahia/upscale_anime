@@ -10,6 +10,7 @@ A PyTorch implementation supporting NTIRE-winning SPAN architecture with MTKD+FA
 - **Universal Data Module**: Configurable dataset handling with RealESRGAN-style degradation
 - **VRAM Optimized**: Runs on 8GB GPUs (RTX 4000 Mobile)
 - **Training Control System**: Early stopping, adaptive LR, auto-stage transitions
+- **Desktop GUI**: Standalone Tkinter app with job queue, VRAM guard, and themes
 - **Small Dataset Techniques**: 10-phase approach for training with limited data (5000+ images)
   - Self-supervised pre-training, transfer learning, meta-learning
   - Advanced augmentation (Mixup, CutMix), progressive crop sizing
@@ -62,8 +63,8 @@ anime-sr export --model ./checkpoints/model_best.pt --output ./exported/model.on
 # Start API server
 anime-sr serve --model ./checkpoints/model_best.pt --host 0.0.0.0 --port 8000
 
-# Launch GUI
-anime-sr gui --model ./checkpoints/model_best.pt
+# Launch the desktop GUI (standalone app — see "Desktop GUI" below)
+python -m apps.anime_upscaler_gui
 
 # Validate model
 anime-sr validate --model ./checkpoints/model_best.pt --data ./validation_data
@@ -104,6 +105,25 @@ import uvicorn
 app = create_app(model_path="./checkpoints/model_best.pt")
 uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
+
+### Desktop GUI
+
+A standalone Tkinter app (`apps/anime_upscaler_gui`) for upscaling images and videos without writing code:
+
+```bash
+# From the repository root
+python -m apps.anime_upscaler_gui
+
+# Or double-click apps/anime_upscaler_gui/LAUNCHER.bat (Windows)
+```
+
+- **Model catalog** — auto-detects checkpoints in `pretrained/`, with presets for SRVGG, SPAN, ERANet, AnimeSR, and the in-house distilled students
+- **Queue controls** — batch multiple files with pause/resume/cancel, live preview, log panel, and GPU monitor
+- **VRAM guard** — warn, auto-downscale, or tile processing to fit 8GB GPUs
+- **Themes & accessibility** — light / dark / high-contrast themes, keyboard shortcuts, English/Arabic UI
+- **Settings** — persisted per-user outside the source tree
+
+See the [GUI README](apps/anime_upscaler_gui/README.md) for the full walkthrough, supported-models table, and keyboard shortcuts.
 
 ## Configuration
 
@@ -183,6 +203,8 @@ upscale_anime/
 ├── configs/               # Training configuration files
 ├── scripts/               # Utility scripts and test scripts
 ├── tests/                 # Test suite
+├── apps/
+│   └── anime_upscaler_gui/  # Standalone desktop GUI (Tkinter)
 ├── docs/                  # Documentation
 ├── assets/                # Example images and assets
 │   └── examples/          # Example input/output images
@@ -201,6 +223,7 @@ upscale_anime/
 - [Python API Reference](docs/api.md) - Complete Python API documentation
 - [CLI Reference](docs/cli.md) - Command-line interface reference
 - [Development Setup](docs/development.md) - Setting up development environment
+- [GUI User Guide](apps/anime_upscaler_gui/README.md) - Desktop app walkthrough, models, and shortcuts
 
 ### Core Concepts
 
