@@ -18,8 +18,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "anime_upscaler"))
-from student import TinySRVGGStudent  # noqa: E402
+from anime_sr.models.students import TinySRVGGStudent  # noqa: E402
 
 device = "cuda"
 video_src = ROOT / "data" / "anime_vid" / (

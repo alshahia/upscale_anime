@@ -18,27 +18,14 @@ from pathlib import Path
 import torch
 
 ROOT = Path(__file__).resolve().parent.parent
-PKG = ROOT / "anime_upscaler"
-# In this order:
-#   1. repo root -> so 'import anime_upscaler.*' works (this script imports
-#      anime_upscaler.{distill,student,teacher} as a package).
-#   2. anime_upscaler/ dir -> so distill.py's bare 'from dataset import' etc.
-#      resolve. distill.py was written to run as a script (sys.path[0] =
-#      anime_upscaler/), and this helper runs from scripts/ -- without
-#      this second insert, distill's bare imports fail with
-#      ModuleNotFoundError. See plans/Phase 5 pitfalls note.
-for p in (ROOT, PKG):
-    sp = str(p)
-    if sp not in sys.path:
-        sys.path.insert(0, sp)
 
-from anime_upscaler.distill import (  # noqa: E402
+from anime_sr.training.distillation.distill import (  # noqa: E402
     evaluate, set_seed, seed_worker,
 )
-from anime_upscaler.student import RFDN  # noqa: E402
-from anime_upscaler.teacher import SPANTeacher  # noqa: E402
+from anime_sr.models.students import RFDN  # noqa: E402
+from anime_sr.models.teachers import SPANTeacher  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
-import anime_upscaler.dataset as _ds  # noqa: E402  (re-export AnimePairDataset, denorm01)
+from anime_sr.data.datasets import image as _ds  # noqa: E402  (re-export AnimePairDataset, denorm01)
 AnimePairDataset = _ds.AnimePairDataset
 denorm01 = _ds.denorm01
 

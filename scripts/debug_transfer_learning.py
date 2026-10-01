@@ -128,7 +128,7 @@ def analyze_model_creation(config):
     print("="*60)
     
     try:
-        from models.span import create_span_model
+        from anime_sr.models.span import create_span_model
         
         # Create model as configured
         model_config = config['model']
@@ -226,7 +226,7 @@ def simulate_loading(config):
     print("="*60)
     
     try:
-        from models.span import create_span_model
+        from anime_sr.models.span import create_span_model
         
         # Create model
         model = create_span_model(config['model'])

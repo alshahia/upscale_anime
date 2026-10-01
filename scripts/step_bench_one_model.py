@@ -15,15 +15,13 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
-sys.path.insert(0, str(ROOT))
 
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import imageio  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 
-from anime_upscaler_gui.archs import build  # noqa: E402
+from apps.anime_upscaler_gui.anime_upscaler_gui.arch_registry import build  # noqa: E402
 
 
 def main() -> int:

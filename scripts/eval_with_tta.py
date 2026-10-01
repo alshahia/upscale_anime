@@ -19,20 +19,15 @@ import torch
 import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parent.parent
-PKG = ROOT / "anime_upscaler"
-for p in (ROOT, PKG):
-    sp = str(p)
-    if sp not in sys.path:
-        sys.path.insert(0, sp)
 
-from anime_upscaler.distill import (  # noqa: E402
+from anime_sr.training.distillation.distill import (  # noqa: E402
     evaluate, set_seed, seed_worker, psnr01, ssim01,
 )
-from anime_upscaler.student import RFDN  # noqa: E402
-from anime_upscaler.teacher import SPANTeacher  # noqa: E402
-from tta import tta_forward  # noqa: E402
+from anime_sr.models.students import RFDN  # noqa: E402
+from anime_sr.models.teachers import SPANTeacher  # noqa: E402
+from anime_sr.inference.tta import tta_forward  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
-import anime_upscaler.dataset as _ds  # noqa: E402
+from anime_sr.data.datasets import image as _ds  # noqa: E402
 AnimePairDataset = _ds.AnimePairDataset
 denorm01 = _ds.denorm01
 
@@ -48,7 +43,7 @@ def tta_psnr_ssim(model, loader, device):
         lr, hr = denorm01(lr_n).to(device), denorm01(hr_n).to(device)
         bic = F.interpolate(lr, scale_factor=4, mode="bicubic",
                             align_corners=False).clamp(0, 1)
-        sr, na, nm = tta_forward(model, lr)
+        sr = tta_forward(model, lr)
         sr = sr.clamp(0, 1)
         tt = model.teacher(lr).clamp(0, 1) if hasattr(model, "teacher") else None
         # teacher fallback: caller passes teacher separately; here we just record student.
@@ -56,7 +51,7 @@ def tta_psnr_ssim(model, loader, device):
             sums[name][0] += psnr01(pred, hr)
             sums[name][1] += ssim01(pred, hr)
         if n_aug is None:
-            n_aug, names_seen = na, nm
+            n_aug, names_seen = 8, ["id", "R90", "R180", "R270", "Fh", "Fv", "T", "AT"]
         nb += 1
     out = {k: (v[0] / nb, v[1] / nb) for k, v in sums.items()}
     out["_n_aug"] = n_aug

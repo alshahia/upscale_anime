@@ -70,8 +70,7 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     DEV = torch.device("cuda")
 
-    sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
-    from anime_upscaler_gui.archs import build
+    from apps.anime_upscaler_gui.anime_upscaler_gui.arch_registry import build
     model = build("srvgg", args.ckpt).to(DEV).eval().half()
     label = args.alpha_name or Path(args.ckpt).stem
     mp4_path = out / f"upscaled_{label}.mp4"

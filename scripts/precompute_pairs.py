@@ -32,12 +32,12 @@ import torch
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from data.storage_estimator import (
+from anime_sr.data.storage_estimator import (
     estimate_dataset_storage, estimate_multiple_datasets,
     check_against_available_space, print_storage_estimate,
     create_default_dataset_configs
 )
-from data.compression_modules import CompressionPipeline
+from anime_sr.data.compression_modules import CompressionPipeline
 
 
 def parse_args():

@@ -1,1 +1,0 @@
-status,error,warmup failed: NotImplementedError('Padding size 4 is not supported for 5D input tensor.\nSupported combinations for non-constant padding:\n  - 2D or 3D input: padding size = 2 (pads last dimension)\n  - 3D or 4D input: padding size = 4 (pads last 2 dimensions)\n  - 4D or 5D input: padding size = 6 (pads last 3 dimensions)')

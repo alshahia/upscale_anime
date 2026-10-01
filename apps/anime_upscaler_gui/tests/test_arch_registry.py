@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from apps.anime_upscaler_gui.anime_upscaler_gui import archs
+from apps.anime_upscaler_gui.anime_upscaler_gui import arch_registry as archs
 from apps.anime_upscaler_gui.anime_upscaler_gui.registry import (
     _ModelRegistry,
     _load_preset_catalog,

@@ -32,9 +32,8 @@ import numpy as np
 import torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "apps" / "anime_upscaler_gui"))
 
-from anime_upscaler_gui.archs import build  # noqa: E402
+from apps.anime_upscaler_gui.anime_upscaler_gui.arch_registry import build  # noqa: E402
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 VIDEO   = REPO_ROOT / "tmp" / "real_video_1sec.mp4"

@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 
-from . import archs
+from . import arch_registry as archs
 
 log = logging.getLogger(__name__)
 

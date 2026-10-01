@@ -7,8 +7,8 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.getcwd(), 'src'))
 
-from utils.enhanced_checkpoint_loader import load_checkpoint_compatible_span_enhanced
-from models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
+from anime_sr.utils.enhanced_checkpoint_loader import load_checkpoint_compatible_span_enhanced
+from anime_sr.models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
 
 def test_enhanced_loader():
     """Test the enhanced checkpoint loader."""

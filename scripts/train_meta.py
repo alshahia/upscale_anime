@@ -16,9 +16,9 @@ import copy
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.span import create_span_model
-from training.base_trainer import BaseTrainer
-from data.base import BaseDataset
+from anime_sr.models.span import create_span_model
+from anime_sr.training.base_trainer import BaseTrainer
+from anime_sr.data.base import BaseDataset
 from torch.utils.data import DataLoader
 
 
@@ -205,7 +205,7 @@ class TaskDataset:
     def __getitem__(self, idx) -> Dict:
         """Get a meta-task from a single image."""
         from PIL import Image
-        from data.base import BaseDataset
+        from anime_sr.data.base import BaseDataset
         
         # Load image
         img_path = self.image_paths[idx]

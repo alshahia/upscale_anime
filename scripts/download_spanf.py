@@ -1,4 +1,4 @@
-﻿"""
+"""
 Download SPAN-F (XiaomiMM) pretrained weights for NTIRE 2025.
 
 SPAN-F is the 2nd place winner (XiaomiMM team) of NTIRE 2025 Efficient Super-Resolution Challenge.
@@ -18,7 +18,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.pretrained_models import get_pretrained_dir
+from anime_sr.utils.pretrained_models import get_pretrained_dir
 
 
 def download_spanf_from_googledrive(output_dir: Path = None) -> Path:
@@ -112,7 +112,7 @@ def verify_spanf_weights(checkpoint_path: Path) -> bool:
         
         # Try to load into model
         try:
-            from src.models.span import SPANF
+            from anime_sr.models.span import SPANF
             model = SPANF(scale=4)
             model.load_state_dict(state_dict, strict=True)
             print("✓ Weights compatible with SPANF architecture")

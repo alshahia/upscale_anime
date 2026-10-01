@@ -14,7 +14,7 @@ def test_training_monitor():
     print("TESTING TRAINING MONITOR")
     print("=" * 50)
     
-    from utils.training_monitor import TrainingMonitor, TrainingDashboard
+    from anime_sr.utils.training_monitor import TrainingMonitor, TrainingDashboard
     
     monitor = TrainingMonitor(verbose=False)
     

@@ -90,7 +90,7 @@ class TestRunner:
         print("🤖 Running Model Tests...")
         
         try:
-            from models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
+            from anime_sr.models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
             import torch
             
             results = {"tests": []}
@@ -205,7 +205,7 @@ class TestRunner:
         
         for config_path in configs_to_test:
             try:
-                from utils.config import load_config
+                from anime_sr.utils.config import load_config
                 
                 full_path = Path(__file__).parent.parent / config_path
                 if full_path.exists():
@@ -252,7 +252,7 @@ class TestRunner:
         print("[FAST] Running Performance Benchmark...")
         
         try:
-            from models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
+            from anime_sr.models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
             import torch
             import time
             
@@ -306,7 +306,7 @@ class TestRunner:
         print("💾 Running Memory Tests...")
         
         try:
-            from models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
+            from anime_sr.models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
             import torch
             import psutil
             import os

@@ -16,7 +16,7 @@ from PIL import Image
 
 import sys
 sys.path.insert(0, "src")
-from data.degradation_pipeline import DegradationPipeline
+from anime_sr.data.degradation_pipeline import DegradationPipeline
 
 
 def main():

@@ -9,9 +9,9 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from training.stage_state import StageStateManager
-from training.stage_controller import StageTransitionController
-from training.auto_stage_trainer import AutoStageTrainer
+from anime_sr.training.stage_state import StageStateManager
+from anime_sr.training.stage_controller import StageTransitionController
+from anime_sr.training.auto_stage_trainer import AutoStageTrainer
 import yaml
 
 

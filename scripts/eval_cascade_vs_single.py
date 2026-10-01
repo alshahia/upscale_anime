@@ -19,10 +19,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-# Locate package
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "anime_upscaler"))
-from dataset import AnimePairDataset, denorm01  # noqa: E402
-from student import RFDN  # noqa: E402
+from anime_sr.data.datasets.image import AnimePairDataset, denorm01  # noqa: E402
+from anime_sr.models.students import RFDN  # noqa: E402
 
 
 def _load_student(ckpt_path: Path, scale: int) -> RFDN:

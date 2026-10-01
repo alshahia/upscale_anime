@@ -13,8 +13,8 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from training.neosr_finetuner import NeosrSPANFinetuner
-from data.dataloader import DataLoaderFactory
+from anime_sr.training.neosr_finetuner import NeosrSPANFinetuner
+from anime_sr.data.dataloader import DataLoaderFactory
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)

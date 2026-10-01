@@ -58,8 +58,7 @@ def main() -> int:
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
-    from anime_upscaler_gui.archs import build
+    from apps.anime_upscaler_gui.anime_upscaler_gui.arch_registry import build
 
     DEV = torch.device("cuda")
 

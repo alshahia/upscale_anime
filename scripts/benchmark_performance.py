@@ -15,8 +15,8 @@ from typing import Dict, List, Any
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
-from utils.performance_optimizer import PerformanceOptimizer, optimize_model_for_inference, benchmark_model_performance
+from anime_sr.models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
+from anime_sr.utils.performance_optimizer import PerformanceOptimizer, optimize_model_for_inference, benchmark_model_performance
 
 
 def benchmark_model_performance():

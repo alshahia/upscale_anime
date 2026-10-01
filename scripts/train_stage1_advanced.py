@@ -11,8 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 import torch
-from utils.config import Config
-from data.dataloader import build_dataloader
+from anime_sr.utils.config import Config
+from anime_sr.data.dataloader import build_dataloader
 from training import create_orchestrator
 
 

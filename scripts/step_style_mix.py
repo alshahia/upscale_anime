@@ -24,7 +24,6 @@ from pathlib import Path
 import torch
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
 PY = sys.executable
 
 SRC_A = ROOT / "pretrained" / "realesr-animevideov3.pth"   # anime-video look

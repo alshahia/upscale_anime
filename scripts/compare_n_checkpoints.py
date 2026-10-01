@@ -29,10 +29,10 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from models.span import create_neosr_span, create_span_model
-from utils.config import Config
-from inference.tta import tta_forward as _tta_forward
-from utils.metrics import (
+from anime_sr.models.span import create_neosr_span, create_span_model
+from anime_sr.utils.config import Config
+from anime_sr.inference.tta import tta_forward as _tta_forward
+from anime_sr.utils.metrics import (
     PYIQA_DIRECTION,
     calculate_clipiqa, calculate_lpips, calculate_maniqa,
     calculate_musiq, calculate_niqe, calculate_psnr,

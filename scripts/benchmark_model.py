@@ -17,8 +17,8 @@ from PIL import Image
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.span import create_span_model
-from utils.image_utils import tensor_to_image, image_to_tensor
+from anime_sr.models.span import create_span_model
+from anime_sr.utils.image_utils import tensor_to_image, image_to_tensor
 
 
 def calculate_psnr(img1: np.ndarray, img2: np.ndarray, max_val: float = 255.0) -> float:
@@ -69,7 +69,7 @@ def calculate_lpips(img1: torch.Tensor, img2: torch.Tensor, device: str = 'cuda'
 def calculate_dists(img1: torch.Tensor, img2: torch.Tensor, device: str = 'cuda') -> float:
     """Calculate DISTS perceptual metric (anime-optimized)."""
     try:
-        from models.loss import DISTSLoss
+        from anime_sr.models.loss import DISTSLoss
         dists_loss = DISTSLoss().to(device)
         
         with torch.no_grad():

@@ -1,2 +1,0 @@
-model_id,kind,ckpt,scale,params,status,backend,device,lr_in,sr_out,n_frames,load_s,warm_s,infer_total_s,mean_ms,min_ms,max_ms,p95_ms,ms_std,fps_1_over_mean,fps_throughput,encode_s,peak_vram_GB,clipiqa_mean,clipiqa_std,niqe_mean,niqe_n
-RFDN_distill_v2_2x_student,rfdn_student,RFDN_distill_v2_2x_student.pth,4,298960,ok,pytorch-fp16,cuda-RTX4000-ac,854x480,1708x960,90,0.14,1.06,4.79,53.27,52.25,56.46,54.35,0.71,18.77,18.77,1.43,0.51,0.43,0.0,7.17,8

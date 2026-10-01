@@ -27,8 +27,7 @@ import torch.nn.functional as F
 import imageio.v2 as imageio
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
-from anime_upscaler_gui.archs import build
+from apps.anime_upscaler_gui.anime_upscaler_gui.arch_registry import build
 import gzip  # noqa keep imports explicit
 
 

@@ -12,7 +12,7 @@ import json
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.span import create_span_model
+from anime_sr.models.span import create_span_model
 
 
 def export_onnx(model: nn.Module,

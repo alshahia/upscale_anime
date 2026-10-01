@@ -34,7 +34,7 @@ import torch
 
 from .._deprecation import make_alias
 
-from ..archs import build, _save_sr, capabilities as _arch_caps
+from ..arch_registry import build, _save_sr, capabilities as _arch_caps
 
 log = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ def select_backend(
 
 
 def _tta_forward(model, x):
-    from .tta import tta_forward as _fwd
+    from anime_sr.inference.tta import tta_forward as _fwd
     return _fwd(model, x)
 
 

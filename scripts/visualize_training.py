@@ -40,12 +40,12 @@ from typing import Dict, List, Optional
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils.training_visualizer import (
+from anime_sr.utils.training_visualizer import (
     TrainingVisualizer,
     print_welcome_message,
     create_visualizer_for_training,
 )
-from utils.config import Config
+from anime_sr.utils.config import Config
 
 
 def parse_args():

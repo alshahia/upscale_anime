@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 warnings.filterwarnings("ignore")
 
 import torch, cv2, numpy as np
-from models.span import create_neosr_span
+from anime_sr.models.span import create_neosr_span
 
 PRETRAIN = Path("pretrained/span_pix_pretrain_4x.pth")
 REF_IMG = Path("data/test_mini_sr/2.png")

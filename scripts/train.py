@@ -11,8 +11,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils.config import Config
-from data.dataloader import build_dataloader, build_separate_loaders
+from anime_sr.utils.config import Config
+from anime_sr.data.dataloader import build_dataloader, build_separate_loaders
 from training import TrainingOrchestrator, create_orchestrator
 
 
@@ -458,8 +458,8 @@ def main():
     if mode == 'finetune' or config.get('training.finetune.enabled', False):
         print("\n[Finetune Mode] Using neosr SPAN finetuner")
         try:
-            from training.neosr_finetuner import create_finetuner
-            from utils.checkpoint_manager import CheckpointManager
+            from anime_sr.training.neosr_finetuner import create_finetuner
+            from anime_sr.utils.checkpoint_manager import CheckpointManager
 
             device = config.get('training.device', 'cuda' if torch.cuda.is_available() else 'cpu')
 

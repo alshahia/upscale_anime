@@ -25,14 +25,13 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
 
 import numpy as np  # noqa: E402
 import onnxruntime as ort  # noqa: E402
 import torch  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from anime_upscaler_gui.archs import build  # noqa: E402
+from apps.anime_upscaler_gui.anime_upscaler_gui.arch_registry import build  # noqa: E402
 
 CKPT = ROOT / "pretrained" / "SRVGG_distill_v1_4x_student.pth"
 KIND = "srvgg_student"

@@ -1,0 +1,67 @@
+# ============================================================
+# Knowledge distillation: teacher(s) -> student (MTKD + FAKD)
+# ============================================================
+# Generic distillation config. Point teacher(s) at trained checkpoints
+# and the student at a scratch/SPAN init. Teachers stay frozen.
+# Usage:
+#   python scripts/train.py --config configs/training/distill.yaml
+# ============================================================
+
+base: ../default.yaml
+
+model:
+  name: "distill_student"
+  type: "span"
+  scale: 4
+  num_features: 26
+  num_blocks: 12
+  path: "checkpoints/distill_student_best.pth"
+
+training:
+  mode: "finetune"
+  epochs: 300
+  batch_size: 8
+  lr: 0.0001
+  optimizer: "adam"
+  scheduler: "cosine"
+  T_max: 300
+  warmup_epochs: 5
+  min_lr: 1.0e-7
+  mixed_precision: true
+  use_ema: true
+  ema_decay: 0.999
+  freeze_teachers: true
+
+  # Teacher definitions (edit paths to your trained checkpoints)
+  stage1:
+    enabled: true
+    epochs: 300
+    freeze_teachers: true
+    auto_download_teachers: false
+    teachers:
+      - {name: "model_a", path: "checkpoints/model_a_best.pth", weight: 0.6}
+      - {name: "model_b", path: "checkpoints/model_b_best.pth", weight: 0.4}
+
+data:
+  batch_size: 8
+  crop_size: 128
+  num_workers: 8
+  datasets:
+    - {name: "anime_train", weight: 1.0, enabled: true, hr_dir: "data/anime_hr"}
+  degradation:
+    enabled: true
+    mode: "anime"
+
+loss:
+  pixel_loss: {type: "l1", weight: 1.0}
+  perceptual_loss: {enabled: true, type: "dists", weight: 0.1}
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+    fakd_layers: [2, 4, 6, 8]
+    fakd_layer_weights: [0.1, 0.2, 0.3, 0.4]
+    consistency:
+      enabled: false
+      weight: 0.1
+      type: "variance"

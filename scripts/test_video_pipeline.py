@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Test script for video extraction pipeline
 Validates that video processing, dataset creation, and dataloader integration work correctly
@@ -9,10 +9,10 @@ from pathlib import Path
 import numpy as np
 import cv2
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+# Package installed via pip install -e . - no sys.path needed
 
 try:
-    from data.video_extraction import (
+    from anime_sr.data.video_extraction import (
         calculate_frame_quality,
         calculate_frame_hash,
         hash_similarity,
@@ -20,12 +20,12 @@ try:
         extract_frames_from_video,
         get_video_info,
     )
-    from data.video_dataset import VideoDataset
+    from anime_sr.data.video_dataset import VideoDataset
     from data import validate_dataset
 except ImportError as e:
     print(f"Import error: {e}")
     print("Trying alternative import path...")
-    from src.data.video_extraction import (
+    from anime_sr.data.video_extraction import (
         calculate_frame_quality,
         calculate_frame_hash,
         hash_similarity,
@@ -33,8 +33,8 @@ except ImportError as e:
         extract_frames_from_video,
         get_video_info,
     )
-    from src.data.video_dataset import VideoDataset
-    from src.data import validate_dataset
+    from anime_sr.data.video_dataset import VideoDataset
+    from anime_sr.data import validate_dataset
 
 
 def create_test_video(output_path: Path, num_frames: int = 100, fps: int = 30, resolution: tuple = (1280, 720)):
@@ -259,7 +259,7 @@ def test_imports():
     except ImportError as e:
         print(f"⚠ Import from 'data' failed: {e}")
         try:
-            from src.data import VideoDataset, extract_from_folder, get_video_info
+            from anime_sr.data import VideoDataset, extract_from_folder, get_video_info
             print("✓ Alternative imports from 'src.data' work")
         except ImportError as e2:
             print(f"✗ Both import attempts failed: {e2}")

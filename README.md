@@ -1,27 +1,6 @@
-# Anime Super-Resolution with Progressive Ensemble Distillation
+# Anime Super-Resolution
 
 A PyTorch implementation supporting NTIRE-winning SPAN architecture with MTKD+FAKD distillation, and Mamba-PAN with directional scanning.
-
-## Current Best Model (Step-2 REBASE, ACCEPTED — see docs/ROADMAP_REALTIME_QUALITY.md)
-
-The active production candidate is NOT the early from-scratch SPAN/Mamba
-ensemble line — those were diagnosed as teacher/data limited and retired.
-Current champion (real-time class, 317K params):
-
-| | PSNR / SSIM (438-img test split) | NIQE (degraded real frames) | eager fps 640x360 LR -> 1440p |
-|---|---|---|---|
-| bicubic | 33.05 / 0.9039 | 9.11 | - |
-| TinySRVGG student (runs/step2_srvgg_hfa_v1/student_best.pt) | **33.55 / 0.9146** | **7.38** | 8.2 (3.7 @ 960x540) |
-| teacher 4xHFA2k_ludvae_realplksr_dysample | 32.60 / 0.9296 | 9.21 | - |
-
-Recipe: TinySRVGGStudent distilled from 4xHFA2k_ludvae_realplksr_dysample.pth
-(via spandrel, fp16 teacher) on data/anime_fullframes (4,372 dedup 1080p
-frames extracted from the source episodes; see scripts/extract_frames.py),
-50 epochs, batch 32, twin perceptual loss, v3 distillation loss + EMA.
-Training logs: runs/step2_srvgg_hfa_v1/train_log*.csv. Visual evidence:
-results/step2_visual_pair.png; 1-second video test:
-results/step2_video_test_pair.mp4. Deploy target: ONNX -> TensorRT fp16,
->= 25 fps at 1080p-class output (next task).
 
 ## Features
 
@@ -31,783 +10,220 @@ results/step2_video_test_pair.mp4. Deploy target: ONNX -> TensorRT fp16,
 - **Universal Data Module**: Configurable dataset handling with RealESRGAN-style degradation
 - **VRAM Optimized**: Runs on 8GB GPUs (RTX 4000 Mobile)
 - **Training Control System**: Early stopping, adaptive LR, auto-stage transitions
-- **Small Dataset Techniques (NEW)**: 10-phase approach for training with limited data (5000+ images)
+- **Small Dataset Techniques**: 10-phase approach for training with limited data (5000+ images)
   - Self-supervised pre-training, transfer learning, meta-learning
   - Advanced augmentation (Mixup, CutMix), progressive crop sizing
   - Feature distillation, test-time adaptation
   - Benchmarking and production export
 
-### Training Control System (NEW)
+## Installation
 
-Intelligent training automation with three-phase control:
+### Prerequisites
 
-- **Phase 1 - Early Stopping**: Automatically stops when loss converges/plateaus
-  - Patience-based detection (no improvement for N epochs)
-  - Divergence detection (loss increasing)
-  - Best checkpoint restoration
-  
-- **Phase 2 - Adaptive Learning Rate**: Dynamically adjusts LR on plateau
-  - WarmupCosinePlateau scheduler
-  - Automatic LR reduction when stuck
-  - LR history tracking and analysis
-  
-- **Phase 3 - Automated Stage Transition**: Auto-advance Stage 1 → Stage 2
-  - Convergence-based transition
-  - Checkpoint propagation
-  - Resume from interruptions
+- Python 3.12+
+- PyTorch 2.4+ with CUDA support
+- 8GB+ VRAM recommended
 
-```yaml
-training:
-  early_stopping:
-    enabled: true
-    patience: 15
-    min_epochs: 50
-  
-  adaptive_lr:
-    enabled: true
-    scheduler: "warmup_cosine_plateau"
-  
-  stage_automation:
-    enabled: true
-    auto_advance: true
-```
+### Install from source
 
-**CLI Tools:**
 ```bash
-# Check training status
-python scripts/manage_stages.py status
+# Clone the repository
+git clone <repository-url>
+cd upscale_anime
 
-# Visualize LR history
-python scripts/visualize_lr_history.py --log-dir logs
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Full automation (single command)
-python scripts/train.py --config configs/auto_stage_pipeline.yaml
+# Install in editable mode
+pip install -e .
+
+# Install with optional dependencies
+pip install -e ".[dev]"      # Development tools
+pip install -e ".[api]"      # API server dependencies
+pip install -e ".[gui]"      # GUI dependencies
+pip install -e ".[mamba]"    # Mamba model support
 ```
-
-### Stage 1: Advanced Knowledge Aggregation (NEW)
-
-Four aggregation architectures with **+0.5 to +1.2 dB PSNR improvement**:
-
-- **SimpleKnowledgeAggregation** (default): NaN-safe residual conv blocks
-- **AdaptiveTeacherAggregation**: Input-dependent teacher gating
-- **MultiScaleKnowledgeAggregation**: Multi-resolution feature fusion
-- **FeatureKnowledgeAggregation**: Feature-space aggregation (more efficient)
-
-**New Training Features:**
-- Warmup + Cosine annealing schedulers
-- Online Hard Example Mining (OHEM)
-- Gradient accumulation support
-- Combined multi-component loss (L1 + Wavelet + Gradient + Diversity)
-- Advanced monitoring (teacher disagreement, frequency analysis)
-
-**Anime-Specific Optimizations:**
-- Line-art preservation loss
-- Color consistency loss
-- Flat-region preservation loss
-- Anime-specific degradation models (blur, quantization, banding)
-- Temporal consistency for video training
 
 ## Quick Start
 
-### Installation
+### CLI
 
 ```bash
-# Clone repository
-cd upscale_anime
+# Train a model
+anime-sr train --config configs/train_config.yaml --tensorboard
 
-# Use existing virtual environment
-# (venv should be in project root)
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # Linux/Mac
+# Run inference
+anime-sr infer --input ./input_images --output ./output --model ./checkpoints/model_best.pt --scale 4
 
-# Install dependencies
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126 
-uv pip install -r requirements.txt
+# Export to ONNX
+anime-sr export --model ./checkpoints/model_best.pt --output ./exported/model.onnx --format onnx
+
+# Start API server
+anime-sr serve --model ./checkpoints/model_best.pt --host 0.0.0.0 --port 8000
+
+# Launch GUI
+anime-sr gui --model ./checkpoints/model_best.pt
+
+# Validate model
+anime-sr validate --model ./checkpoints/model_best.pt --data ./validation_data
+
+# Benchmark performance
+anime-sr benchmark --model ./checkpoints/model_best.pt --data ./test_data
 ```
 
-### Data Module
+### Python API
 
-The universal data module supports multiple dataset formats and automatic degradation.
-
-#### Quick Test with Dummy Data
-
-```bash
-# Create test data (10 gradient images, 256x256)
-python scripts/create_test_data.py --output data/test_hr --num-images 10
-
-# Quick training test (3 epochs)
-python scripts/train.py --config configs/example_quick_test.yaml
-```
-
-#### Using Your Own Images
-
-```bash
-# Organize your high-resolution images
-mkdir -p data/anime_hr
-# Copy your PNG/JPG images to data/anime_hr/
-
-# Update config to use your data
-python scripts/train.py --config configs/example_anime_only.yaml \
-    --data.datasets.0.hr_dir "data/anime_hr"
-```
-
-#### Processing Video Sources
-
-**Option 1: Automatic Video Processing (Recommended)**
-
-Place your anime videos in `data/anime_vid/` and the pipeline will automatically extract high-quality frames:
-
-```bash
-# Step 1: Place videos in the folder
-mkdir -p data/anime_vid
-cp your_anime_video.mp4 data/anime_vid/
-
-# Step 2: Pre-extract frames (default mode)
-python scripts/process_videos.py extract
-
-# Step 3: Train with extracted frames
-python scripts/train.py --config configs/model_a_ntire.yaml \
-    --data.video.enabled true
-
-# Custom extraction with lower quality threshold and no duplicate removal
-python scripts/process_videos.py extract --extract-every 30 --quality-threshold 0.4 --min-resolution "480" --no-remove-duplicates
-
-# Extract with quality threshold 0.5 for anime
-python scripts/process_videos.py extract --quality-threshold 0.5
-
-```
-
-**Video Extraction Modes:**
-
-```yaml
-# configs/base.yaml
-data:
-  video:
-    enabled: true
-    video_dir: "data/anime_vid"      # Video folder path
-    extract_mode: "pre"              # "pre" or "on_demand"
-    extract_every_n_frames: 30         # Extract 1 frame every N
-    quality_threshold: 0.7             # Quality filter (0-1)
-    remove_duplicates: true            # Remove similar frames
-    min_resolution: 720                # Skip low-res frames
-    output_dir: "data/anime_video_frames"  # For pre-extraction
-    cache_size_gb: 10                  # For on-demand mode
-```
-
-- **Pre-extraction mode** (`extract_mode: "pre"`): Extracts all frames before training starts. Faster training, more storage.
-- **On-demand mode** (`extract_mode: "on_demand"`): Extracts frames during training as needed. Slower training, less storage.
-
-**Option 2: Manual Video Processing**
-
-```bash
-# Extract with custom settings
-python scripts/process_videos.py extract \
-    --input data/anime_vid \
-    --output data/anime_video_frames \
-    --extract-every 30 \
-    --quality-threshold 0.6 \
-    --no-remove-duplicates
-    # --min-resolution 480
-    # --max-resolution 1080
-    # --remove-duplicates
-python scripts/process_videos.py extract --input data/anime_vid --output data/anime_video_frames --extract-every 60 --quality-threshold 0.5 --remove-duplicates
-# Check video info
-python scripts/process_videos.py info --input data/anime_vid
-
-# Preview extraction quality
-python scripts/process_videos.py preview --input video.mp4 --num-samples 5
-
-# Generate config snippet
-python scripts/process_videos.py config --mode on_demand
-
-
-
-
-```
-
-**Supported Formats:** mp4, avi, mkv, mov, webm
-
-**Legacy Script:**
-```bash
-# Alternative: Use prepare_data.py for I-frame extraction
-python scripts/prepare_data.py \
-    --input path/to/videos \
-    --output data/processed \
-    --mode full \
-    --quality-threshold 0.7
-```
-
-#### Data Module Features
-
-**Automatic Degradation (RealESRGAN-style):**
-```yaml
-data:
-  degradation:
-    enabled: true
-    blur_kernel_size: [7, 9, 11]
-    blur_sigma: [0.1, 3.0]
-    noise_sigma: [0, 25]
-    jpeg_quality: [60, 100]
-```
-
-**Multi-Dataset Support:**
-```yaml
-data:
-  datasets:
-    - name: "anime_bluray"
-      weight: 0.6
-      hr_dir: "data/anime_bluray"
-    - name: "anime_web"
-      weight: 0.4
-      hr_dir: "data/anime_web"
-```
-
-**Data Validation:**
 ```python
-from src.data import validate_dataset, get_dataset_info
+from anime_sr.inference.engine import InferenceEngine
 
-# Validate dataset
-result = validate_dataset('data/anime_hr', check_corruption=True)
-print(f"Valid: {result['valid']}, Images: {result['count']}")
+# Initialize engine
+engine = InferenceEngine(
+    model_path="./checkpoints/model_best.pt",
+    scale=4,
+    tile_size=512,
+)
 
-# Get dataset info
-info = get_dataset_info('data/anime_hr', scale=4)
-print(f"Total size: {info['total_size_gb']:.2f} GB")
-print(f"Estimated patches: {info['estimated_patches_128']}")
+# Upscale a single image
+engine.infer_image("input.png", "output.png")
+
+# Upscale a directory
+engine.infer_directory("./input_images", "./output")
 ```
 
-### Teacher Models (Stage 1)
-
-Stage 1 training uses knowledge distillation from teacher models: **EDSR**, **RCAN**, and **SwinIR**. These are automatically downloaded if not found.
-
-> **Note on Stage 1 Stability**: The Knowledge Aggregation Network can encounter NaN/Inf losses with certain configurations. See [Stage 1 NaN Troubleshooting](#stage-1-nan-troubleshooting) for solutions including:
-> - Using `SimpleKnowledgeAggregation` (NaN-free alternative)
-> - Single teacher mode
-> - Debug mode for tracing issues
-
-**Auto-Download (Recommended):**
-```bash
-# Download all teacher models for 4x upscaling
-python scripts/download_models.py --model all --scale 4
-
-# Or download individually
-python scripts/download_models.py --model edsr --scale 4
-python scripts/download_models.py --model rcan --scale 4
-python scripts/download_models.py --model swinir --scale 4
-
-# List available models
-python scripts/download_models.py --list
-```
-
-Models are saved to `pretrained/` directory:
-- `pretrained/EDSR_x4.pt` (16 residual blocks, 64 filters)
-- `pretrained/RCAN_x4.pt` (RCAN with channel attention)
-- `pretrained/SwinIR_x4.pt` (SwinIR-M with 48x48 patches)
-
-**During Training:**
-If `auto_download_teachers: true` is set in your config (default in `model_a_ntire.yaml`), models are automatically downloaded when starting Stage 1.
-
-**Manual Download:**
-If you prefer to manually manage models, disable auto-download in your config:
-```yaml
-training:
-  stage1:
-    auto_download_teachers: false
-```
-Then download models from:
-- EDSR: https://github.com/sanghyun-son/EDSR-PyTorch
-- RCAN: https://github.com/yulunzhang/RCAN
-- SwinIR: https://github.com/JingyunLiang/SwinIR
-
-### Training
+### API Server
 
 ```bash
-# Validate config (dry run)
-python scripts/train.py --config configs/model_a_ntire.yaml --dry-run
+# Start the server
+anime-sr serve --model ./checkpoints/model_best.pt --port 8000
 
-# Train Model A (NTIRE + MTKD + FAKD)
-python scripts/train.py --config configs/model_a_ntire.yaml --tensorboard
+# Or using Python
+from anime_sr.api.inference_api import create_app
+import uvicorn
 
-# Train with custom settings
-python scripts/train.py --config configs/model_a_ntire.yaml \
-    --batch-size 4 \
-    --epochs 100 \
-    --lr 0.0002
-
-# Resume from checkpoint
-python scripts/train.py --config configs/model_a_ntire.yaml \
-    --resume checkpoints/latest.pth
+app = create_app(model_path="./checkpoints/model_best.pt")
+uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
-### Training Control System
+## Configuration
 
-The training control system provides intelligent automation for multi-stage training:
+### Environment Variables
 
-#### Quick Start - Full Automation
-
-Run the complete pipeline with automatic stage transitions:
+Copy `.env.example` to `.env` and configure:
 
 ```bash
-# Use the automated pipeline config
-python scripts/train.py --config configs/auto_stage_pipeline.yaml
+cp .env.example .env
 ```
 
-This will:
-1. Train Stage 1 (Knowledge Aggregation) until convergence
-2. Automatically transition to Stage 2
-3. Train Stage 2 (Student Distillation) until convergence
-4. Save best checkpoints from both stages
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DSH_API_KEY` | - | API authentication key |
+| `DSH_MODEL_PATH` | `./checkpoints` | Path to model checkpoints |
+| `DSH_OUTPUT_PATH` | `./output` | Path for output files |
+| `DSH_LOG_LEVEL` | `INFO` | Logging level |
+| `DSH_CUDA_VISIBLE_DEVICES` | `0` | GPU device IDs |
+| `DSH_ALLOW_PICKLE_CHECKPOINT` | `false` | Allow pickle checkpoints (security) |
+| `DSH_MAX_FILE_SIZE_MB` | `50` | Max upload size in MB |
+| `DSH_RATE_LIMIT_PER_MIN` | `60` | API rate limit per minute |
 
-#### Early Stopping
+### Training Config
 
-Stop training automatically when loss plateaus:
+Training is configured via YAML files. See `configs/` for examples.
 
-```yaml
-training:
-  early_stopping:
-    enabled: true
-    monitor: "val_loss"      # Metric to monitor
-    mode: "min"             # "min" for loss, "max" for PSNR
-    patience: 15            # Epochs without improvement
-    min_delta: 0.0001       # Minimum change to count
-    divergence_patience: 5  # Stop if loss increases
-    restore_best_weights: true
-    min_epochs: 50          # Never stop before this
-```
+## Development
 
-**Example:** Stop after 15 epochs without 0.01% improvement:
-```yaml
-early_stopping:
-  enabled: true
-  patience: 15
-  min_delta: 0.0001
-  min_epochs: 50
-```
+### Setup
 
-#### Adaptive Learning Rate
-
-Automatically reduce LR when training plateaus:
-
-```yaml
-training:
-  adaptive_lr:
-    enabled: true
-    scheduler: "warmup_cosine_plateau"  # or "plateau"
-    plateau_config:
-      factor: 0.5         # Reduce LR by half
-      patience: 8         # Wait 8 epochs
-      threshold: 0.0001
-      cooldown: 3         # Wait 3 epochs after reduction
-      min_lr: 1e-8
-```
-
-**Visualize LR history:**
 ```bash
-python scripts/visualize_lr_history.py --log-dir logs --output-dir results
+pip install -e ".[dev]"
 ```
 
-#### Automated Stage Transition
+### Running Tests
 
-Automatically advance from Stage 1 to Stage 2:
-
-```yaml
-training:
-  stage_automation:
-    enabled: true
-    auto_advance: true
-    
-    stage1:
-      max_epochs: 100
-      advance_on_convergence: true
-      min_epochs_before_advance: 30
-      target_metric: "psnr"
-      target_threshold: 35.0
-      
-    stage2:
-      max_epochs: 200
-      min_epochs: 50
-```
-
-**Manage stages manually:**
 ```bash
-# Check current stage status
-python scripts/manage_stages.py status
+# Run all tests
+pytest
 
-# View stage progress
-python scripts/manage_stages.py status --checkpoint-dir checkpoints
+# Run with coverage
+pytest --cov=anime_sr --cov-report=html
 
-# Reset and start over
-python scripts/manage_stages.py reset --force
-
-# Check if can resume
-python scripts/manage_stages.py resume --config configs/my_config.yaml
+# Run specific test categories
+pytest -m "not slow"   # Skip slow tests
+pytest -m integration  # Run only integration tests
 ```
 
-#### Combining All Features
+### Code Quality
 
-For production training, enable all three phases:
+```bash
+# Format code
+black src/
 
-```yaml
-training:
-  mode: "auto_stage"  # Use orchestrator in auto mode
-  
-  early_stopping:
-    enabled: true
-    patience: 15
-    min_epochs: 50
-  
-  adaptive_lr:
-    enabled: true
-    scheduler: "warmup_cosine_plateau"
-  
-  stage_automation:
-    enabled: true
-    auto_advance: true
-    min_epochs_before_advance: 40
-```
+# Lint
+flake8 src/
 
-**Benefits:**
-- **20-40% time savings** from early stopping
-- **Better convergence** from adaptive LR
-- **Zero manual intervention** from auto-stage
-- **Automatic resume** from state persistence
-
-### Configuration
-
-All settings are controlled via YAML configs. Key Stage 1 options:
-
-```yaml
-training:
-  stage1:
-    enabled: true
-    epochs: 100
-    lr: 0.0001
-    batch_size: 64
-    num_blocks: 3              # Aggregation network depth (2-6)
-    embed_dim: 64            # Embedding dimension
-    use_simple_aggregation: false  # Use NaN-free version
-    debug_nan: true          # Enable debug output
-    
-    # Teacher configuration
-    teachers:
-      - name: "edsr"
-        enabled: true
-      - name: "rcan"
-        enabled: true
-      - name: "swinir"
-        enabled: true
-```
-
-Complete config example:
-
-```yaml
-# configs/model_a_ntire.yaml
-model:
-  name: "model_a_ntire"
-  type: "span"
-  scale: 4
-  channels: 26  # SPAN-Tiny
-
-training:
-  mode: "model_a"
-  batch_size: 8
-  mixed_precision: true
-  
-data:
-  datasets:
-    - name: "div2k"
-      weight: 0.5
-      enabled: true
-    - name: "anime_custom"
-      weight: 0.5
-      enabled: true
-      hr_dir: "data/anime_hr"
-```
-
-## Architecture Details
-
-### Model A: NTIRE + MTKD + FAKD
-
-**Stage 1**: Train Knowledge Aggregation network
-- Fuses outputs from 3 teachers (EDSR, RCAN, SwinIR)
-- Uses DCTSwin blocks with frequency-domain attention
-- Includes **SimpleKnowledgeAggregation** option for NaN-free training
-- Debug mode for tracing NaN sources through the network
-
-**Stage 2**: Train SPAN student
-- Wavelet-based distillation from aggregated teacher
-- Feature affinity distillation (FAKD) at multiple layers
-- ~250K parameters, 0.001-0.005s inference per 720p frame
-
-### Model B: Mamba-PAN
-
-- Hierarchical Mamba blocks with 4-direction scanning (H, V, RH, RV)
-- Linear complexity O(N) instead of O(N²)
-- Direction-aware wavelet and affinity losses
-- Cross-direction consistency loss
-
-### Progressive Ensemble
-
-```
-Train Model A ──┐
-                ├──► Ensemble ──► Tiny Student (~100K params)
-Train Model B ──┘
+# Type check
+mypy src/
 ```
 
 ## Project Structure
 
 ```
 upscale_anime/
-├── configs/                   # YAML configuration files
-│   ├── base.yaml             # Base configuration
-│   ├── auto_stage_pipeline.yaml   # Full automation config
-│   ├── pretrain_selfsupervised.yaml # Self-supervised pre-training
-│   ├── finetune_transfer.yaml       # Transfer learning
-│   └── example_early_stopping.yaml  # Early stopping example
 ├── src/
-│   ├── models/              # SPAN, Mamba-PAN architectures
-│   ├── data/                # Universal data module
-│   │   ├── augmentation.py  # Mixup, CutMix, augmentation pipeline
-│   │   └── ...
-│   ├── distillation/        # MTKD + FAKD implementations
-│   ├── training/            # Trainers
-│   │   ├── callbacks.py     # EarlyStopping, LRMonitor, StageMonitor callbacks
-│   │   ├── feature_distillation.py  # Feature-level distillation
-│   │   ├── convergence_monitor.py   # Convergence detection
-│   │   ├── lr_history.py    # LR tracking and analysis
-│   │   ├── stage_state.py   # Stage persistence
-│   │   ├── stage_controller.py     # Stage automation
-│   │   └── auto_stage_trainer.py   # Automated pipeline
-│   ├── losses/              # Loss functions
-│   └── utils/               # Config, metrics, pretrained model downloader
-├── scripts/                 # Training and inference scripts
-│   ├── train.py            # Main training script
-│   ├── run_full_pipeline.py # Complete pipeline orchestration (NEW)
-│   ├── validate_dataset.py  # Dataset validation (NEW)
-│   ├── train_meta.py        # Meta-learning (MAML) (NEW)
-│   ├── test_time_adapt.py   # Test-time adaptation (NEW)
-│   ├── benchmark_model.py   # Comprehensive benchmarking (NEW)
-│   ├── export_model.py      # Model export (ONNX, TorchScript) (NEW)
-│   ├── download_models.py  # Download teacher models
-│   ├── manage_stages.py    # Stage management CLI
-│   ├── visualize_lr_history.py   # LR visualization
-│   ├── evaluate.py         # Model evaluation
-│   ├── inference.py        # Run inference
-│   └── ...
-├── tests/                   # Unit tests
-│   ├── test_augmentation.py           # Augmentation tests (NEW)
-│   ├── test_feature_distillation.py   # Feature distillation tests (NEW)
-│   ├── test_new_callbacks.py          # Callback tests (NEW)
-│   └── ...
-├── checkpoints/            # Saved models
-├── pretrained/            # Teacher models (EDSR, RCAN, SwinIR)
-├── SMALL_DATASET_TECHNIQUES_GUIDE.md  # Full documentation (NEW)
-├── QUICK_REFERENCE.md                 # Command reference (NEW)
-└── VERIFICATION_COMPLETE.md           # Implementation verification (NEW)
+│   └── anime_sr/          # Main package
+│       ├── api/           # REST API server
+│       ├── data/          # Data loading and augmentation
+│       ├── distillation/  # MTKD and FAKD distillation
+│       ├── export/        # Model export (ONNX, etc.)
+│       ├── inference/     # Inference engine
+│       ├── losses/        # Loss functions
+│       ├── models/        # Model architectures (SPAN, Mamba-PAN)
+│       ├── training/      # Training loops and trainers
+│       └── utils/         # Utilities and helpers
+├── configs/               # Training configuration files
+├── scripts/               # Utility scripts and test scripts
+├── tests/                 # Test suite
+├── docs/                  # Documentation
+├── assets/                # Example images and assets
+│   └── examples/          # Example input/output images
+├── backups/               # Backup archives
+├── results/               # Benchmark and evaluation results
+├── checkpoints/           # Model checkpoints (gitignored)
+├── output/                # Output files (gitignored)
+└── data/                  # Training data (gitignored)
 ```
 
-## Hardware Requirements
+## Documentation
 
-| Configuration | VRAM | Training Time (est.) |
-|--------------|------|---------------------|
-| Model A (SPAN) | 6.5 GB | 8-12 hours |
-| Model B (Mamba) | 7.2 GB | 12-18 hours |
-| Ensemble | 6.0 GB | 2-4 hours |
-| **Small Dataset (All Phases)** | **8 GB** | **~1 week** |
+### Getting Started
 
-Tested on RTX 4000 Mobile (8GB).
+- [Documentation Index](docs/index.md) - Overview and navigation
+- [Python API Reference](docs/api.md) - Complete Python API documentation
+- [CLI Reference](docs/cli.md) - Command-line interface reference
+- [Development Setup](docs/development.md) - Setting up development environment
 
-**Small Dataset Training:**
-- Pre-training: 100 epochs (~1-2 days)
-- Fine-tuning: 200 epochs (~4-5 days)
-- Expected PSNR improvement: ~32 dB → ~36 dB
+### Core Concepts
 
-## Small Dataset Super-Resolution Techniques (NEW)
+- [Model Architectures](docs/models.md) - Detailed model descriptions
+- [Training Guide](docs/training.md) - Training procedures and best practices
+- [Deployment Guide](docs/deployment.md) - Production deployment
 
-Advanced techniques for training high-quality anime super-resolution models with limited data (5000+ images). These 10 phases significantly improve model accuracy on small datasets.
+### Additional Resources
 
-### Quick Start - Full Pipeline
-
-```bash
-# Run complete pipeline (validation → pre-train → fine-tune → benchmark → export)
-python scripts/run_full_pipeline.py --config pipeline_config.example.json
-```
-
-### 10 Phase Implementation
-
-| Phase | Technique | Expected Gain |
-|-------|-----------|---------------|
-| 1 | **Dataset Validation** | Remove duplicates, filter low-quality |
-| 2 | **Self-Supervised Pre-Training** | +1.5 dB PSNR |
-| 3 | **Transfer Learning** | +1.0 dB PSNR |
-| 4 | **Advanced Augmentation** | +0.5 dB PSNR |
-| 5 | **Meta-Learning (MAML)** | Fast adaptation |
-| 6 | **Test-Time Adaptation** | Per-image optimization |
-| 7 | **Feature Distillation** | +0.5 dB PSNR |
-| 8 | **SWA/EMA** | Better generalization |
-| 9 | **Benchmarking** | PSNR, SSIM, LPIPS, DISTS |
-| 10 | **Production Export** | ONNX, TorchScript, Quantized |
-
-### Phase 1: Dataset Validation
-
-```bash
-python scripts/validate_dataset.py --data-dir data/anime_hr --remove-duplicates
-```
-
-**Features:**
-- Perceptual hashing for duplicate detection
-- Blur detection (Laplacian variance)
-- Resolution validation
-- Compression artifact estimation
-
-### Phase 2-3: Self-Supervised Pre-Training + Transfer Learning
-
-```bash
-# Pre-train on unlabeled data
-python scripts/train.py --config configs/pretrain_selfsupervised.yaml
-
-# Fine-tune with transfer learning
-python scripts/train.py --config configs/finetune_transfer.yaml
-```
-
-**Key Features:**
-- Masked prediction for self-supervised learning
-- Progressive layer unfreezing
-- Progressive crop sizing (64→96→128→160)
-
-### Phase 4: Advanced Augmentation
-
-```yaml
-training:
-  augmentation:
-    enabled: true
-    mixup_prob: 0.3
-    cutmix_prob: 0.3
-  progressive_crop:
-    enabled: true
-    sizes: [64, 96, 128, 160]
-```
-
-### Phase 5: Meta-Learning (MAML)
-
-```bash
-python scripts/train_meta.py --data-dir data/anime_hr --epochs 100
-```
-
-### Phase 6: Test-Time Adaptation
-
-```bash
-python scripts/test_time_adapt.py \
-  --input test.png --output sr.png \
-  --checkpoint checkpoints/best.pth
-```
-
-### Phase 7: Feature Distillation
-
-```yaml
-training:
-  stage1:
-    feature_distillation:
-      enabled: true
-      layers: [2, 4, 6, 8]
-      weight: 0.1
-```
-
-### Phase 9-10: Benchmark & Export
-
-```bash
-# Benchmark
-python scripts/benchmark_model.py \
-  --checkpoint checkpoints/best.pth \
-  --lr-dir data/test_lr --hr-dir data/test_hr
-
-# Export for production
-python scripts/export_model.py \
-  --checkpoint checkpoints/best.pth \
-  --output-dir production_models
-```
-
-### Expected Results
-
-| Metric | Baseline | With All Techniques |
-|--------|----------|---------------------|
-| PSNR | ~32 dB | ~36 dB |
-| SSIM | ~0.88 | ~0.94 |
-| LPIPS | ~0.08 | ~0.04 |
-| Training Time | 3 days | 1 week |
-
-**Documentation:**
-- Full guide: `SMALL_DATASET_TECHNIQUES_GUIDE.md`
-- Quick reference: `QUICK_REFERENCE.md`
-- Verification: `VERIFICATION_COMPLETE.md`
-
----
-
-## Stage 1 NaN Troubleshooting
-
-The Knowledge Aggregation Network may produce NaN/Inf losses due to:
-- Small batch sizes (BatchNorm instability)
-- Multiple teacher output concatenation (144 input channels)
-- Deep residual networks with unnormalized activations
-
-### Solutions
-
-**Option 1: Use SimpleKnowledgeAggregation (Recommended)**
-```yaml
-training:
-  stage1:
-    enabled: true
-    use_simple_aggregation: true  # NaN-free simple conv blocks
-    num_blocks: 3
-    embed_dim: 64
-```
-
-**Option 2: Single Teacher Mode**
-```bash
-python scripts/train.py --config configs/model_a_ntire.yaml \
-    --training.stage1.teachers.0.enabled true \
-    --training.stage1.teachers.1.enabled false \
-    --training.stage1.teachers.2.enabled false
-```
-
-**Option 3: Skip Stage 1 (Train Stage 2 Directly)**
-```yaml
-training:
-  stage1:
-    enabled: false
-  stage2:
-    use_stage1_checkpoint: false
-```
-
-**Option 4: Debug Mode**
-Enable detailed NaN tracing:
-```yaml
-training:
-  stage1:
-    debug_nan: true  # Shows layer-by-layer NaN source
-```
-
-## Training Modes
-
-- `model_a`: Train SPAN with MTKD+FAKD
-- `model_b`: Train Mamba-PAN (requires mamba-ssm)
-- `both_parallel`: Alternate batches between models
-- `both_sequential`: Train A then B
-- `ensemble`: Train from frozen A+B
-- `full`: Complete pipeline (A → B → Ensemble)
-- `auto_stage`: Automated multi-stage with early stopping + adaptive LR + stage transitions
+- [Architecture](docs/architecture.md) - System architecture
+- [Configuration](docs/configuration.md) - Configuration system
+- [User Guide](docs/USER_GUIDE.md) - End-user guide
+- [Public API](docs/PUBLIC_API.md) - REST API documentation
+- [Model Architectures](docs/model_architectures.md) - Model details
+- [Quick Reference](docs/QUICK_REFERENCE.md) - Quick reference
+- [Troubleshooting](docs/troubleshooting.md) - Troubleshooting guide
 
 ## License
 
-MIT License
+MIT License - see LICENSE file for details.
 
-## Citation
+## Acknowledgments
 
-If you use this code, please cite:
-
-```bibtex
-@misc{anime_sr_ensemble,
-  title={Anime Super-Resolution with Progressive Ensemble Distillation},
-  year={2026}
-}
-```
+- SPAN: [NTIRE 2024 Challenge](https://github.com/SHI-Labs/SPAN)
+- Mamba-PAN: State Space Model for super-resolution
+- RealESRGAN: Degradation pipeline

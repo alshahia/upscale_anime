@@ -13,9 +13,9 @@ from tqdm import tqdm
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from models.span import create_span_model, create_neosr_span
-from utils.config import Config
-from inference.tta import tta_forward as _tta_forward
+from anime_sr.models.span import create_span_model, create_neosr_span
+from anime_sr.utils.config import Config
+from anime_sr.inference.tta import tta_forward as _tta_forward
 
 
 def load_model(checkpoint_path: str, config_path: str = None, device: str = 'cuda', model_type: str = 'span'):
@@ -50,7 +50,7 @@ def load_model(checkpoint_path: str, config_path: str = None, device: str = 'cud
         model_type = model.__class__.__name__
         if 'CheckpointCompatible' in model_type or 'Exact' in model_type:
             # Use specialized loader for checkpoint-compatible models
-            from models.span.checkpoint_compatible_exact import load_checkpoint_compatible_weights_exact
+            from anime_sr.models.span.checkpoint_compatible_exact import load_checkpoint_compatible_weights_exact
             success, loading_info = load_checkpoint_compatible_weights_exact(
                 model, checkpoint_path, device=device, verbose=True
             )
@@ -62,7 +62,7 @@ def load_model(checkpoint_path: str, config_path: str = None, device: str = 'cud
         model.load_state_dict(checkpoint['state_dict'])
     elif 'params' in checkpoint:
         # Use specialized loader for checkpoint-compatible models
-        from models.span.checkpoint_compatible_exact import load_checkpoint_compatible_weights_exact
+        from anime_sr.models.span.checkpoint_compatible_exact import load_checkpoint_compatible_weights_exact
         success, loading_info = load_checkpoint_compatible_weights_exact(
             model, checkpoint_path, device=device, verbose=True
         )
@@ -253,7 +253,7 @@ def main():
                         sr_for_metrics, size=gt.shape[2:], mode='bicubic', align_corners=False
                     )
                 
-                from utils.metrics import calculate_psnr, calculate_ssim, calculate_lpips
+                from anime_sr.utils.metrics import calculate_psnr, calculate_ssim, calculate_lpips
                 
                 psnr = calculate_psnr(sr_for_metrics, gt)
                 ssim = calculate_ssim(sr_for_metrics, gt)
@@ -270,7 +270,7 @@ def main():
                         pass
                     
                     try:
-                        from utils.metrics import calculate_niqe, calculate_maniqa, calculate_clipiqa
+                        from anime_sr.utils.metrics import calculate_niqe, calculate_maniqa, calculate_clipiqa
                         niqe = calculate_niqe(sr)
                         maniqa = calculate_maniqa(sr)
                         clipiqa = calculate_clipiqa(sr)

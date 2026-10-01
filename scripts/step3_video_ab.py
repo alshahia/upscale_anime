@@ -29,7 +29,6 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
 
 import av  # noqa: E402
 import imageio  # noqa: E402
@@ -38,7 +37,7 @@ import onnxruntime as ort  # noqa: E402
 import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402
 
-from anime_upscaler_gui.archs import build  # noqa: E402
+from apps.anime_upscaler_gui.anime_upscaler_gui.arch_registry import build  # noqa: E402
 
 torch.cuda.set_per_process_memory_fraction(0.9)
 torch.backends.cudnn.benchmark = True

@@ -10,11 +10,11 @@ from pathlib import Path
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from utils.error_handler import (
+from anime_sr.utils.error_handler import (
     ErrorHandler, ErrorSeverity, SuperResolutionError, 
     ModelLoadError, handle_errors, log_performance
 )
-from utils.logging_config import setup_logging, get_logger, log_system_info
+from anime_sr.utils.logging_config import setup_logging, get_logger, log_system_info
 
 
 def test_basic_error_handling():
@@ -103,7 +103,7 @@ def test_error_context():
     print("\n🧪 Testing Error Context")
     print("=" * 40)
     
-    from utils.error_handler import ErrorContext, MemoryContext
+    from anime_sr.utils.error_handler import ErrorContext, MemoryContext
     
     # Test error context
     try:

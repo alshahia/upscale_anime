@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Video processing script for anime super-resolution training
 Extracts high-quality frames from videos with filtering and deduplication
@@ -8,16 +8,16 @@ import argparse
 from pathlib import Path
 import json
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+# Package installed via pip install -e . - no sys.path needed
 
 try:
-    from data.video_extraction import (
+    from anime_sr.data.video_extraction import (
         extract_from_folder,
         get_video_info,
         preview_extraction
     )
 except ImportError:
-    from src.data.video_extraction import (
+    from anime_sr.data.video_extraction import (
         extract_from_folder,
         get_video_info,
         preview_extraction

@@ -18,7 +18,7 @@ from tqdm import tqdm
 from PIL import Image
 import torch
 
-from data.base import BaseDataset, DatasetFactory
+from anime_sr.data.base import BaseDataset, DatasetFactory
 
 
 def load_config(config_path: str) -> dict:

@@ -1,0 +1,291 @@
+# ============================================================
+# Anime Super-Resolution — Default Configuration
+# ============================================================
+# Canonical default config for the unified config system (WP-5).
+# All other configs inherit from this file via the 'base' key:
+#
+#   base: ../default.yaml        # from configs/training/*.yaml
+#   base: ../default.yaml        # from configs/inference/*.yaml
+#
+# Precedence (lowest -> highest):
+#   1. defaults below
+#   2. base config inheritance ('base' key)
+#   3. environment variables (DSH_* prefix, see docs/configuration.md)
+#   4. CLI arguments
+# ============================================================
+
+# ------------------------------------------------------------
+# Model settings
+# ------------------------------------------------------------
+model:
+  name: "span"                  # Model identifier (span, mamba_pan, tiny_student, ...)
+  type: "span"                  # Architecture type used by the model factory
+  scale: 4                      # Upsampling factor. Valid: 2, 3, 4
+  num_features: 32              # Base feature channels (a.k.a. channels)
+  num_blocks: 12                # Number of residual/SPAB blocks
+  in_channels: 3                # Input channels (3 = RGB)
+  out_channels: 3               # Output channels (3 = RGB)
+
+  # Checkpoint / weights
+  path: "checkpoints/model_a_best.pth"   # Overridden by env DSH_MODEL_PATH
+  pretrained_path: null         # Warm-start weights (null = train from scratch)
+  strict_load: true             # Enforce exact state_dict key match
+
+  # Optional architecture extras
+  use_lora: false               # Enable ConvLoRA adapters
+  lora_rank: 4                  # LoRA rank (typical 4-8)
+  lora_alpha: 1.0               # LoRA scaling factor
+
+# ------------------------------------------------------------
+# Training settings
+# ------------------------------------------------------------
+training:
+  mode: "model_a"               # model_a | model_b | both_parallel | both_sequential | ensemble | full | finetune
+  device: "cuda"                # cuda | cpu | auto
+  seed: 42
+
+  # Optimization
+  optimizer: "adam"             # adam | adamw | sgd
+  learning_rate: 0.0001         # Alias: lr
+  lr: 0.0001
+  weight_decay: 0.0
+  betas: [0.9, 0.99]            # Adam betas
+  eps: 1.0e-8                   # Optimizer epsilon
+
+  # Scheduler
+  scheduler: "cosine"           # step | multistep | cosine | constant | plateau
+  step_size: 200000             # Step scheduler: iters between decays
+  gamma: 0.5                    # Step scheduler: LR decay factor
+  milestones: [100, 200, 300]   # Multistep scheduler epoch milestones
+  T_max: 1000                   # Cosine scheduler: total epochs
+  warmup_epochs: 0              # Linear warmup epochs (0 = disabled)
+  min_lr: 1.0e-8                # Floor for cosine/plateau schedulers
+
+  # Training loop
+  epochs: 1000
+  batch_size: 8                 # Per-GPU batch size
+  accumulation_steps: 1         # Gradient accumulation steps
+  mixed_precision: true          # Automatic mixed precision (AMP)
+  gradient_checkpointing: false # Trade VRAM for speed
+  clip_grad_norm: null          # Max grad norm (null = no clipping)
+
+  # Validation / checkpointing cadence
+  val_interval: 5               # Validate every N epochs
+  save_interval: 5              # Save checkpoint every N epochs
+  log_interval: 100             # Log every N iterations
+
+  # EMA (exponential moving average of weights)
+  use_ema: true
+  ema_decay: 0.999
+
+  # Early stopping
+  early_stopping:
+    enabled: true
+    monitor: "val_loss"         # val_loss | train_loss | psnr
+    mode: "min"                 # min | max
+    patience: 15
+    min_delta: 1.0e-4
+    restore_best_weights: true
+    min_epochs: 50
+
+  # Two-stage distillation (Stage 1: knowledge aggregation, Stage 2: student)
+  stage1:
+    enabled: false
+    epochs: 100
+    lr: 0.0002
+    batch_size: 32
+    aggregation_type: "simple"  # simple | adaptive | multiscale
+    num_blocks: 6
+    embed_dim: 96
+    optimizer: "adamw"
+    scheduler: "cosine"
+    warmup_epochs: 10
+    min_lr: 1.0e-7
+    freeze_teachers: true
+    auto_download_teachers: true
+    teachers: []                # List of {name, path, weight}
+  stage2:
+    enabled: false
+    epochs: 200
+    lr: 0.0001
+    batch_size: 8
+    scheduler: "cosine"
+    warmup_epochs: 0
+    min_lr: 1.0e-7
+    use_stage1_checkpoint: false
+    stage1_checkpoint: null
+
+# ------------------------------------------------------------
+# Data settings
+# ------------------------------------------------------------
+data:
+  # Dataset list (multiple datasets are mixed by weight)
+  datasets:
+    - name: "div2k"
+      weight: 1.0
+      enabled: true
+      hr_dir: "data/DIV2K_train_HR"
+      lr_dir: null              # null = generate LR via degradation
+      preload: false
+      max_images: null          # Limit dataset size (null = no limit)
+
+  # Patch / augmentation
+  crop_size: 128               # Training patch size (HR space)
+  scale: 4                      # Must match model.scale
+  augment: true                 # Random hflip / vflip / rot90
+  crop_size_mode: "manual"      # manual | auto
+  auto_crop_min: 64
+  auto_crop_max: 960
+
+  # Degradation (LR synthesis)
+  degradation:
+    enabled: true
+    mode: "medium"              # auto | light | medium | heavy | anime | disabled
+    blur_prob: 0.7
+    blur_sigma: [0.1, 2.5]
+    noise_prob: 0.5
+    noise_sigma: [0, 25]
+    jpeg_prob: 0.5
+    jpeg_quality: [70, 80, 90, 95, 100]
+    compression_prob: 0.5
+    second_order_prob: 0.3
+
+  # Dataloader
+  num_workers: 8                # null = auto-tune
+  pin_memory: true
+  prefetch_factor: 4
+  persistent_workers: true
+  auto_tune_workers: true
+
+  # Validation
+  val_split: 0.1                # Used when no val dataset is configured
+  val_crop_size: 256
+
+  # Sampling control
+  sample_ratio: null            # Global ratio 0.0-1.0 (null = all)
+  max_images_total: null        # Hard cap across datasets (null = no cap)
+
+# ------------------------------------------------------------
+# Inference settings
+# ------------------------------------------------------------
+inference:
+  device: "cuda"                # cuda | cpu | auto
+  tile_size: 0                  # Split large images into tiles (0 = no tiling)
+  tile_overlap: 16              # Overlap between tiles (pixels, LR space)
+  tta: false                    # Test-time augmentation (8x D4 flip/rot ensemble)
+  tta_mode: "d4"                # d4 (8 transforms)
+  use_amp: true                 # Mixed precision for inference
+  batch_size: 1                 # Images per inference batch
+  num_workers: 4                # Async loading workers
+  output_format: "png"          # png | jpg | webp
+  output_quality: 95            # For jpg/webp (1-100)
+  color_mode: "rgb"             # rgb | ycbcr
+  save_intermediate: false      # Save pre/post-processing intermediates
+
+# ------------------------------------------------------------
+# Logging settings
+# ------------------------------------------------------------
+logging:
+  level: "INFO"                 # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  output: "logs"                # Directory for log files (null = console only)
+  file: "anime_sr.log"          # Log file name inside output dir
+  max_bytes: 10485760           # 10 MB per rotating log file
+  backup_count: 5               # Rotating file backups to keep
+  use_tensorboard: true
+  tensorboard_dir: "runs"
+  log_gpu_stats: false          # Periodic GPU utilization/VRAM logging
+  log_system_stats: false       # Periodic CPU/RAM/disk logging
+
+# ------------------------------------------------------------
+# Loss settings
+# ------------------------------------------------------------
+loss:
+  pixel_loss:
+    type: "l1"                  # l1 | l2 | charbonnier
+    weight: 1.0
+    eps: 1.0e-6                 # Charbonnier epsilon
+  perceptual_loss:
+    enabled: false
+    type: "vgg"                 # vgg | resnet | dists | dual
+    layers: ["relu3_3"]
+    weights: [1.0]
+    weight: 0.1
+  adversarial_loss:
+    enabled: false
+    type: "vanilla"             # vanilla | relativistic | hinge
+    weight: 0.1
+  distillation:
+    enabled: false
+    mtkd_weight: 1.0            # Wavelet-based distillation
+    fakd_weight: 0.5            # Feature affinity distillation
+    fakd_layers: [2, 4, 6, 8]
+    fakd_layer_weights: [0.1, 0.2, 0.3, 0.4]
+
+# ------------------------------------------------------------
+# Ensemble settings
+# ------------------------------------------------------------
+ensemble:
+  weights: [0.6, 0.4]           # Per-model weights (must sum to 1.0)
+  learnable_weights: false
+  model_a_checkpoint: "checkpoints/model_a_best.pth"
+  model_b_checkpoint: "checkpoints/model_b_best.pth"
+
+# ------------------------------------------------------------
+# Checkpoint settings
+# ------------------------------------------------------------
+checkpoint:
+  save_dir: "checkpoints"
+  keep_last_n: 5
+  keep_best: true
+  save_optimizer: true
+  save_scaler: true
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+paths:
+  data_root: "data"
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  result_dir: "results"
+  pretrained_dir: "pretrained"
+  output: "output"              # Overridden by env DSH_OUTPUT_PATH
+
+# ------------------------------------------------------------
+# Output settings
+# ------------------------------------------------------------
+output:
+  path: "output"                # Overridden by env DSH_OUTPUT_PATH
+  run_name: null                # null = auto (timestamp_model_suffix)
+  duplicate_handling: "auto_increment"  # auto_increment | ask
+
+# ------------------------------------------------------------
+# Security settings
+# ------------------------------------------------------------
+security:
+  allow_pickle_checkpoint: false  # Overridden by env DSH_ALLOW_PICKLE_CHECKPOINT
+  verify_checksums: false
+
+# ------------------------------------------------------------
+# System settings
+# ------------------------------------------------------------
+system:
+  cudnn_benchmark: true
+  cudnn_deterministic: false
+  cuda_visible_devices: null    # Overridden by env DSH_CUDA_VISIBLE_DEVICES
+  deterministic: false          # Full reproducibility (slow)
+  warn_fallback: true           # Warn when optional deps are missing
+
+# ------------------------------------------------------------
+# API settings (used by the inference API server)
+# ------------------------------------------------------------
+api:
+  host: "0.0.0.0"
+  port: 8000
+  api_key: null                 # Overridden by env DSH_API_KEY (null = dev mode, no auth)
+  allowed_origins: ["http://localhost:3000", "http://localhost:8000"]
+  max_file_size_mb: 50          # Overridden by env DSH_MAX_FILE_SIZE_MB
+  rate_limit_per_min: 60        # Overridden by env DSH_RATE_LIMIT_PER_MIN
+  workers: 1                    # Uvicorn worker processes
+  timeout_keep_alive: 5

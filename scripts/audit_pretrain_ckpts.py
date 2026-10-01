@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore")
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from models.span import create_neosr_span  # noqa: E402
+from anime_sr.models.span import create_neosr_span  # noqa: E402
 
 
 TAINT_BIAS_MIN = 0.35

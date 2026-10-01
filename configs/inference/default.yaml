@@ -1,0 +1,45 @@
+# ============================================================
+# Default inference configuration
+# ============================================================
+# Inherits everything from configs/default.yaml, overrides below.
+# Used by scripts/inference.py and the inference API server.
+# Usage:
+#   python scripts/inference.py --config configs/inference/default.yaml \
+#       --checkpoint checkpoints/model_a_best.pth --input data/lr/ --output results/
+# ============================================================
+
+base: ../default.yaml
+
+model:
+  name: "span"
+  type: "span"
+  scale: 4
+  num_features: 26
+  num_blocks: 12
+  path: "checkpoints/model_a_best.pth"   # Overridden by env DSH_MODEL_PATH
+  strict_load: true
+
+inference:
+  device: "auto"                # auto | cuda | cpu
+  tile_size: 512                # Tile large images (LR-space side length, 0 = no tiling)
+  tile_overlap: 32              # Overlap between tiles (LR-space pixels)
+  tta: false                    # 8x D4 flip/rot ensemble (8x slower, better quality)
+  tta_mode: "d4"
+  use_amp: true
+  batch_size: 1
+  num_workers: 4
+  output_format: "png"          # png | jpg | webp
+  output_quality: 95
+  color_mode: "rgb"
+  save_intermediate: false
+
+logging:
+  level: "INFO"
+  output: "logs"
+  file: "inference.log"
+  use_tensorboard: false
+
+data:
+  scale: 4                      # Must match model.scale
+  degradation:
+    enabled: false              # Never degrade at inference time

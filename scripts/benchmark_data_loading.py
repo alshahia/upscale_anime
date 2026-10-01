@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 import os
 os.environ['TQDM_DISABLE'] = '1'
 
-from data.dataloader import DataLoaderFactory
-from utils.config import Config
+from anime_sr.data.dataloader import DataLoaderFactory
+from anime_sr.utils.config import Config
 
 
 def benchmark_data_loading(config_path, duration_seconds=60, batch_limit=None):

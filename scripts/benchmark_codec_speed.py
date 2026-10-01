@@ -32,7 +32,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
-from data.compression_modules import (
+from anime_sr.data.compression_modules import (
     JPEGCompression, WebPCompression, AVIFCompression,
     PyAVVideoCompression,
 )

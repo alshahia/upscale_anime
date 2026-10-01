@@ -1,4 +1,4 @@
-﻿"""
+"""
 End-to-end verification script for training fixes.
 Validates all 6 critical issues are resolved.
 """
@@ -29,7 +29,7 @@ def test_teacher_architectures():
     """Test that teacher models work correctly"""
     print_header("Testing Teacher Model Architectures")
 
-    from src.models.teachers import create_edsr, create_rcan, create_swinir
+    from anime_sr.models.teachers import create_edsr, create_rcan, create_swinir
 
     device = 'cpu'
     scale = 4
@@ -77,7 +77,7 @@ def test_psnr_stability():
     """Test PSNR numerical stability"""
     print_header("Testing PSNR Numerical Stability")
 
-    from src.utils.metrics import calculate_psnr
+    from anime_sr.utils.metrics import calculate_psnr
 
     # Test with identical images
     img1 = torch.rand(1, 3, 64, 64)
@@ -94,7 +94,7 @@ def test_parallel_training_structure():
     """Test parallel training structure"""
     print_header("Testing Parallel Training Structure")
 
-    from src.training.orchestrator import TrainingOrchestrator
+    from anime_sr.training.orchestrator import TrainingOrchestrator
     import inspect
 
     src = inspect.getsource(TrainingOrchestrator._train_both_parallel)
@@ -119,7 +119,7 @@ def test_loss_computation():
     print_header("Testing Loss Computation Consistency")
 
     import inspect
-    from src.training import model_b_trainer
+    from anime_sr.training import model_b_trainer
 
     src = inspect.getsource(model_b_trainer.ModelBTrainer.train_stage2_epoch)
 
@@ -137,7 +137,7 @@ def test_teacher_loader():
     """Test teacher loader auto-detection"""
     print_header("Testing Teacher Loader Auto-Detection")
 
-    from src.models.teachers.teacher_loader import auto_detect_architecture
+    from anime_sr.models.teachers.teacher_loader import auto_detect_architecture
 
     # Test EDSR detection - needs 'body' in keys with conv layers
     # Real EDSR has many residual blocks with conv layers

@@ -35,7 +35,7 @@ def test_model_creation_from_config():
         print(f"[OK] Config loaded: {config_path}")
         
         # Create model using factory
-        from models.span import create_span_model
+        from anime_sr.models.span import create_span_model
         model = create_span_model(config['model'])
         
         print(f"[OK] Model created via factory")
@@ -55,7 +55,7 @@ def test_checkpoint_loading(model):
     print("="*60)
     
     try:
-        from utils.checkpoint_loader import load_checkpoint_compatible_span
+        from anime_sr.utils.checkpoint_loader import load_checkpoint_compatible_span
         
         checkpoint_path = "checkpoints/span/spanx4_ch48.pth"
         success, loading_info = load_checkpoint_compatible_span(

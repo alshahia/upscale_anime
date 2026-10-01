@@ -13,17 +13,14 @@ import argparse
 import sys
 from pathlib import Path
 
-# Make anime_upscaler/ importable. Same PYTHONPATH rule as distill.py.
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "anime_upscaler"))
-sys.path.insert(0, str(REPO_ROOT / "apps" / "anime_upscaler_gui"))
 
-import torch  # noqa: E402  (after sys.path mutation)
+import torch  # noqa: E402
 from PIL import Image  # noqa: E402
 import numpy as np  # noqa: E402
 
-# Import distill.py as a library (no main() invocation).
-import distill as _distill  # noqa: E402
+# Import distill as a library (no main() invocation).
+from anime_sr.training.distillation import distill as _distill  # noqa: E402
 
 
 def _save_sample(sr_tensor, out_path):

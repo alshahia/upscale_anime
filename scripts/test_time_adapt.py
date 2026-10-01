@@ -15,8 +15,8 @@ from tqdm import tqdm
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.span import create_span_model
-from utils.image_utils import tensor_to_image, image_to_tensor
+from anime_sr.models.span import create_span_model
+from anime_sr.utils.image_utils import tensor_to_image, image_to_tensor
 
 
 class TestTimeAdapter:

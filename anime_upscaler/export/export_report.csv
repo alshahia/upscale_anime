@@ -1,5 +1,0 @@
-variant,params,size_mb,latency_ms_per_frame_270x480
-pytorch-fp32-gpu,315844,1.28,30.76
-ort-cuda-fp32,-,1.28,32.39
-ort-cuda-fp16,-,0.65,20.98
-ort-cpu-int8,-,0.42,3332.47

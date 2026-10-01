@@ -24,7 +24,7 @@ def analyze_naming_mismatch():
     checkpoint_params = checkpoint['params']
     
     # Create model
-    from models.span import CheckpointCompatibleSPAN
+    from anime_sr.models.span import CheckpointCompatibleSPAN
     model = CheckpointCompatibleSPAN()
     model_params = model.state_dict()
     

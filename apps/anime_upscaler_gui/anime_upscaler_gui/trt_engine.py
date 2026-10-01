@@ -28,7 +28,7 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
-from .archs import capabilities as _arch_caps
+from .arch_registry import capabilities as _arch_caps
 
 log = logging.getLogger(__name__)
 

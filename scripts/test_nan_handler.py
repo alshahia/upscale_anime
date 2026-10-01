@@ -20,7 +20,7 @@ def test_nan_handler():
     optimizer = torch.optim.Adam(model.parameters())
     
     # Create NaN handler
-    from utils.nan_handler import NaNHandler
+    from anime_sr.utils.nan_handler import NaNHandler
     nan_handler = NaNHandler(verbose=False)
     
     # Test normal tensor

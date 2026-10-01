@@ -1,0 +1,57 @@
+# ============================================================
+# Ensemble training: distill Model A + Model B into a Tiny Student
+# ============================================================
+# Teachers are frozen; only the student trains. Fast convergence.
+# Usage:
+#   python scripts/train.py --config configs/training/ensemble.yaml
+# ============================================================
+
+base: ../default.yaml
+
+model:
+  name: "tiny_student"
+  type: "tiny_student"
+  scale: 4
+  num_features: 16             # Minimal channels
+  num_blocks: 3                # Minimal blocks (~100K params)
+  path: "checkpoints/tiny_student_best.pth"
+
+training:
+  mode: "ensemble"
+  epochs: 100
+  batch_size: 16               # Larger batch OK (teachers frozen)
+  lr: 0.0002
+  optimizer: "adam"
+  scheduler: "cosine"
+  T_max: 100
+  warmup_epochs: 5
+  min_lr: 1.0e-7
+  mixed_precision: true
+  use_ema: true
+  ema_decay: 0.999
+  val_interval: 5
+  save_interval: 20
+
+ensemble:
+  model_a_checkpoint: "checkpoints/model_a_best.pth"
+  model_b_checkpoint: "checkpoints/model_b_best.pth"
+  weights: [0.6, 0.4]          # w_a, w_b
+  learnable_weights: false
+
+data:
+  batch_size: 16
+  crop_size: 128
+  num_workers: 8
+  datasets:
+    - {name: "anime_train", weight: 1.0, enabled: true, hr_dir: "data/anime_hr"}
+  degradation:
+    enabled: true
+    mode: "medium"
+
+loss:
+  pixel_loss: {type: "l1", weight: 1.0}
+  distillation:
+    enabled: true
+    fakd_enabled: true
+    fakd_weight: 0.5
+    fakd_layers: [1, 2, 3]

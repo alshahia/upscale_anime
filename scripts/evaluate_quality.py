@@ -21,7 +21,7 @@ from tqdm import tqdm
 from typing import List, Dict, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils.metrics import (
+from anime_sr.utils.metrics import (
     calculate_niqe,
     calculate_maniqa,
     calculate_clipiqa,

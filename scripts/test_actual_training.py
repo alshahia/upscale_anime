@@ -49,14 +49,14 @@ def test_checkpoint_compatible_training():
         print("[OK] Config loaded successfully")
         
         # Create model
-        from models.span import create_span_model
+        from anime_sr.models.span import create_span_model
         model = create_span_model(config['model'])
         
         print(f"[OK] Model created: {type(model).__name__}")
         print(f"   Parameters: {sum(p.numel() for p in model.parameters()):,}")
         
         # Load checkpoint
-        from utils.checkpoint_loader import load_checkpoint_compatible_span
+        from anime_sr.utils.checkpoint_loader import load_checkpoint_compatible_span
         checkpoint_path = config['training']['pretrained_checkpoint']
         
         if Path(checkpoint_path).exists():
@@ -82,7 +82,7 @@ def test_checkpoint_compatible_training():
         print(f"[OK] Optimizer created: AdamW (lr={lr}, weight_decay={weight_decay})")
         
         # Create loss with stability
-        from utils.loss_stability import LossStabilizer, EnhancedLoss
+        from anime_sr.utils.loss_stability import LossStabilizer, EnhancedLoss
         stabilizer = LossStabilizer(verbose=False)
         
         pixel_loss = EnhancedLoss(
@@ -95,14 +95,14 @@ def test_checkpoint_compatible_training():
         print("[OK] Loss with stability created")
         
         # Setup NaN handler
-        from utils.nan_handler import NaNHandler, TrainingNaNMonitor
+        from anime_sr.utils.nan_handler import NaNHandler, TrainingNaNMonitor
         nan_handler = NaNHandler(enabled=True, verbose=False)
         training_monitor = TrainingNaNMonitor(model, optimizer, nan_handler)
         
         print("[OK] NaN handler and monitor created")
         
         # Setup training monitor
-        from utils.training_monitor import TrainingMonitor
+        from anime_sr.utils.training_monitor import TrainingMonitor
         train_monitor = TrainingMonitor(verbose=False)
         
         print("[OK] Training monitor created")
@@ -248,7 +248,7 @@ def test_stable_configuration_training():
         print("[OK] Stable config loaded successfully")
         
         # Create model
-        from models.span import create_span_model
+        from anime_sr.models.span import create_span_model
         model = create_span_model(config['model'])
         
         print(f"[OK] Model created: {type(model).__name__}")

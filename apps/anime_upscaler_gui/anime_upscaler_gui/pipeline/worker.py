@@ -32,7 +32,7 @@ import cv2
 import torch
 import torch.nn.functional as F
 
-from ..archs import build
+from ..arch_registry import build
 from ..archs import capabilities as _arch_caps
 from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
                         load_image_rgb, save_image_rgb)
@@ -386,7 +386,7 @@ class PipelineWorker(threading.Thread):
                 y = x
                 for _ in range(n_cascade):
                     if use_tta:
-                        y, _n_aug, _names = _tta_forward(backend.model, y)
+                        y = _tta_forward(backend.model, y)
                     else:
                         y = backend(y)
             if device.type == "cuda":
@@ -613,7 +613,7 @@ class PipelineWorker(threading.Thread):
                         y = x
                         for _ in range(n_cascade):
                             if use_tta:
-                                y, _n_aug, _names = _tta_forward(backend.model, y)
+                                y = _tta_forward(backend.model, y)
                             else:
                                 y = backend(y)
                     if device.type == "cuda":

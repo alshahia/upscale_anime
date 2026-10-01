@@ -67,7 +67,7 @@ from .registry import (  # noqa: E402,F401
     ModelRegistry,
     is_supported_kind,
 )
-from .archs import (  # noqa: E402,F401
+from .arch_registry import (  # noqa: E402,F401
     ArchSpec,
     Capability,
     build,

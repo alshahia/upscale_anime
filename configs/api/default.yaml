@@ -1,0 +1,56 @@
+# ============================================================
+# API server configuration (FastAPI inference server)
+# ============================================================
+# Inherits everything from configs/default.yaml, overrides below.
+# Usage:
+#   python -m anime_sr.api.inference_api --config configs/api/default.yaml
+# Or via the CLI entry point:
+#   anime-sr serve --config configs/api/default.yaml
+#
+# Sensitive values (api_key) should be provided via environment
+# variables, never committed to this file.
+# ============================================================
+
+base: ../default.yaml
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  api_key: null                 # Set via env DSH_API_KEY (null = dev mode, auth disabled)
+  allowed_origins: ["http://localhost:3000", "http://localhost:8000"]
+  max_file_size_mb: 50          # Set via env DSH_MAX_FILE_SIZE_MB
+  rate_limit_per_min: 60        # Set via env DSH_RATE_LIMIT_PER_MIN
+  workers: 1
+  timeout_keep_alive: 5
+
+model:
+  name: "span"
+  type: "span"
+  scale: 4
+  num_features: 26
+  num_blocks: 12
+  path: "checkpoints/model_a_best.pth"   # Set via env DSH_MODEL_PATH
+
+inference:
+  device: "auto"
+  tile_size: 512
+  tile_overlap: 32
+  tta: false
+  use_amp: true
+  batch_size: 1
+  num_workers: 4
+  output_format: "png"
+
+logging:
+  level: "INFO"                 # Set via env DSH_LOG_LEVEL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  output: "logs"
+  file: "api.log"
+  use_tensorboard: false
+
+security:
+  allow_pickle_checkpoint: false  # Set via env DSH_ALLOW_PICKLE_CHECKPOINT
+  verify_checksums: false
+
+system:
+  cuda_visible_devices: null    # Set via env DSH_CUDA_VISIBLE_DEVICES

@@ -15,9 +15,9 @@ import json
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from models.span import create_span_model
-from utils.config import Config
-from utils.metrics import calculate_psnr, calculate_ssim, calculate_batch_metrics
+from anime_sr.models.span import create_span_model
+from anime_sr.utils.config import Config
+from anime_sr.utils.metrics import calculate_psnr, calculate_ssim, calculate_batch_metrics
 
 
 def load_model(checkpoint_path: str, config_path: str = None, device: str = 'cuda'):

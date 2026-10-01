@@ -1,0 +1,83 @@
+# ============================================================
+# Model B: Mamba-PAN training (4-direction scanning + MTKD/FAKD)
+# ============================================================
+# Inherits everything from configs/default.yaml, overrides below.
+# Requires the optional 'mamba' extras (mamba-ssm, causal-conv1d).
+# Usage:
+#   python scripts/train.py --config configs/training/model_b.yaml
+# ============================================================
+
+base: ../default.yaml
+
+model:
+  name: "model_b"
+  type: "mamba_pan"
+  scale: 4
+  num_features: 32
+  num_blocks: 8                # Fewer blocks than SPAN (Mamba is deeper)
+  mamba_dim: 32
+  mamba_d_state: 16            # SSM state dimension
+  mamba_d_conv: 4              # Convolution kernel size
+  mamba_expand: 2              # Expansion factor
+  directions: ["h", "v", "rh", "rv"]  # Horizontal, Vertical, Reverse-H, Reverse-V
+  use_direction_fusion: true
+  path: "checkpoints/model_b_best.pth"
+
+training:
+  mode: "model_b"
+  epochs: 1000
+  batch_size: 4                # Lower batch size (Mamba is memory-hungry)
+  lr: 0.0001
+  optimizer: "adam"
+  scheduler: "cosine"
+  T_max: 1000
+  warmup_epochs: 10
+  min_lr: 1.0e-7
+  mixed_precision: true
+  gradient_checkpointing: true
+  use_ema: true
+  ema_decay: 0.999
+
+  # Stage 1: knowledge aggregation
+  stage1:
+    enabled: true
+    epochs: 100
+    lr: 0.0001
+    batch_size: 4
+    aggregation_type: "simple"
+    freeze_teachers: true
+    auto_download_teachers: true
+
+  # Stage 2: direction-aware distillation
+  stage2:
+    enabled: true
+    epochs: 250
+    lr: 0.00005               # Lower LR for stable Mamba finetuning
+    batch_size: 4
+    scheduler: "cosine"
+    use_stage1_checkpoint: true
+    stage1_checkpoint: "checkpoints/model_b_stage1_best.pth"
+
+data:
+  batch_size: 4
+  crop_size: 128
+  num_workers: 8
+  datasets:
+    - {name: "div2k",       weight: 0.5, enabled: true, hr_dir: "data/DIV2K_train_HR"}
+    - {name: "anime_custom", weight: 0.5, enabled: true, hr_dir: "data/anime_hr"}
+  degradation:
+    enabled: true
+    mode: "medium"
+
+loss:
+  pixel_loss: {type: "l1", weight: 1.0}
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+    fakd_layers: [2, 4, 6, 8]
+    fakd_layer_weights: [0.1, 0.2, 0.3, 0.4]
+    consistency:
+      enabled: true
+      weight: 0.1
+      type: "variance"        # variance | cosine

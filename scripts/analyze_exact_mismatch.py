@@ -22,7 +22,7 @@ def analyze_exact_mismatch():
     checkpoint_params = checkpoint['params']
     
     # Create model
-    from models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
+    from anime_sr.models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
     model = CheckpointCompatibleSPANv3()
     model_params = model.state_dict()
     

@@ -28,7 +28,7 @@ def analyze_parameter_mismatch():
     checkpoint_params = checkpoint['params']
     
     # Create model
-    from models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
+    from anime_sr.models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
     model = CheckpointCompatibleSPANv3()
     model_state_dict = model.state_dict()
     
@@ -151,7 +151,7 @@ def test_mapping(mapping, checkpoint_path):
     checkpoint_params = checkpoint['params']
     
     # Create model
-    from models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
+    from anime_sr.models.span.checkpoint_compatible_model_v3 import CheckpointCompatibleSPANv3
     model = CheckpointCompatibleSPANv3()
     
     # Apply mapping

@@ -10,9 +10,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 import torch
-from utils.config import Config
-from data.anime_degradation import AnimeDegradationPipeline
-from losses.anime_losses import AnimeCombinedLoss
+from anime_sr.utils.config import Config
+from anime_sr.data.anime_degradation import AnimeDegradationPipeline
+from anime_sr.losses.anime_losses import AnimeCombinedLoss
 
 
 def parse_args():

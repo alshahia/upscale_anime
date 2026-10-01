@@ -12,14 +12,11 @@ import os
 from pathlib import Path
 import yaml
 
-# Add src to path for imports
-import sys
-sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
-from models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
-from training.orchestrator import TrainingOrchestrator
-from inference.engine import InferenceEngine
-from utils.config import load_config
+from anime_sr.models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
+from anime_sr.training.orchestrator import TrainingOrchestrator
+from anime_sr.inference.engine import InferenceEngine
+from anime_sr.utils.config import load_config
 
 
 class TestFullPipeline:

@@ -14,7 +14,7 @@ from typing import Optional
 import torch
 
 try:
-    from .archs import build
+    from .arch_registry import build
 except Exception:
     build = None
 

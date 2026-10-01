@@ -225,7 +225,7 @@ class PerformanceBenchmark:
             start_time = time.time()
             
             try:
-                from utils.checkpoint_loader import load_checkpoint_compatible_span
+                from anime_sr.utils.checkpoint_loader import load_checkpoint_compatible_span
                 success, loading_info = load_checkpoint_compatible_span(
                     fresh_model, checkpoint_path, verbose=False
                 )
@@ -322,8 +322,8 @@ class PerformanceBenchmark:
         """
         print("Benchmarking monitoring overhead")
         
-        from utils.training_monitor import TrainingMonitor
-        from utils.nan_handler import NaNHandler
+        from anime_sr.utils.training_monitor import TrainingMonitor
+        from anime_sr.utils.nan_handler import NaNHandler
         
         # Create monitoring components
         monitor = TrainingMonitor(verbose=False)
@@ -401,7 +401,7 @@ class PerformanceBenchmark:
         
         try:
             # Test different models
-            from models.span import create_span_model
+            from anime_sr.models.span import create_span_model
             
             # Checkpoint-compatible model
             config = {

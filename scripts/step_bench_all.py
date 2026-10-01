@@ -30,7 +30,6 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "apps" / "anime_upscaler_gui"))
 
 DEFAULT_SRC = Path("C:/Users/Ahmad Mahmoud/Downloads/Video/"
                    "[Anime3rb.com] Yi Ren Zhi Xia - 1 [480p].mp4")
@@ -95,7 +94,7 @@ def extract_lr_frames(bench: Path, meta: dict) -> None:
 
 
 def model_list():
-    from anime_upscaler_gui.registry import ModelRegistry
+    from apps.anime_upscaler_gui.anime_upscaler_gui.registry import ModelRegistry
     reg = ModelRegistry(ROOT / "pretrained")
     entries = []
     for m in reg.scan_installed():

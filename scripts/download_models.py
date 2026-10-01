@@ -13,7 +13,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils.pretrained_models import (
+from anime_sr.utils.pretrained_models import (
     download_pretrained_model,
     download_all_teacher_models,
     list_available_models,

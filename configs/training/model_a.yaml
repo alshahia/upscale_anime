@@ -1,0 +1,90 @@
+# ============================================================
+# Model A: SPAN training (NTIRE-style + MTKD/FAKD distillation)
+# ============================================================
+# Inherits everything from configs/default.yaml, overrides below.
+# Usage:
+#   python scripts/train.py --config configs/training/model_a.yaml
+# ============================================================
+
+base: ../default.yaml
+
+model:
+  name: "model_a"
+  type: "span"
+  scale: 4
+  num_features: 26             # SPAN-Tiny base channels
+  num_blocks: 12
+  use_lora: true               # ConvLoRA adapters for efficient finetuning
+  lora_rank: 4
+  lora_alpha: 1.0
+  path: "checkpoints/model_a_best.pth"
+
+training:
+  mode: "model_a"
+  epochs: 1000
+  batch_size: 8
+  lr: 0.0001
+  optimizer: "adam"
+  scheduler: "cosine"
+  T_max: 1000
+  warmup_epochs: 10
+  min_lr: 1.0e-7
+  mixed_precision: true
+  gradient_checkpointing: true
+  use_ema: true
+  ema_decay: 0.999
+
+  # Stage 1: knowledge aggregation from EDSR/RCAN/SwinIR teachers
+  stage1:
+    enabled: true
+    epochs: 100
+    lr: 0.0001
+    batch_size: 8
+    gradient_accumulation_steps: 8
+    aggregation_type: "simple"
+    num_blocks: 6
+    embed_dim: 96
+    optimizer: "adamw"
+    scheduler: "cosine"
+    warmup_epochs: 10
+    min_lr: 1.0e-7
+    freeze_teachers: true
+    auto_download_teachers: true
+    teachers:
+      - {name: "edsr",   path: "pretrained/EDSR_x4.pt",   weight: 1.0}
+      - {name: "rcan",   path: "pretrained/RCAN_x4.pt",   weight: 1.0}
+      - {name: "swinir", path: "pretrained/SwinIR_x4.pt", weight: 1.0}
+
+  # Stage 2: student distillation
+  stage2:
+    enabled: true
+    epochs: 200
+    lr: 0.0001
+    batch_size: 8
+    gradient_accumulation_steps: 8
+    scheduler: "cosine"
+    warmup_epochs: 5
+    min_lr: 1.0e-7
+    use_stage1_checkpoint: true
+    stage1_checkpoint: "checkpoints/model_a_stage1_best.pth"
+
+data:
+  batch_size: 8
+  crop_size: 128
+  num_workers: 8
+  datasets:
+    - {name: "anime_custom", weight: 0.9, enabled: true, hr_dir: "data/anime_video_frames"}
+    - {name: "anime_val",    weight: 0.1, enabled: true, hr_dir: "data/val_hr", is_validation: true}
+  degradation:
+    enabled: true
+    mode: "anime"
+
+loss:
+  pixel_loss: {type: "l1", weight: 1.0}
+  perceptual_loss: {enabled: true, type: "dists", weight: 0.1}
+  distillation:
+    enabled: true
+    mtkd_weight: 1.0
+    fakd_weight: 0.5
+    fakd_layers: [2, 4, 6, 8, 10, 12]
+    fakd_layer_weights: [0.05, 0.1, 0.15, 0.2, 0.25, 0.25]
