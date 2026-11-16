@@ -356,10 +356,12 @@ def _bind_real_methods(app):
     """
     for name in (
         "_on_output_setting_changed",
+        "_on_queue_selection_changed",
         "_rebuild_ui",
         "_find_job",
         "_send_pause",
         "_send_resume",
+        "_remove_selected",
     ):
         try:
             setattr(app, name, getattr(UpscaleGUI, name).__get__(app, type(app)))
@@ -367,15 +369,39 @@ def _bind_real_methods(app):
             pass
 
 
-def _select_first(app):
-    """Select row 0 and re-apply the control states.
+def _click_row(app, row):
+    """Select a queue row the way a user does, and deliver the Tk event.
 
-    _refresh_queue_listbox deletes/inserts every row, which clears the Tk
-    selection, so selection + control refresh happen after it.
+    Task 10b: tests must not poke _refresh_controls directly -- a real user
+    click produces <<ListboxSelect>>, and the app must react to that event.
+    selection_set alone is not enough (the toolbar used to stay disabled).
     """
+    lb = app.input_panel.queue_listbox
+    lb.selection_clear(0, "end")
+    lb.selection_set(row)
+    lb.event_generate("<<ListboxSelect>>")
+
+
+def _setup_batch_jobs(app, tmp_path):
+    """Build the UI in batch mode with one RUNNING and one PENDING job.
+
+    Returns the (running, pending) Job objects; rows are 0 and 1.
+    """
+    _bind_real_methods(app)
+    app._build_ui()
+    app.input_panel.queue_mode_var.set("batch")
+    running = Job(id=JOB_ID, input=tmp_path / "in.mp4",
+                  output=tmp_path / "out.mp4",
+                  status=JobStatus.RUNNING, is_video=True)
+    pending = Job(id=JOB_ID + 1, input=tmp_path / "next.mp4",
+                  output=tmp_path / "next_out.mp4",
+                  status=JobStatus.PENDING, is_video=True)
+    # The listbox is submitted to the pack manager only when the panel sees
+    # batch mode plus a non-empty queue (real user flow: add files last).
+    app._jobs.extend([running, pending])
+    app.input_panel._refresh_empty()
     app._refresh_queue_listbox()
-    app.input_panel.queue_listbox.selection_set(0)
-    app.input_panel._refresh_controls()
+    return running, pending
 
 
 def test_output_setting_change_persists_to_settings_data(gui_app):
@@ -423,31 +449,106 @@ def test_start_path_uses_live_output_widgets(gui_app, tmp_path):
 
 def test_gui_pause_cycle_feeds_blocking_events(gui_app, tmp_path):
     """GUI Pause -> Resume -> Pause must end with a blocking worker event."""
-    _bind_real_methods(gui_app)
-    gui_app._build_ui()
-    gui_app.input_panel.queue_mode_var.set("batch")
-    src = tmp_path / "in.mp4"
-    src.write_bytes(b"x")
-    job = Job(id=7, input=src, output=tmp_path / "out.mp4",
-              status=JobStatus.RUNNING, is_video=True)
-    gui_app._jobs.append(job)
-    gui_app._refresh_queue_listbox()
-    _select_first(gui_app)
+    job, _pending = _setup_batch_jobs(gui_app, tmp_path)
+    _click_row(gui_app, 0)
     assert not gui_app.input_panel.pause_btn.instate(["disabled"])
     assert gui_app.input_panel.resume_btn.instate(["disabled"])
-    gui_app._send_pause(7)
+    gui_app._send_pause(job.id)
     assert job.status == JobStatus.PAUSED
-    _select_first(gui_app)
-    assert not gui_app.input_panel.resume_btn.instate(["disabled"])
+    # Task 10b: the post-pause refresh must leave the toolbar usable without
+    # the test manually re-selecting the row.
+    assert not gui_app.input_panel.resume_btn.instate(["disabled"]), (
+        "pause refresh stranded the toolbar (Resume disabled)")
     assert gui_app.input_panel.pause_btn.instate(["disabled"])
-    gui_app._send_resume(7)
+    gui_app._send_resume(job.id)
     assert job.status == JobStatus.RUNNING
-    gui_app._send_pause(7)
+    gui_app._send_pause(job.id)
     assert job.status == JobStatus.PAUSED
     # Feed the three control events through the real drain path.
     stub = _worker_stub()
     while not gui_app._ctl_queue.empty():
         stub.ctl_queue.put(gui_app._ctl_queue.get_nowait())
-    stub._drain_ctl_for_job(7)
-    assert stub._pause_events[7].is_set() is False
+    stub._drain_ctl_for_job(job.id)
+    assert stub._pause_events[job.id].is_set() is False
+
+
+# --------------------------------------------------------------------------- #
+# 10b: toolbar usability -- real selection events + refresh must not strand
+# --------------------------------------------------------------------------- #
+
+def test_real_selection_enables_queue_controls(gui_app, tmp_path):
+    """Brief 10b.2: selecting a row with the mouse enables the toolbar.
+
+    RED (pre-fix): the listbox had no <<ListboxSelect>> binding, so a real
+    click updated the Tk selection but Pause/Resume/Cancel stayed disabled.
+    """
+    _setup_batch_jobs(gui_app, tmp_path)
+    panel = gui_app.input_panel
+    assert panel.pause_btn.instate(["disabled"]), (
+        "toolbar should start disabled with no row selected")
+    _click_row(gui_app, 0)
+    assert not panel.pause_btn.instate(["disabled"]), (
+        "Pause stayed disabled after selecting a RUNNING job (no select binding)")
+    assert not panel.cancel_btn.instate(["disabled"])
+    assert panel.resume_btn.instate(["disabled"])
+    # Selecting the PENDING row disables Pause again (no stale control state).
+    _click_row(gui_app, 1)
+    assert panel.pause_btn.instate(["disabled"])
+    assert panel.resume_btn.instate(["disabled"])
+
+
+def test_refresh_preserves_queue_selection(gui_app, tmp_path):
+    """Brief 10b.1: the ~2 Hz queue refresh must keep the selected job.
+
+    RED (pre-fix): _refresh_queue_listbox deletes and re-inserts every row,
+    which cleared the Tk selection, so _selected_job_id() fell back to 0.
+    """
+    running, _pending = _setup_batch_jobs(gui_app, tmp_path)
+    _click_row(gui_app, 0)
+    assert gui_app.input_panel._selected_job_id() == running.id
+    gui_app._refresh_queue_listbox()
+    assert gui_app.input_panel.queue_listbox.curselection() == (0,), (
+        "periodic refresh cleared the selection")
+    assert gui_app.input_panel._selected_job_id() == running.id
+    assert not gui_app.input_panel.pause_btn.instate(["disabled"])
+
+
+def test_pause_does_not_strand_selection_or_controls(gui_app, tmp_path):
+    """Brief 10b.3: pause -> refresh cycles must leave Resume/Cancel usable.
+
+    RED (pre-fix): _send_pause flipped the status and refreshed the listbox,
+    which dropped the selection -> Resume and Cancel both disabled -> the
+    paused job was stranded with no way to resume or cancel it.
+    """
+    job, _pending = _setup_batch_jobs(gui_app, tmp_path)
+    _click_row(gui_app, 0)
+    gui_app._send_pause(job.id)
+    assert job.status == JobStatus.PAUSED
+    assert gui_app.input_panel.queue_listbox.curselection() == (0,), (
+        "pause refresh dropped the selected row")
+    assert gui_app.input_panel.resume_btn.instate(["disabled"]) is False, (
+        "Resume disabled after pausing the selected job")
+    assert gui_app.input_panel.cancel_btn.instate(["disabled"]) is False
+    # The worker emits progress/status events while paused; those refresh the
+    # listbox repeatedly and must not strand the job again.
+    for _ in range(3):
+        gui_app._refresh_queue_listbox()
+    assert gui_app.input_panel._selected_job_id() == job.id
+    assert gui_app.input_panel.resume_btn.instate(["disabled"]) is False
+    gui_app._send_resume(job.id)
+    assert job.status == JobStatus.RUNNING
+    assert not gui_app.input_panel.pause_btn.instate(["disabled"])
+    assert gui_app.input_panel.resume_btn.instate(["disabled"])
+
+
+def test_refresh_selects_neighbor_when_selected_job_disappears(gui_app, tmp_path):
+    """Brief 10b.1: removing the selected job must not leave a stale selection."""
+    _running, pending = _setup_batch_jobs(gui_app, tmp_path)
+    _click_row(gui_app, 0)
+    gui_app._remove_selected()
+    assert [j.id for j in gui_app._visible_jobs()] == [pending.id]
+    selection = gui_app.input_panel.queue_listbox.curselection()
+    assert selection, "selection was cleared instead of moving to a neighbor"
+    assert gui_app.input_panel._selected_job_id() == pending.id, (
+        "selection points at a job that no longer exists")
 

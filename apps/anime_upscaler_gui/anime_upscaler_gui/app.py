@@ -216,6 +216,12 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
 
         self.input_panel = _InputPanel(controls_inner, self)
         self.input_panel.pack(fill="both", expand=True, pady=(0, GROUP_PAD))
+        # Task 10b: a real row click must re-evaluate the Pause/Resume/Cancel
+        # toolbar. It used to be refreshed only from _refresh_queue_listbox,
+        # so clicking a row after the last refresh left the buttons disabled.
+        # Rebound with every rebuild because the listbox widget is recreated.
+        self.input_panel.queue_listbox.bind(
+            "<<ListboxSelect>>", self._on_queue_selection_changed)
 
         self.model_panel = _ModelPanel(controls_inner, self)
         self.model_panel.pack(fill="x", pady=(0, GROUP_PAD))
@@ -472,8 +478,30 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             # Persistence is best-effort; surface a warning but don't block the UI.
             self.status_bar.status_var.set(f"Queue persist failed: {e}")
 
+    def _on_queue_selection_changed(self, _event=None) -> None:
+        """Re-evaluate the queue toolbar when the user selects a row (Task 10b).
+
+        The periodic refresh restores the selection programmatically, which
+        does not fire <<ListboxSelect>>; this handler therefore exists for real
+        user clicks -- the case where the buttons used to stay disabled.
+        """
+        self.input_panel._refresh_controls()
+
     def _refresh_queue_listbox(self):
-        self.input_panel.queue_listbox.delete(0, "end")
+        # Task 10b: delete+insert clears the Tk selection, which used to strand
+        # the Pause/Resume/Cancel toolbar: every periodic refresh (worker
+        # progress events arrive continuously) threw the selected row away, the
+        # buttons fell back to "nothing selected", and a paused job could not be
+        # resumed or cancelled again. Remember the selected job ids, rebuild,
+        # then restore the selection by id (rows are filtered, so the row
+        # indexes are not stable).
+        listbox = self.input_panel.queue_listbox
+        previous_rows = self._visible_jobs()
+        previous_selection = listbox.curselection()
+        selected_ids = [previous_rows[i].id for i in previous_selection
+                        if i < len(previous_rows)]
+        previously_selected_row = previous_selection[0] if previous_selection else None
+        listbox.delete(0, "end")
         flt = self.input_panel.filter_var.get()
         from .a11y import status_triplet
         for j in self._jobs:
@@ -494,8 +522,19 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 self.input_panel.queue_listbox.itemconfig(i, fg=STATUS_COLORS.get(j.status, FG))
             except Exception:
                 pass
+        # Task 10b: restore the selection captured above. A selected job that
+        # left the current view (removed, or the filter changed) falls back to
+        # the nearest surviving row instead of leaving a stale selection.
+        rows = self._visible_jobs()
+        row_of_id = {j.id: i for i, j in enumerate(rows)}
+        restored_rows = [row_of_id[jid] for jid in selected_ids if jid in row_of_id]
+        if not restored_rows and previously_selected_row is not None and rows:
+            restored_rows = [min(previously_selected_row, len(rows) - 1)]
+        for row in restored_rows:
+            listbox.selection_set(row)
         # Q2 (perf/queue-controls-gpu-codec): enable/disable Pause /
-        # Resume / Cancel based on the selected job's current status.
+        # Resume / Cancel based on the selected job's current status (and on
+        # the selection restored above, so a selected job keeps its controls).
         self.input_panel._refresh_controls()
 
     def _visible_jobs(self) -> List[Job]:
@@ -561,6 +600,9 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         # the instant the user clicks.
         j.status = JobStatus.PAUSED
         self._refresh_queue_listbox()
+        # Task 10b: keep the toolbar in sync immediately so Resume/Cancel work
+        # the instant the user pauses (no wait for the next worker event).
+        self.input_panel._refresh_controls()
         self.status_bar.status_var.set(f"Job #{job_id}: paused")
 
     def _send_resume(self, job_id: int) -> None:
@@ -574,6 +616,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         self._ctl_queue.put(JobControlEvent(kind="resume", job_id=job_id))
         j.status = JobStatus.RUNNING
         self._refresh_queue_listbox()
+        self.input_panel._refresh_controls()
         self.status_bar.status_var.set(f"Job #{job_id}: resumed")
 
     def _send_cancel(self, job_id: int) -> None:
@@ -603,6 +646,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         j.status = JobStatus.CANCELLED
         j.error = "cancelled by user"
         self._refresh_queue_listbox()
+        self.input_panel._refresh_controls()
         self.status_bar.status_var.set(f"Job #{job_id}: cancel requested")
 
     def _find_job(self, job_id: int):

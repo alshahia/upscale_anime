@@ -126,6 +126,7 @@ def gui_app(shared_tk_root, tmp_path):
         "_build_actions_section", "_add_files", "_visible_jobs",
         "_refresh_queue_listbox", "_next_job_id", "_compute_output_path",
         "_compute_output_path_or_none", "_update_cut_window_for_input",
+        "_on_queue_selection_changed",
     ):
         setattr(app, name, getattr(UpscaleGUI, name).__get__(app, type(app)))
     # staticmethod: assign the plain function or the call gains a spurious self.

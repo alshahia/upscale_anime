@@ -33,7 +33,8 @@ def app(shared_tk_root, tmp_path):
     a = tk.Toplevel(shared_tk_root)
     for name in ("_build_ui", "_rebuild_ui", "_on_theme_change",
                  "_refresh_model_dropdown", "_make_scrollable",
-                 "_build_preview_section", "_build_actions_section"):
+                 "_build_preview_section", "_build_actions_section",
+                 "_on_queue_selection_changed"):
         setattr(a, name, getattr(UpscaleGUI, name).__get__(a, type(a)))
     a.paths = paths
     a.settings = settings
