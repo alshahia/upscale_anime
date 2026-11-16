@@ -33,6 +33,19 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _restore_gpu_probe_cache():
+    """Do not leak the CPU-faked GPU-probe result into the rest of the suite.
+
+    The real-worker tests below force torch.cuda.is_available() to False; the
+    worker then caches the "no GPU" probe result in worker._GPU_UTIL_PROBE for
+    the whole pytest process, so later telemetry tests would read that empty
+    cache instead of probing the real device. Restore the cache after each test.
+    """
+    yield
+    worker_mod._GPU_UTIL_PROBE = None
+
+
 # --------------------------------------------------------------------------- #
 # 10.1 pause state machine (unit)
 # --------------------------------------------------------------------------- #
