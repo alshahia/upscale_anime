@@ -36,7 +36,7 @@ from ..arch_registry import build
 from ..arch_registry import capabilities as _arch_caps
 from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
                         load_image_rgb, save_image_rgb)
-from ..ffmpeg import extract_cut, ffmpeg_available, open_encoder
+from ..ffmpeg import extract_cut, ffmpeg_available, has_audio_stream, open_encoder
 
 from .backends import _cascade_count, _make_backend, _tta_forward
 from .encoder import _encode_write
@@ -85,6 +85,23 @@ def _unlink_partial_output(out_path) -> None:
             out_path.unlink()
     except OSError:
         pass
+
+
+def _mux_job_audio(out_path, input_path, *, start_seconds: float = 0.0,
+                   duration_seconds: float | None = None) -> bool:
+    """Remux the source audio into the encoded output.
+
+    Returns False when the source has no audio (video-only output stays
+    valid); the caller treats a False on an audio-bearing source as a warning
+    it must show, never as silence shipped quietly.
+    """
+    from ..ffmpeg import has_audio_stream, mux_audio
+
+    if not has_audio_stream(input_path):
+        return False
+    return mux_audio(out_path, input_path, out_path,
+                     start_seconds=start_seconds,
+                     duration_seconds=duration_seconds)
 
 
 # Q4 (perf/queue-controls-gpu-codec): light-weight GPU util probe used
@@ -737,8 +754,27 @@ class PipelineWorker(threading.Thread):
 
         wall = time.perf_counter() - t_wall
         avg_fps = proc / max(wall, 1e-6)
+
+        # Keep the sound: remux the source audio into the encoded frames.
+        # The encoder was closed by the finally above, so out_path is final.
+        audio_ok = True
+        if use_pipe:
+            cut = getattr(job, "cut_end_seconds", 0) - getattr(job, "cut_start_seconds", 0)
+            if cut > 0:
+                audio_ok = _mux_job_audio(out_path, job.input_path,
+                                          start_seconds=job.cut_start_seconds,
+                                          duration_seconds=cut)
+            else:
+                audio_ok = _mux_job_audio(out_path, job.input_path)
+        else:
+            audio_ok = False  # cv2 fallback cannot mux audio
+
+        message = f"-> {out_path.name} ({proc} frames, {avg_fps:.2f} fps)"
+        if not audio_ok and has_audio_stream(job.input_path):
+            message += " [warning: audio not preserved]"
+
         self.emit(JobEvent(kind="finished", job_id=job.job_id,
-                            message=f"-> {out_path.name} ({proc} frames, {avg_fps:.2f} fps)",
+                            message=message,
                             fps=avg_fps, progress=1.0))
 
         # If a cut window was applied AND ffmpeg is available, extract a cut preview.
@@ -927,9 +963,6 @@ class PipelineWorker(threading.Thread):
 
             wall = time.perf_counter() - t_wall
             avg_fps = n_frames / max(wall, 1e-6)
-            self.emit(JobEvent(kind="finished", job_id=job.job_id,
-                                message=f"-> {out_path.name} ({n_frames} frames, {avg_fps:.2f} fps)",
-                                fps=avg_fps, progress=1.0))
         except _JobCancelled:
             # Cancel is owned by _run_one: it closes nothing here (the
             # finally below already released the encoder), unlinks the
@@ -964,6 +997,30 @@ class PipelineWorker(threading.Thread):
             sync_reader.release()
             if failed and started_writing:
                 _unlink_partial_output(out_path)
+
+        # The encoder is closed by the finally above, so out_path is final.
+        # Remux the source audio before announcing success; a failed mux on an
+        # audio-bearing source is surfaced in the message, never silent.
+        if not failed:
+            audio_ok = True
+            if use_pipe:
+                cut = (getattr(job, "cut_end_seconds", 0)
+                       - getattr(job, "cut_start_seconds", 0))
+                if cut > 0:
+                    audio_ok = _mux_job_audio(out_path, job.input_path,
+                                              start_seconds=job.cut_start_seconds,
+                                              duration_seconds=cut)
+                else:
+                    audio_ok = _mux_job_audio(out_path, job.input_path)
+            else:
+                audio_ok = False  # cv2 fallback cannot mux audio
+
+            message = f"-> {out_path.name} ({n_frames} frames, {avg_fps:.2f} fps)"
+            if not audio_ok and has_audio_stream(job.input_path):
+                message += " [warning: audio not preserved]"
+
+            self.emit(JobEvent(kind="finished", job_id=job.job_id,
+                                message=message, fps=avg_fps, progress=1.0))
 
     def _recurrent_chunk_forward(self, job, backend, device, frames_rgb,
                                  n_cascade: int, target_h: int, target_w: int):
