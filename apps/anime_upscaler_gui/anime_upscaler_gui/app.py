@@ -671,7 +671,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             # These jobs are deliberately NOT appended to self._jobs, so a
             # single run never appears in the batch queue list -- the queue
             # (and its filter) is a batch-only view.
-            cut_s, cut_e = self.cut_window.get_seconds()
+            cut_s, cut_e = self._effective_cut_window()
             jobs_to_run = [Job(
                 id=self._next_job_id(),
                 input=self.input_path,
@@ -702,6 +702,27 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         # Enqueue first job; worker calls back via _job_finished which enqueues the next.
         self._enqueue_next(jobs_to_run)
         self._refresh_queue_listbox()
+
+    def _effective_cut_window(self) -> tuple:
+        """Return the cut window to apply, normalising an invalid one to no cut.
+
+        _CutWindow.is_valid() is end > start >= 0. The GUI used to pass the raw
+        spinbox values straight into the queued job, so Start=00:00:05 with
+        End=00:00:00 (which the widget treats as invalid) produced a
+        head-trimmed picture while the worker had to guess what to do with the
+        audio. An invalid window now means "export the whole video" and the
+        reason is reported in the status bar instead of being silently
+        half-applied; the worker additionally derives its audio window from
+        the encoded frames (see _audio_mux_window).
+        """
+        start, end = self.cut_window.get_seconds()
+        if self.cut_window.is_valid():
+            return start, end
+        if start > 0 or end > 0:
+            self.status_bar.status_var.set(
+                "Cut window ignored (End must be later than Start); "
+                "exporting the full video.")
+        return 0.0, 0.0
 
     def _preflight_check(self, jobs_to_run) -> bool:
         """Verify outputs can be written and CUDA is usable (if requested). Returns False on failure."""

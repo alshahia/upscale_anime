@@ -582,3 +582,35 @@ def test_pytorch_backend_reuses_supplied_model(monkeypatch):
     be2 = _PyTorchBackend(Path("x.pth"), "realesrgan", torch.device("cpu"), False)
     assert built == [Path("x.pth")]
     assert be2.model is not None
+
+# ---- I1: audio remux window follows the encoded cut ----
+def test_recurrent_start_only_cut_remuxes_the_encoded_window(monkeypatch, tmp_path):
+    """I1: Start-only cut (End=00:00:00 means "to EOF") must not mux from 0:00.
+
+    The recurrent path must hand the remux helper the *effective* window: the
+    frame-exact start the decoder skipped to and a duration matching the frames
+    that were encoded -- not cut_end - cut_start (which is negative here).
+    """
+    _force_cpu(monkeypatch)
+    pipe = _FakePipe(Path(str(tmp_path)) / "out.mp4")
+    model = _FakeRecurrentModel()
+    _install(monkeypatch, model, pipe, _frames(20))
+    calls = []
+    monkeypatch.setattr(
+        worker_mod, "_mux_job_audio",
+        lambda out_path, input_path, **kw: calls.append(kw) or True)
+
+    # fps=25, 20 decoded frames; Start=0.4 -> skip 10 frames -> 10 encoded.
+    job = _job(tmp_path, cut_start_seconds=0.4, cut_end_seconds=0.0)
+    w = _worker()
+    w._run_one(job)
+
+    kinds = _kinds(_drain(w.out_queue))
+    assert kinds[-1] == "finished", kinds
+    assert len(calls) == 1, "audio must be remuxed exactly once"
+    assert calls[0]["start_seconds"] == pytest.approx(10 / FPS), (
+        "audio start must follow the picture's first encoded frame")
+    # The fake encoder writes an empty file, so probe_duration fails and the
+    # helper falls back to the encoded frame count / fps (10 frames @ 25 fps).
+    assert calls[0]["duration_seconds"] == pytest.approx(10 / FPS), (
+        "audio duration must match the encoded picture, not the full source")

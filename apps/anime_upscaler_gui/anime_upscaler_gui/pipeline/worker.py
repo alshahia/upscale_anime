@@ -36,7 +36,8 @@ from ..arch_registry import build
 from ..arch_registry import capabilities as _arch_caps
 from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
                         load_image_rgb, save_image_rgb)
-from ..ffmpeg import extract_cut, ffmpeg_available, has_audio_stream, open_encoder
+from ..ffmpeg import (extract_cut, ffmpeg_available, has_audio_stream, open_encoder,
+                     probe_duration)
 
 from .backends import _cascade_count, _make_backend, _tta_forward
 from .encoder import _encode_write
@@ -102,6 +103,26 @@ def _mux_job_audio(out_path, input_path, *, start_seconds: float = 0.0,
     return mux_audio(out_path, input_path, out_path,
                      start_seconds=start_seconds,
                      duration_seconds=duration_seconds)
+
+
+def _audio_mux_window(out_path, *, fps: float, start_frame: int,
+                      n_frames: int) -> tuple[float, float | None]:
+    """Return the audio window (start, duration) matching the encoded picture.
+
+    Derived from the frames that actually reached out_path -- the frame the
+    decoder skipped to and the finished file duration -- never from the raw
+    cut fields. cut_end_seconds == 0 means "to EOF", so a start-only cut is a
+    positive window; deriving it as cut_end - cut_start used to fall back to
+    the FULL source audio from 0:00 and desync the export. The start is
+    frame-exact (start_frame / fps) so the sound matches the first encoded
+    frame, and the duration is probed from the finished file, falling back to
+    the encoded frame count / fps when ffprobe cannot report one.
+    """
+    start_seconds = start_frame / fps if fps > 0 and start_frame > 0 else 0.0
+    duration_seconds = probe_duration(out_path)
+    if duration_seconds is None or duration_seconds <= 0:
+        duration_seconds = (n_frames / fps) if fps > 0 and n_frames > 0 else None
+    return start_seconds, duration_seconds
 
 
 # Q4 (perf/queue-controls-gpu-codec): light-weight GPU util probe used
@@ -755,17 +776,17 @@ class PipelineWorker(threading.Thread):
         wall = time.perf_counter() - t_wall
         avg_fps = proc / max(wall, 1e-6)
 
-        # Keep the sound: remux the source audio into the encoded frames.
-        # The encoder was closed by the finally above, so out_path is final.
+        # Keep the sound: remux the source audio over the encoded picture.
+        # The encoder was closed by the finally above, so out_path is final,
+        # and the window is derived from the frames that were actually encoded
+        # (frame-exact start + probed duration), not from the raw cut fields.
         audio_ok = True
         if use_pipe:
-            cut = getattr(job, "cut_end_seconds", 0) - getattr(job, "cut_start_seconds", 0)
-            if cut > 0:
-                audio_ok = _mux_job_audio(out_path, job.input_path,
-                                          start_seconds=job.cut_start_seconds,
-                                          duration_seconds=cut)
-            else:
-                audio_ok = _mux_job_audio(out_path, job.input_path)
+            mux_start, mux_duration = _audio_mux_window(
+                out_path, fps=fps, start_frame=start_frame, n_frames=proc)
+            audio_ok = _mux_job_audio(out_path, job.input_path,
+                                      start_seconds=mux_start,
+                                      duration_seconds=mux_duration)
         else:
             audio_ok = False  # cv2 fallback cannot mux audio
 
@@ -1000,18 +1021,17 @@ class PipelineWorker(threading.Thread):
 
         # The encoder is closed by the finally above, so out_path is final.
         # Remux the source audio before announcing success; a failed mux on an
-        # audio-bearing source is surfaced in the message, never silent.
+        # audio-bearing source is surfaced in the message, never silent. The
+        # window mirrors the encoded frames, never the raw cut fields (End=0
+        # means "to EOF", so Start-only cuts are positive windows).
         if not failed:
             audio_ok = True
             if use_pipe:
-                cut = (getattr(job, "cut_end_seconds", 0)
-                       - getattr(job, "cut_start_seconds", 0))
-                if cut > 0:
-                    audio_ok = _mux_job_audio(out_path, job.input_path,
-                                              start_seconds=job.cut_start_seconds,
-                                              duration_seconds=cut)
-                else:
-                    audio_ok = _mux_job_audio(out_path, job.input_path)
+                mux_start, mux_duration = _audio_mux_window(
+                    out_path, fps=fps, start_frame=start_frame, n_frames=n_frames)
+                audio_ok = _mux_job_audio(out_path, job.input_path,
+                                          start_seconds=mux_start,
+                                          duration_seconds=mux_duration)
             else:
                 audio_ok = False  # cv2 fallback cannot mux audio
 
