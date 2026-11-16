@@ -197,7 +197,7 @@ The repository documents a full research pipeline rather than a single model:
 
 **Citing this repository**
 
-- Citation metadata: [`CITATION.cff`](CITATION.cff) (CFF 1.2.0); GitHub shows a **Cite this repository** button for it.
+- Citation metadata: [`CITATION.cff`](CITATION.cff) (CFF 1.2.0); GitHub's **Cite this repository** button is powered by this file.
 - How to cite the software and the key upstream papers: [`docs/citation.md`](docs/citation.md).
 - BibTeX entries for the upstream papers are collected there; please also respect the upstream licenses and the attribution file at [`apps/anime_upscaler_gui/anime_upscaler_gui/_models/NOTICE.md`](apps/anime_upscaler_gui/anime_upscaler_gui/_models/NOTICE.md).
 

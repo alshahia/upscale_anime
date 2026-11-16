@@ -199,7 +199,7 @@ result = engine.process_image("input.png", "output.png", scale=4, tile_size=512)
 
 **الاستشهاد بهذا المستودع**
 
-- بيانات الاستشهاد: [`CITATION.cff`](CITATION.cff) (CFF 1.2.0)؛ ويعرض GitHub زر **Cite this repository** بفضلها.
+- بيانات الاستشهاد: [`CITATION.cff`](CITATION.cff) (CFF 1.2.0)؛ ويستند زر **Cite this repository** في GitHub إلى هذا الملف.
 - كيفية الاستشهاد بالبرمجية والأوراق البحثية الأساسية: [`docs/citation.md`](docs/citation.md).
 - تُجمَع إدخالات BibTeX للأوراق الأصلية هناك؛ يُرجى أيضاً احترام رخص المصادر وملف الإسناد في [`apps/anime_upscaler_gui/anime_upscaler_gui/_models/NOTICE.md`](apps/anime_upscaler_gui/anime_upscaler_gui/_models/NOTICE.md).
 

@@ -4,7 +4,7 @@ If you use this software, its models, or the distilled students in academic or t
 
 ## Cite this software
 
-Citation metadata lives in [CITATION.cff](https://github.com/alshahia/upscale_anime/blob/release/gui-preview/CITATION.cff) (CFF 1.2.0). GitHub shows a **Cite this repository** button on the repository page for it.
+Citation metadata lives in [CITATION.cff](https://github.com/alshahia/upscale_anime/blob/release/gui-preview/CITATION.cff) (CFF 1.2.0). GitHub's **Cite this repository** button is powered by this file on branches where it is present.
 
 ```bibtex
 @misc{alshahia2026animeupscaler,
