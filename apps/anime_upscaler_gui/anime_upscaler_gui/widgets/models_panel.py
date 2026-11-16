@@ -8,6 +8,8 @@ Phase 5 additions:
   - Preset dropdown sections Trained models (top) and Community models with
     a '---' header divider, so the user can tell what ships with the app vs
     what needs a network download.
+  - Rows whose preset declares no sha256 are tagged "[unverified]" so a
+    download without an integrity hash is never silently trusted.
 """
 import tkinter as tk
 from tkinter import ttk
@@ -19,6 +21,38 @@ from .empty_state import _EmptyState
 
 _TRAINED_HEADER = "--- Trained / In-house ---"
 _COMMUNITY_HEADER = "--- Community / Downloadable ---"
+
+
+def _installed_label(model) -> str:
+    """Format one installed-model listbox row.
+
+    Pure string formatting so the tag logic is unit-testable without Tk.
+    """
+    tag = ""
+    if model.tainted:
+        tag = "  [TAINTED]"
+    elif not model.supported:
+        tag = "  [unsupported]"
+    elif model.is_trained:
+        # In-house trained artifact. Show the friendly display_name first
+        # (e.g. "RFDN Distill v1"); falls back to filename if the registry
+        # does not have a display_name for this file.
+        tag = "  [TRAINED]"
+    if not model.verified:
+        # No declared sha256 for this file: surface it instead of implying
+        # the download was integrity-checked.
+        tag += "  [unverified]"
+    label = model.display_name or model.filename
+    return f"{label}  ({model.kind}, {model.scale}x, {model.size_mb:.1f} MB){tag}"
+
+
+def _preset_label(preset) -> str:
+    """Format one preset-dropdown row (pure formatting, unit-testable)."""
+    tag = "  [unsupported]" if not is_supported_kind(preset.kind) else ""
+    if not preset.verified:
+        tag += "  [unverified]"
+    label = preset.display_name or preset.id
+    return f"{label}  ({preset.kind}, {preset.scale}x, {preset.size_mb} MB, {preset.license}){tag}"
 
 
 class _ModelsPanel(ttk.LabelFrame):
@@ -98,21 +132,7 @@ class _ModelsPanel(ttk.LabelFrame):
         self.app.registry.scan_installed()
         self.models_listbox.delete(0, "end")
         for m in self.app.registry._installed:
-            tag = ""
-            if m.tainted:
-                tag = "  [TAINTED]"
-            elif not m.supported:
-                tag = "  [unsupported]"
-            elif m.is_trained:
-                # In-house trained artifact. Show the friendly display_name
-                # first (e.g. "RFDN Distill v1"); falls back to filename if the
-                # registry does not have a display_name for this file.
-                tag = "  [TRAINED]"
-            label = m.display_name or m.filename
-            self.models_listbox.insert(
-                "end",
-                f"{label}  ({m.kind}, {m.scale}x, {m.size_mb:.1f} MB){tag}",
-            )
+            self.models_listbox.insert("end", _installed_label(m))
         # Toggle empty state vs listbox based on install count
         if self.app.registry._installed:
             self._empty.pack_forget()
@@ -128,15 +148,11 @@ class _ModelsPanel(ttk.LabelFrame):
         if trained:
             items.append(_TRAINED_HEADER)
             for p in trained:
-                tag = "  [unsupported]" if not is_supported_kind(p.kind) else ""
-                label = p.display_name or p.id
-                items.append(f"{label}  ({p.kind}, {p.scale}x, {p.size_mb} MB, {p.license}){tag}")
+                items.append(_preset_label(p))
         if community:
             items.append(_COMMUNITY_HEADER)
             for p in community:
-                tag = "  [unsupported]" if not is_supported_kind(p.kind) else ""
-                label = p.display_name or p.id
-                items.append(f"{label}  ({p.kind}, {p.scale}x, {p.size_mb} MB, {p.license}){tag}")
+                items.append(_preset_label(p))
         self.preset_dropdown["values"] = items
         # Default to the first selectable preset (trained, if available; else community).
         if items and not self.preset_var.get():

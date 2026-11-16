@@ -24,6 +24,7 @@ TAG_TAINTED = "  [TAINTED]"
 TAG_TRAINED = "  [TRAINED]"
 TAG_UNSUPPORTED = "  [unsupported]"
 TAG_NO_ARCH = "  [no arch]"
+TAG_UNVERIFIED = "  [unverified]"
 
 
 def sort_trained_first(models: Iterable[InstalledModel]) -> List[InstalledModel]:
@@ -68,6 +69,10 @@ def format_dropdown_label(model: InstalledModel, supported_kind: bool = True) ->
     so this function stays import-cycle-free of the archs registry.
     """
     tag = _pick_tag(model, supported_kind)
+    if not model.verified:
+        # No declared sha256 for this file: surface that instead of implying
+        # the model was integrity-checked.
+        tag += TAG_UNVERIFIED
     head = f"{model.filename}  ({model.kind or chr(63)}, {model.scale}x, {model.size_mb:.1f} MB)"
     return head + tag
 
@@ -102,6 +107,7 @@ __all__ = [
     "TAG_TRAINED",
     "TAG_UNSUPPORTED",
     "TAG_NO_ARCH",
+    "TAG_UNVERIFIED",
     "sort_trained_first",
     "format_dropdown_label",
     "pick_default_index",

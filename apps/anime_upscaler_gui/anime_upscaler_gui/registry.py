@@ -102,6 +102,9 @@ PRESET_CATALOG = [
         "url": "https://drive.google.com/drive/folders/1gwNTbKLUjt5FlgT6PQQnBz5wFzmNUX8g",
         "scale": 4, "kind": "animesr",
         "license": "Apache-2.0", "size_mb": 67.0,
+        # Hash of the in-tree pretrained/AnimeSR_v2.pth artifact this preset
+        # pins; downloads through gdown are checked against it.
+        "sha256": "d0f29c8966b53718828bd424bbdc306e7ff0cbf6350beadaf8b5b2500b108548",
         "source": "community",
         "display_name": "AnimeSR v2 (3-frame recurrent)",
         "description": "TencentARC AnimeSR (CVPR 2022). Recurrent 3-frame; needs gdown.",
@@ -116,6 +119,7 @@ PRESET_CATALOG = [
         "url": "file://runs/distill_v1/student_best.pt",
         "scale": 4, "kind": "rfdn_student",
         "license": "Project-internal", "size_mb": 1.3,
+        "sha256": "2d72b67d93fda4ead5ba0161a61e83b5943dedb1742674a9f96b71c9fdd7db85",
         "source": "trained",
         "display_name": "RFDN Distill v1 * Trained",
         "description": "In-house trained 4x student (315K params, KD from SPAN V7, 40 epochs, 29.46 dB test PSNR with default TTA -- beats bicubic on the 99-frame held-out test split). Recommended default for anime frames.",
@@ -129,6 +133,7 @@ PRESET_CATALOG = [
         "url": "file://runs/step2_srvgg_hfa_v1/student_best.pt",
         "scale": 4, "kind": "srvgg_student",
         "license": "Project-internal", "size_mb": 12.4,
+        "sha256": "214082da1a7478f30ee0775852571171db39e8ff6a27fca88d56ea2e3c2984ed",
         "source": "trained",
         "display_name": "SRVGG Distill v1 * Step-2 (HFA teacher)",
         "description": "Current best in-house student (Step-2 rebase, 317K params, KD from HFA2k PLKSR real teacher, 50 epochs: 33.55 dB / 0.9146 SSIM on the held-out test split, NIQE 7.38). Recommended default for anime frames.",
@@ -216,6 +221,12 @@ class InstalledModel:
     # from the matching preset if available; empty otherwise.
     is_trained: bool = False
     display_name: str = ""
+    # True when the matching catalog preset declares a SHA-256, i.e. its
+    # download is integrity-pinned. Files with no preset (or a preset without
+    # a hash) are surfaced as "[unverified]" in the UI rather than silently
+    # trusted. Defaults to True for directly-constructed models so callers that
+    # know the provenance are not forced to pass it.
+    verified: bool = True
 
 
 @dataclass
@@ -239,6 +250,11 @@ class PresetEntry:
     display_name: str = ""
     # Expected SHA-256 hash of the downloaded file (empty = no verification).
     sha256: str = ""
+
+    @property
+    def verified(self) -> bool:
+        """True when this preset declares a SHA-256 (download integrity-pinned)."""
+        return bool(self.sha256)
 
 
 def _validate_preset_entry(raw: dict, origin: str) -> Optional[PresetEntry]:
@@ -368,7 +384,15 @@ def _load_preset_catalog(explicit_path: Optional[Path] = None) -> List[PresetEnt
                 log.warning("registry extension %s has no models array; ignored", path)
         except (OSError, json.JSONDecodeError) as ex:
             log.warning("registry extension %s failed to load: %s", path, ex)
-    return [by_id[i] for i in order]
+    presets = [by_id[i] for i in order]
+    missing_hashes = [e.id for e in presets if not e.verified]
+    if missing_hashes:
+        log.warning(
+            "registry presets without a declared sha256 (downloads are not "
+            "integrity-verified and installed models are marked unverified): %s",
+            ", ".join(missing_hashes),
+        )
+    return presets
 
 
 class ModelRegistry:
@@ -387,10 +411,25 @@ class ModelRegistry:
             p.filename: (p.display_name or p.id)
             for p in self._presets
         }
+        # filename -> bool; True when the preset catalog declares a sha256.
+        # Files with no preset/hash resolve to unverified in the UI.
+        self._filename_to_verified: Dict[str, bool] = {
+            p.filename: p.verified for p in self._presets
+        }
+        # (path, reason) for checkpoints scan_installed() refused to load.
+        self._skipped: List[Tuple[str, str]] = []
 
     # ---- scan ----
     def scan_installed(self) -> List[InstalledModel]:
+        """Scan .pth files in pretrained_dir without ever unpickling objects.
+
+        Loading uses weights_only=True, so a malicious checkpoint can not run
+        code during a directory refresh. Checkpoints it refuses (legacy
+        pickles, spacers, corrupt files) are skipped and recorded in
+        self._skipped as (path, reason) so the UI/logs can surface them.
+        """
         out: List[InstalledModel] = []
+        self._skipped = []
         for p in sorted(self.pretrained_dir.glob("*.pth")):
             try:
                 size_mb = p.stat().st_size / 1e6
@@ -401,7 +440,9 @@ class ModelRegistry:
             tainted = False
             supported = False
             try:
-                ck = torch.load(p, map_location="cpu", weights_only=False)
+                # weights_only=True is the security boundary: never execute
+                # pickled payloads while merely listing installed models.
+                ck = torch.load(p, map_location="cpu", weights_only=True)
                 if isinstance(ck, dict):
                     # Common top-level wrappers across training pipelines:
                     #   params / params_ema / state_dict / model_state_dict: Real-ESRGAN, SPAN, etc.
@@ -443,8 +484,11 @@ class ModelRegistry:
                     bm = float(bias.mean())
                     bs = float(bias.std())
                     tainted = (0.35 <= bm <= 0.45) and (bs < 0.05)
-            except Exception:
-                pass
+            except Exception as e:
+                # Refused: not a plain tensor checkpoint (legacy pickle,
+                # corrupt file, ...). Skip it and keep the reason visible
+                # instead of falling back to unsafe pickle loading.
+                self._skipped.append((str(p), str(e)[:200]))
             out.append(InstalledModel(
                 filename=p.name, path=p, kind=kind, scale=scale,
                 tainted=tainted, supported=supported, size_mb=round(size_mb, 2),
@@ -454,6 +498,7 @@ class ModelRegistry:
         # Resolve display_name from the preset catalog (best-effort, by filename).
         for m in self._installed:
             m.display_name = self._filename_to_display.get(m.filename, "")
+            m.verified = self._filename_to_verified.get(m.filename, False)
         return self._installed
 
     # ---- presets ----

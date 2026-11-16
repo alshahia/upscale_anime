@@ -12,6 +12,8 @@ Supported architectures (kind strings used by registry.py and the GUI dropdown):
   - "rfdn_student" RFDN teacher-distilled student (~315K params, 4x only)
 """
 import math
+import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -29,13 +31,45 @@ from ._models.msrsr import MSRSWVSR
 # ============================================================================ #
 # Loader helpers
 # ============================================================================ #
-def _load_state_dict(path):
-    """Load a checkpoint and extract its state dict (handles params/state_dict wrappers)."""
+# Opt-in escape hatch for legacy checkpoints that contain pickled (non-tensor)
+# objects. Unpickling such files can execute arbitrary code, so this is off by
+# default and the loader warns loudly whenever it is used.
+UNSAFE_PICKLE_ENV_VAR = "ANIME_UPSCALER_ALLOW_UNSAFE_PICKLE"
+
+
+def _unsafe_pickle_allowed() -> bool:
+    """True only when the user deliberately set the exact opt-in value."""
+    return os.environ.get(UNSAFE_PICKLE_ENV_VAR) == "1"
+
+
+def _load_state_dict(path, *, allow_unsafe_pickle: Optional[bool] = None):
+    """Load a checkpoint and extract its state dict (handles params/state_dict wrappers).
+
+    The default is weights_only=True: pickled objects are refused because
+    unpickling them can execute arbitrary code. A legacy checkpoint may be
+    loaded only when the user has explicitly opted in with
+    ANIME_UPSCALER_ALLOW_UNSAFE_PICKLE=1 (or a caller passes
+    allow_unsafe_pickle=True); both paths emit a loud warning and must only be
+    used for files whose origin is trusted.
+    """
+    if allow_unsafe_pickle is None:
+        allow_unsafe_pickle = _unsafe_pickle_allowed()
     try:
         sd = torch.load(path, map_location='cpu', weights_only=True)
-    except Exception:
-        import warnings
-        warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
+    except Exception as safe_error:
+        if not allow_unsafe_pickle:
+            raise RuntimeError(
+                f"refusing to load {path}: not a plain tensor checkpoint "
+                f"(set {UNSAFE_PICKLE_ENV_VAR}=1 only for files you trust): "
+                f"{safe_error}"
+            ) from safe_error
+        warnings.warn(
+            f"UNSAFE pickle load: {UNSAFE_PICKLE_ENV_VAR}=1 permits arbitrary "
+            f"code execution while loading {path}. Only load checkpoints you "
+            "trust.",
+            UserWarning,
+            stacklevel=2,
+        )
         sd = torch.load(path, map_location='cpu', weights_only=False)
     if isinstance(sd, dict):
         for k in ('params', 'params_ema', 'state_dict', 'model_state_dict', 'student'):
