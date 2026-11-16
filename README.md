@@ -8,12 +8,17 @@ English | [العربية](README.ar.md)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB)](pyproject.toml)
 [![PyTorch 2.4+](https://img.shields.io/badge/pytorch-2.4%2B-EE4C2C)](requirements.txt)
 
+<p align="center">
+  <img src="docs/media/banner.png" alt="Anime Upscaler — open-source anime super-resolution" width="560">
+</p>
+
 Anime upscaling in PyTorch, shipped in two forms: a standalone **Windows anime upscaler GUI** for image and video upscaling, and a **research/training toolkit** (`anime_sr`) for anime super-resolution with SPAN, Mamba-PAN, and progressive ensemble knowledge distillation into lightweight RFDN/TinySRVGG students. Both share the same model code and a CPU/CUDA inference stack, with batch-queue processing, tiled inference for limited VRAM, and reproducible configuration files.
 
 > **Status:** preview. The GUI is released as the GitHub pre-release [`v0.2.0-preview`](https://github.com/alshahia/upscale_anime/releases/tag/v0.2.0-preview); the research package is alpha source (not on PyPI). See [Status & limitations](#status--limitations).
 
 ## Table of contents
 
+- [Visual overview](#visual-overview)
 - [Two things in one repo](#two-things-in-one-repo)
 - [Download & install the GUI (Windows)](#download--install-the-gui-windows)
 - [GUI features](#gui-features)
@@ -29,6 +34,60 @@ Anime upscaling in PyTorch, shipped in two forms: a standalone **Windows anime u
 - [Status & limitations](#status--limitations)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
+
+## Visual overview
+
+<p align="center">
+  <img src="docs/media/gui-screenshot.png" alt="Anime Upscaler GUI: file queue, Single/Batch mode, model picker, preview panes, GPU monitor, log panel, and action buttons" width="900">
+</p>
+
+<p align="center"><sub>The standalone Windows GUI (<code>anime-upscaler-gui 0.2.0</code>, preview) captured from this repository's development environment. This is the real app with an empty queue: model weights are downloaded or imported separately, so the wheel ships no demo content.</sub></p>
+
+### Before / after
+
+The pair below is the repository's own documented demo sample: a 1280x720 frame from the project's `assets/examples/lr.png` and its 4x demo output `assets/examples/output.png`, downscaled for the web. It is a project demo from the repository, not a benchmark comparison; appearance and colour depend on the model and the sample.
+
+| Input (1280x720) | Output 4x (5120x2880) |
+|:--:|:--:|
+| ![Input frame from the repository demo pair](docs/media/example-lr.jpg) | ![4x output frame from the repository demo pair](docs/media/example-sr.jpg) |
+
+<p align="center"><sub>Demo assets: <a href="assets/examples/lr.png"><code>assets/examples/lr.png</code></a> and <a href="assets/examples/output.png"><code>assets/examples/output.png</code></a> (4x upscale produced by the project). Numbers quoted elsewhere in this README are project-reported.</sub></p>
+
+### Detail comparison (100% crop)
+
+Both panels show the same 320x180 input region displayed at 640x360 for comparison: the left panel is the input enlarged with nearest-neighbour (so pixel blocks are visible), and the right panel is the corresponding 4x output downscaled to the same display size. It is included as an honest sample of the demo pair, not as a quality benchmark.
+
+<p align="center">
+  <img src="docs/media/example-detail.png" alt="Detail crop comparison: left, the input enlarged with nearest-neighbour; right, the 4x output at the same display size" width="1000">
+</p>
+
+### How the GUI pipeline works
+
+Each job runs locally through one decode -> inference -> encode pipeline:
+
+```mermaid
+flowchart LR
+    A["Input image / video"] --> B["Decode<br/>OpenCV (cv2) / PyAV"]
+    B --> C["Anime SR model<br/>CPU or CUDA, tiled"]
+    C --> D["Encode<br/>NVENC / libx264"]
+    D --> E["Output file<br/>audio preserved"]
+```
+
+- **Standalone wheel.** The released wheel contains the GUI and model code; checkpoints are downloaded or imported through the **Models** tab. Nothing is sent to a server and no account is needed.
+- **Hardware-aware.** CPU inference always works; CUDA is used when available, FP16 and tiled processing limit VRAM use, and the encoder falls back from NVENC to libx264 when hardware encoding is unavailable.
+- **Video handling.** The original audio track is preserved, and long files are processed through the batch queue with pause/resume/cancel.
+
+### Repository at a glance
+
+```mermaid
+flowchart LR
+    Repo["upscale_anime repository"] --> R["src/anime_sr<br/>research package: models, training, distillation, inference"]
+    Repo --> G["apps/anime_upscaler_gui<br/>standalone Windows GUI"]
+    R --> T["training / distillation / evaluation<br/>configs/ + scripts/ + docs/"]
+    G --> W["v0.2.0-preview wheel<br/>GitHub pre-release"]
+```
+
+One repository, two deliverables that share the same model code and CPU/CUDA inference stack — described in [Two things in one repo](#two-things-in-one-repo).
 
 ## Two things in one repo
 
