@@ -20,6 +20,7 @@ Phase A2 of the GUI extensibility refactor moved these out of the monolithic
 ``pipeline.py`` (1034 LOC) into a focused submodule. The public API stays the
 same: every name is re-exported from ``pipeline.__init__``.
 """
+import os
 import queue
 import subprocess
 import threading
@@ -70,6 +71,27 @@ _PREFETCH_DEPTH = {"async": 8}
 # existing on_frame_error handler.
 class _JobCancelled(Exception):
     """Raised internally by the worker when a cancel control arrives."""
+
+
+def _same_file(input_path: Path, output_path: Path) -> bool:
+    """True when both paths name the same filesystem entry (hard links too).
+
+    Worker-side mirror of controllers.job_builder._same_file: the worker
+    re-validates every job (batch queues, persisted/reloaded queues) before it
+    opens an encoder, so it must catch hard links as well as spelling changes.
+    """
+    try:
+        if input_path.exists() and output_path.exists():
+            return os.path.samefile(input_path, output_path)
+    except OSError:
+        pass
+    try:
+        a = os.path.realpath(os.fspath(input_path))
+        b = os.path.realpath(os.fspath(output_path))
+    except (OSError, ValueError):
+        a = os.path.abspath(os.fspath(input_path))
+        b = os.path.abspath(os.fspath(output_path))
+    return os.path.normcase(a) == os.path.normcase(b)
 
 
 def _unlink_partial_output(out_path) -> None:
@@ -390,12 +412,11 @@ class PipelineWorker(threading.Thread):
         # Task 8: an encoder opened on the input path truncates the user
         # source before a frame is read. Refuse before any file is touched
         # (the GUI validates too; this catches persisted/reloaded queues).
-        try:
-            same = job.output_path.resolve() == job.input_path.resolve()
-        except OSError:
-            same = (str(job.output_path.absolute()).lower()
-                    == str(job.input_path.absolute()).lower())
-        if same:
+        # Task 8 review follow-up: resolve() equality misses hard links (two
+        # names, one inode), so compare with os.path.samefile when both paths
+        # exist and only fall back to the resolved compare for a destination
+        # that does not exist yet.
+        if _same_file(job.input_path, job.output_path):
             self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message="output path equals input path; refusing to overwrite the source"))
             return

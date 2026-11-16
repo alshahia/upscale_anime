@@ -377,15 +377,22 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             self._update_cut_window_for_input(self.input_path)
             return
         # In batch mode, add each as a separate job.
+        # Task 8 review follow-up: the batch entry point used to queue the raw
+        # _compute_output_path() result without validation, so an empty batch
+        # folder name queued output == input and the encoder truncated the
+        # source. Validate here exactly like the single-file path does.
         added = 0
         for p in paths:
             pp = Path(p)
             if any(j.input == pp for j in self._jobs):
                 continue
+            out = self._compute_output_path_or_none(pp)
+            if out is None:
+                continue
             self._jobs.append(Job(
                 id=self._next_job_id(),
                 input=pp,
-                output=self._compute_output_path(pp),
+                output=out,
                 is_video=self._is_video_path(pp),
             ))
             added += 1
@@ -785,6 +792,20 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             # automatically -- it waits for an explicit Start (which resets
             # it to PENDING) so one bad file cannot loop the queue forever.
             if j.status == JobStatus.PENDING:
+                # Task 8 review follow-up: the batch/reloaded-queue path used
+                # to hand build_run_job an unvalidated output (the single-file
+                # path validates at enqueue). Refuse here, on the last step
+                # before the worker opens an encoder -- this also covers jobs
+                # restored from queue persistence or re-targeted after the
+                # output panel changed. Nothing is created on disk first.
+                from .controllers.job_builder import validate_output_path
+                try:
+                    validate_output_path(j.input, j.output)
+                except ValueError as e:
+                    j.status = JobStatus.ERROR
+                    j.error = str(e)
+                    self._refresh_queue_listbox()
+                    continue
                 j.status = JobStatus.RUNNING
                 j.error = ""
                 j.output.parent.mkdir(parents=True, exist_ok=True)
