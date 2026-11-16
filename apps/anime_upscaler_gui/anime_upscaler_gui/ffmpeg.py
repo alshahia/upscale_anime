@@ -4,6 +4,7 @@ Supports NVENC (NVIDIA hardware H.264 encoder) via the `use_nvenc` flag.
 Falls back to libx264 when NVENC is requested but unavailable.
 """
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -32,6 +33,16 @@ _NVENC_PROBE_TIMEOUT = 15  # seconds (functional encode probe can take a few sec
 # that sees an exit code means the encoder never opened. Near-zero cost
 # when NVENC works.
 _NVENC_INIT_GRACE_S = 4.0
+
+# --- audio remux safety guards --------------------------------------------
+# mux_audio must never publish a damaged picture: the muxed temp file is
+# probed BEFORE it replaces the encoded video and the call fails closed when
+# the result cannot be proven good. The post-mux container/stream length must
+# match the encoded picture within max(5% of the picture, 0.20 s): 5% scales
+# with long clips where container rounding grows, while 0.20 s covers short
+# frame-quantised clips (a 10 fps cut can land one frame short by copy timing).
+_MUX_DURATION_TOLERANCE_RATIO = 0.05
+_MUX_DURATION_TOLERANCE_MIN_S = 0.20
 
 
 def _detect_nvenc_support() -> bool:
@@ -233,17 +244,140 @@ def has_audio_stream(path) -> bool:
     return r.returncode == 0 and r.stdout.strip() != ""
 
 
+def _ffprobe_json(path):
+    """Run ffprobe -show_format -show_streams and return the parsed JSON (or None)."""
+    if not ffprobe_available():
+        return None
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-print_format", "json",
+             "-show_format", "-show_streams", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        info = json.loads(r.stdout)
+    except ValueError:
+        return None
+    return info if isinstance(info, dict) else None
+
+
+def _seconds(value) -> float:
+    """Coerce an ffprobe duration field to a positive finite float (else 0.0)."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return seconds if seconds > 0 and math.isfinite(seconds) else 0.0
+
+
+def _stream_duration(stream) -> float:
+    """Best-effort duration of one ffprobe stream (0.0 when unknown)."""
+    return _seconds((stream or {}).get("duration"))
+
+
+def _container_duration(info) -> float:
+    """Container duration, falling back to the longest stream when absent."""
+    duration = _seconds((info.get("format") or {}).get("duration"))
+    if duration > 0:
+        return duration
+    return max((_stream_duration(s) for s in info.get("streams") or []), default=0.0)
+
+
+def _audio_track_length(path) -> float:
+    """Duration in seconds of *path*'s first audio stream (0.0 = none/unknown)."""
+    info = _ffprobe_json(path)
+    if info is None:
+        return 0.0
+    audios = [s for s in info.get("streams") or [] if s.get("codec_type") == "audio"]
+    return _stream_duration(audios[0]) if audios else 0.0
+
+
+def _expected_picture_length(video_only) -> float:
+    """Length in seconds of the encoded picture to preserve (0.0 = unknowable)."""
+    duration = probe_duration(video_only)
+    if duration is not None and duration > 0:
+        return duration
+    meta = probe_video_meta(video_only)
+    if meta:
+        return _seconds(meta.get("duration"))
+    return 0.0
+
+
+def _mux_output_is_intact(
+    tmp, expected_seconds: float, source_has_audio: bool,
+    expected_audio_seconds: float = 0.0,
+) -> bool:
+    """Prove the muxed file carries the full picture (and audio when source had it).
+
+    Fails closed on any doubt: unreadable file, missing/zero-sized video stream,
+    missing audio for an audio-bearing source, zero-length audio, a container /
+    video-stream length away from the encoded picture beyond tolerance, or an
+    audio track whose length does not match the requested cut window (ffmpeg
+    silently starts over when a seek runs past the audio end, which would ship
+    audio from the wrong position).
+    """
+    info = _ffprobe_json(tmp)
+    if info is None:
+        return False
+    streams = info.get("streams") or []
+    videos = [s for s in streams if s.get("codec_type") == "video"]
+    if not videos:
+        return False
+    video = videos[0]
+    try:
+        width = int(video.get("width") or 0)
+        height = int(video.get("height") or 0)
+    except (TypeError, ValueError):
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    tolerance = max(_MUX_DURATION_TOLERANCE_RATIO * expected_seconds,
+                    _MUX_DURATION_TOLERANCE_MIN_S)
+    container = _container_duration(info)
+    if container <= 0 or abs(container - expected_seconds) > tolerance:
+        return False
+    # The picture stream itself must be full length: a container can be padded
+    # by a longer audio stream while -shortest truncated the video (F2).
+    video_length = _stream_duration(video) or container
+    if abs(video_length - expected_seconds) > tolerance:
+        return False
+    if source_has_audio:
+        audios = [s for s in streams if s.get("codec_type") == "audio"]
+        if not audios:
+            return False
+        audio_length = _stream_duration(audios[0])
+        if audio_length <= 0:
+            return False
+        audio_tolerance = max(_MUX_DURATION_TOLERANCE_RATIO * expected_audio_seconds,
+                              _MUX_DURATION_TOLERANCE_MIN_S)
+        if abs(audio_length - expected_audio_seconds) > audio_tolerance:
+            return False
+    return True
+
+
 def mux_audio(video_only, audio_source, dest, *, start_seconds: float = 0.0,
               duration_seconds: float | None = None) -> bool:
     """Remux the source audio into the encoded video without re-encoding.
 
-    Writes a sibling '.muxing' temp file and os.replace()s it over dest, so a
-    crash never leaves a half-written destination. Returns True when dest now
-    exists and is non-empty; it carries audio when the source had an audio
-    stream, while a video-only source simply stays video-only (that is not an
-    error, so the video is still delivered). start_seconds/duration_seconds
-    mirror the job's cut window so the sound matches exactly the frames that
-    were encoded.
+    Writes a sibling '.muxing' temp file, verifies it, then os.replace()s it
+    over dest, so a crash or a bad mux never replaces the encoded video with a
+    damaged one. The audio never dictates the length: there is no -shortest and
+    the output is capped at the picture length, so short source audio ends
+    early (valid) while the picture stays whole.
+
+    Returns True only when the destination is verified to carry both streams
+    and the full picture length; a video-only source simply stays video-only
+    (that is not an error, so the video is still delivered). Any doubt -
+    unreadable output, missing/short video, no audio for an audio-bearing
+    source, unexpected length, a cut window with no source audio left in it,
+    missing ffprobe/ffmpeg - fails closed: the temp is removed, dest is left
+    untouched and False is returned.
+    start_seconds/duration_seconds mirror the job's cut window so the sound
+    matches exactly the frames that were encoded.
     """
     if not ffmpeg_available():
         return False
@@ -251,6 +385,31 @@ def mux_audio(video_only, audio_source, dest, *, start_seconds: float = 0.0,
     video_only = Path(video_only)
     audio_source = Path(audio_source)
     dest = Path(dest)
+    # Fail closed before writing anything when the picture length is unknowable:
+    # without it the muxed result cannot be verified.
+    expected_seconds = _expected_picture_length(video_only)
+    if expected_seconds <= 0:
+        return False
+    source_has_audio = has_audio_stream(audio_source)
+    # Length of audio the requested window can actually provide. A window that
+    # starts past the audio end is NOT "zero audio": ffmpeg restarts the track
+    # when an input seek runs past EOF (verified: -ss 5 on a 1 s track yields
+    # the whole 1.023 s track), which would ship audio from the wrong position.
+    # Fail closed instead.
+    expected_audio_seconds = 0.0
+    if source_has_audio:
+        audio_length = _audio_track_length(audio_source)
+        if audio_length <= 0:
+            return False
+        window_start = max(0.0, start_seconds)
+        remaining = max(0.0, audio_length - window_start)
+        if duration_seconds is not None and duration_seconds > 0:
+            window = min(duration_seconds, remaining)
+        else:
+            window = remaining
+        expected_audio_seconds = min(window, expected_seconds)
+        if expected_audio_seconds <= 0:
+            return False
     tmp = dest.with_name(dest.stem + ".muxing" + dest.suffix)
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video_only)]
     if start_seconds > 0:
@@ -259,13 +418,21 @@ def mux_audio(video_only, audio_source, dest, *, start_seconds: float = 0.0,
         cmd += ["-t", f"{duration_seconds:.3f}"]
     cmd += ["-i", str(audio_source),
             "-map", "0:v:0", "-map", "1:a:0?",
-            "-c", "copy", "-shortest", str(tmp)]
+            "-c", "copy",
+            # Cap the output at the encoded picture length (output option) so a
+            # longer audio stream can never extend or truncate the picture, and
+            # omit -shortest so short audio can never cut it.
+            "-t", f"{expected_seconds:.3f}", str(tmp)]
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=3600)
     except subprocess.TimeoutExpired:
         tmp.unlink(missing_ok=True)
         return False
     if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:
+        tmp.unlink(missing_ok=True)
+        return False
+    if not _mux_output_is_intact(tmp, expected_seconds, source_has_audio,
+                                 expected_audio_seconds):
         tmp.unlink(missing_ok=True)
         return False
     try:
