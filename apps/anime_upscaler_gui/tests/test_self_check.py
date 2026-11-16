@@ -24,3 +24,5 @@ def test_self_check_reports_environment():
     assert isinstance(report["architectures"], list) and report["architectures"]
     assert report["ffmpeg"] is True
     assert report["ffprobe"] is True
+    # Package data must be inside the shipped wheel; see Task 17b (W1).
+    assert report["bundled_registry"] is True
