@@ -1,8 +1,8 @@
 # MkDocs configuration for the anime-sr documentation site.
 # Build: mkdocs build --strict   Serve locally: mkdocs serve
 site_name: anime-sr
-site_description: Anime super-resolution with progressive ensemble distillation
-repo_url: https://github.com/user/upscale_anime
+site_description: "Anime super-resolution and image/video upscaling in PyTorch: SPAN, MambaIR, ERANet, AnimeSR, Real-ESRGAN inference, progressive ensemble distillation, and a standalone Windows anime upscaler GUI."
+repo_url: https://github.com/alshahia/upscale_anime
 docs_dir: docs
 site_dir: site
 
@@ -74,3 +74,4 @@ nav:
     - V7 Results: v7_results.md
     - V8 Results: v8_results.md
     - Realtime 4K Report: rfdn_realtime_report.md
+    - Citation: citation.md

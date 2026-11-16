@@ -1,0 +1,46 @@
+# anime-sr documentation index (llms.txt)
+
+> Machine-readable index of the anime-sr / Anime Upscaler documentation. Links are relative to this file inside the repository's docs/ directory (https://github.com/alshahia/upscale_anime/tree/release/gui-preview/docs).
+
+- Documentation site sources: docs/ (MkDocs Material)
+- Repository: https://github.com/alshahia/upscale_anime
+- Pre-release: https://github.com/alshahia/upscale_anime/releases/tag/v0.2.0-preview
+
+## Docs
+
+- [Documentation home](index.md): overview, quick start, and navigation for the docs site.
+- [User guide](USER_GUIDE.md) and [quick reference](QUICK_REFERENCE.md).
+- [CLI reference](cli.md) and [configuration](configuration.md).
+- [Model architectures](models.md) and [architecture overview](architecture.md).
+- [Training guide](training.md) and [config reference](config_reference.md).
+- [Deployment](deployment.md) and [public API](PUBLIC_API.md).
+- [Troubleshooting](troubleshooting.md).
+- [Citation guide](citation.md): how to cite this project and the key upstream papers.
+- [Repository README](../README.md) and [Arabic README](../README.ar.md).
+- [GUI README](../apps/anime_upscaler_gui/README.md).
+
+## Installation
+
+- Research package from source: `pip install -e ".[dev]"` (Python 3.12+, PyTorch 2.4+).
+- GUI wheel: download from https://github.com/alshahia/upscale_anime/releases/tag/v0.2.0-preview, then `pip install anime_upscaler_gui-0.2.0-py3-none-any.whl` in a fresh virtual environment; run `anime-upscaler-gui --self-check`.
+- No model weights are bundled with the wheel; ffmpeg/ffprobe must be installed for video.
+
+## Usage
+
+- Train: `anime-sr train --config configs/base.yaml`
+- Infer: `anime-sr infer --checkpoint checkpoints/model_best.pt --input ./input_images --output ./output --scale 4`
+- Agent/agent-friendly summaries: [../AGENTS.md](../AGENTS.md) and [../llms.txt](../llms.txt).
+- Tests: `pytest` and `python -m mkdocs build --strict`.
+
+## Research
+
+- [v7 results](v7_results.md), [v8 results](v8_results.md), [RFDN real-time report](rfdn_realtime_report.md).
+- [Measured status 2026-11-16](status/MEASURED_STATUS_2026-11-16.md): raw measurement snapshot.
+- [Small dataset guide](SMALL_DATASET_TECHNIQUES_GUIDE.md) and [APISR degradation spec](APISR_DEGRADATION_SPEC.md).
+
+## Machine-readable
+
+- [CITATION.cff](../CITATION.cff): CFF 1.2.0 citation metadata.
+- [citation.md](citation.md): BibTeX for the software and upstream papers.
+- [../llms.txt](../llms.txt): repository-root index for LLM tooling.
+- [Release page](https://github.com/alshahia/upscale_anime/releases/tag/v0.2.0-preview): pre-release assets (wheel + SHA256SUMS.txt).
