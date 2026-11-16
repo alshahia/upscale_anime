@@ -17,7 +17,7 @@ dependencies = [
     "opencv-python>=4.13",
     "numpy>=2.4",
     "Pillow>=12.2",
-    "pyav>=17.1",
+    "av>=17.1",
     # GPU monitor: provides the pynvml module. Pure Python, so it is safe to
     # install on machines without an NVIDIA driver (the panel degrades to
     # dashes when NVML cannot be initialised).

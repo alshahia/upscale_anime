@@ -8,7 +8,7 @@ torchvision>=0.27
 opencv-python>=4.13
 numpy>=2.4
 Pillow>=12.2
-pyav>=17.1
+av>=17.1
 # NVIDIA GPU monitor (provides the pynvml module). Pure Python; the panel
 # degrades to dashes when no NVIDIA driver is present.
 nvidia-ml-py>=12.0
