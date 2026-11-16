@@ -415,6 +415,12 @@ jobs:
     # Only reachable from a version tag, and only once every gate is green.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [test, gui-tests, api-smoke, integration-test, performance-test, security, build-docs]
+    env:
+      # The `secrets` context is not allowed inside `if:` (GitHub rejects the
+      # whole workflow at compile time), so publish state is expressed through
+      # job-level env and checked with the `env` context on the step below.
+      TWINE_USERNAME: __token__
+      TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -438,8 +444,5 @@ jobs:
 
       - name: Deploy to PyPI
         # Dry-run until TWINE_PASSWORD is configured in repo secrets.
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        if: ${{ env.TWINE_PASSWORD != '' }}
         run: twine upload dist/*
