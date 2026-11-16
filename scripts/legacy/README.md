@@ -20,4 +20,4 @@ twine check dist/*
 
 The release guard `tests/release/test_no_legacy_packager.py` fails if a
 release doc or workflow references the legacy packager without marking it
-DEPRECATED. Full repair or deletion of the script is Task 27 (post-release).
+DEPRECATED. Full repair or deletion of the script is Task 26 (post-release).

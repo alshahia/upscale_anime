@@ -63,7 +63,7 @@ The File, Edit, Run, Tools, and Help menus expose the same actions with accelera
 | `rfdn_student` | RFDN_distill_v1_4x_student | 4x | Project-internal |
 | `srvgg_student` | SRVGG_distill_v1_4x_student | 4x | Project-internal |
 
-The catalog also lists unsupported architectures so they are visible rather than silently ignored. RRDB/APISR/MambaIRv2 are not vendored in this GUI build.
+The catalog also lists unsupported architectures so they are visible rather than silently ignored. RRDB and APISR are not vendored in this GUI build. MambaIRv2 is not offered as its own model kind or preset, but the Mamba attention block it contributes is vendored (`_models/span/mambair_v2.py`) because the bundled SPAN v7 kind uses it, and the MambaIRv2 student implementation (`_models/students/mambair.py`) is part of the same shipped closure.
 
 `rfdn_student` is the in-house teacher-distilled RFDN student (~315K params, KD from SPAN V7, 40 epochs, 29.32 dB test PSNR). It is shipped as `pretrained/RFDN_distill_v1_4x_student.pth` and shows up automatically in the Models tab when the app opens. Best for fast, real-time, low-VRAM upscaling of anime frames.
 
@@ -169,7 +169,7 @@ The test suite covers state validation, settings and queue persistence, model re
 - Drag-and-drop needs the `tkinterdnd2` dependency (declared in requirements.txt); without it the input panel falls back to the file picker.
 - ONNX is wired in the backend but is not exposed by the GUI.
 - Live video scrubbing re-decodes frames; the thumbnail strip is faster for long videos.
-- The wheel bundles the torch-only model code closure for the supported kinds (`srvgg`, `span`, `era`, `animesr`, `rfdn_student`, `srvgg_student`), generated from `src/anime_sr/models/` by `scripts/sync_vendored_models.py`. APISR, RRDB, and MambaIRv2 are not bundled. See `anime_upscaler_gui/_models/NOTICE.md` for upstream attribution and the required pre-release licensing review.
+- The wheel bundles the torch-only model code closure for the supported kinds (`srvgg`, `span`, `era`, `animesr`, `rfdn_student`, `srvgg_student`), generated from `src/anime_sr/models/` by `scripts/sync_vendored_models.py`. APISR and RRDB model kinds are not bundled; MambaIRv2 is not bundled as a model kind or preset either, but the closure still includes the Mamba attention block it contributes (used by the bundled SPAN v7 kind) and its student implementation. See `anime_upscaler_gui/_models/NOTICE.md` for upstream attribution and the required pre-release licensing review.
 - The Arabic catalog has 35 hand-translated strings; native-speaker review is pending before shipping to Arabic users.
 
 See the [UI/UX overhaul plan](docs/plans/ui_ux_overhaul.md) and [resume point](docs/RESUME.md) for the implementation roadmap.

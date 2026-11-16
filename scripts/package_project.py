@@ -5,7 +5,7 @@ This script pre-dates the standard build path and is known broken: it does
 not stage README/LICENSE into the wheel tree and its generated setup.py
 declares entry points for modules that are not installed. Releases use
 "python -m build" against the two pyproject.toml files instead.
-Full repair or deletion is Task 27 (post-release).
+Full repair or deletion is Task 26 (post-release).
 """
 import sys as _sys
 print("WARNING: scripts/package_project.py is deprecated; use python -m build",

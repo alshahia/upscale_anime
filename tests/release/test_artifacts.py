@@ -5,9 +5,18 @@ can still ship a wheel without the bundled preset catalog or with a stale
 vendored model tree. These tests open the built wheel and assert the exact
 runtime entries the GUI needs, then import the wheel in a clean-room
 subprocess that blocks `anime_sr`.
+
+The wheel is built from a FRESH COPY of the app directory with build
+artefacts excluded (`build/`, `dist/`, `*.egg-info`, `__pycache__`, ...).
+Building the app directory in place reuses whatever
+`apps/anime_upscaler_gui/build/lib` happens to hold: after one healthy
+build, a source file could be deleted and the stale copy still shipped,
+and a stale `build/lib` entry could ship while these guards stayed green.
+The copy makes the wheel a function of the working tree only.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -21,6 +30,18 @@ REPO = Path(__file__).resolve().parents[2]
 # GUI from the source tree instead of depending on an installed wheel.
 GUI_APP_DIR = REPO / "apps" / "anime_upscaler_gui"
 PACKAGE_DIR = "anime_upscaler_gui/"
+
+# Build artefacts that must never be copied into the wheel build. A stale
+# `build/lib` tree is exactly what lets a removed source file keep shipping.
+BUILD_ARTEFACT_PATTERNS = (
+    "build",
+    "dist",
+    "*.egg-info",
+    "__pycache__",
+    "*.pyc",
+    ".pytest_cache",
+    ".venv",
+)
 
 # The vendored torch-only model closure (see scripts/sync_vendored_models.py):
 # every generated module plus the attribution NOTICE. An extra or missing
@@ -40,6 +61,7 @@ MODEL_CLOSURE = [
     "_models/teachers/__init__.py",
     "_models/teachers/spandrel.py",
 ]
+MODEL_CLOSURE_PY = [rel for rel in MODEL_CLOSURE if rel.endswith(".py")]
 
 # Package data the GUI reads at runtime: catalog, icon, splash.
 EXPECTED_PACKAGE_DATA = [
@@ -56,10 +78,18 @@ def _run(args, env=None):
 
 @pytest.fixture(scope="module")
 def gui_wheel(tmp_path_factory):
-    """Build the GUI wheel once for every content assertion below."""
-    out = tmp_path_factory.mktemp("gui-wheel")
+    """Build the GUI wheel once, from a fresh copy of the app directory."""
+    work = tmp_path_factory.mktemp("gui-wheel")
+    app_copy = work / "app"
+    shutil.copytree(
+        GUI_APP_DIR,
+        app_copy,
+        ignore=shutil.ignore_patterns(*BUILD_ARTEFACT_PATTERNS),
+    )
+    out = work / "dist"
+    out.mkdir()
     r = _run([sys.executable, "-m", "pip", "wheel",
-              str(GUI_APP_DIR), "--no-deps", "-w", str(out)])
+              str(app_copy), "--no-deps", "-w", str(out)])
     assert r.returncode == 0, r.stderr[-2000:]
     wheels = sorted(out.glob("anime_upscaler_gui-*.whl"))
     assert len(wheels) == 1, f"expected exactly one GUI wheel, got {wheels}"
@@ -83,6 +113,17 @@ def test_gui_wheel_contains_vendored_model_closure(gui_wheel):
         if PACKAGE_DIR + rel not in entries
     ]
     assert not missing, f"GUI wheel is missing vendored model closure entries: {missing}"
+    # Exact set, not just a subset: an undeclared extra `.py` would ship
+    # unseen (the stale-`build/lib` failure mode this fixture guards against).
+    vendored_py = sorted(
+        name[len(PACKAGE_DIR):]
+        for name in entries
+        if name.startswith(PACKAGE_DIR + "_models/") and name.endswith(".py")
+    )
+    assert vendored_py == sorted(MODEL_CLOSURE_PY), (
+        "GUI wheel _models .py entry set drifted from the vendored closure: "
+        f"extra={sorted(set(vendored_py) - set(MODEL_CLOSURE_PY))}, "
+        f"missing={sorted(set(MODEL_CLOSURE_PY) - set(vendored_py))}")
     leaked = [
         name for name in entries
         if name == "anime_sr" or name.startswith("anime_sr/")
