@@ -4,6 +4,7 @@ Supports NVENC (NVIDIA hardware H.264 encoder) via the `use_nvenc` flag.
 Falls back to libx264 when NVENC is requested but unavailable.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -215,3 +216,61 @@ def probe_video_meta(path):
         }
     except Exception:
         return None
+
+
+def has_audio_stream(path) -> bool:
+    """True when ffprobe reports at least one audio stream."""
+    if not ffprobe_available():
+        return False
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return r.returncode == 0 and r.stdout.strip() != ""
+
+
+def mux_audio(video_only, audio_source, dest, *, start_seconds: float = 0.0,
+              duration_seconds: float | None = None) -> bool:
+    """Remux the source audio into the encoded video without re-encoding.
+
+    Writes a sibling '.muxing' temp file and os.replace()s it over dest, so a
+    crash never leaves a half-written destination. Returns True when dest now
+    exists and is non-empty; it carries audio when the source had an audio
+    stream, while a video-only source simply stays video-only (that is not an
+    error, so the video is still delivered). start_seconds/duration_seconds
+    mirror the job's cut window so the sound matches exactly the frames that
+    were encoded.
+    """
+    if not ffmpeg_available():
+        return False
+    # Callers may pass Path objects or plain str paths (job dictionaries).
+    video_only = Path(video_only)
+    audio_source = Path(audio_source)
+    dest = Path(dest)
+    tmp = dest.with_name(dest.stem + ".muxing" + dest.suffix)
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video_only)]
+    if start_seconds > 0:
+        cmd += ["-ss", f"{start_seconds:.3f}"]
+    if duration_seconds is not None and duration_seconds > 0:
+        cmd += ["-t", f"{duration_seconds:.3f}"]
+    cmd += ["-i", str(audio_source),
+            "-map", "0:v:0", "-map", "1:a:0?",
+            "-c", "copy", "-shortest", str(tmp)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=3600)
+    except subprocess.TimeoutExpired:
+        tmp.unlink(missing_ok=True)
+        return False
+    if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:
+        tmp.unlink(missing_ok=True)
+        return False
+    try:
+        os.replace(tmp, dest)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        return False
+    return True
