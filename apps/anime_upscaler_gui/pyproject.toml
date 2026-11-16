@@ -34,12 +34,14 @@ anime-upscaler-gui = "anime_upscaler_gui.__main__:main"
 where = ["."]
 include = ["anime_upscaler_gui*"]
 
-# Bundled runtime data. Both the preset catalog and the icon/splash asset
-# bundle live INSIDE the package so a wheel/sdist ships them next to the
-# code. Keep these globs in step with tests/test_packaging.py.
+# Bundled runtime data. The preset catalog, the vendored-model attribution
+# NOTICE, and the icon/splash asset bundle live INSIDE the package so a
+# wheel/sdist ships them next to the code. Keep these globs in step with
+# tests/test_packaging.py.
 [tool.setuptools.package-data]
 anime_upscaler_gui = [
     "data/*.json",
+    "_models/NOTICE.md",
     "assets/splash/*",
     "assets/icons/phosphor/outline/*",
     "assets/icons/phosphor/duotone/*",

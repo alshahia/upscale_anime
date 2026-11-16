@@ -69,6 +69,12 @@ data/
 # ...but byte-code caches stay ignored everywhere.
 src/anime_sr/data/**/__pycache__/
 src/anime_sr/data/**/*.py[cod]
+# Same for the GUI package's bundled preset-catalog extension: the wheel and
+# sdist must ship it, so it is tracked even though the generic data/ rules
+# above ignore it. Only this package-internal directory is re-included;
+# repo-level data/ directories stay ignored.
+!apps/anime_upscaler_gui/anime_upscaler_gui/data/
+!apps/anime_upscaler_gui/anime_upscaler_gui/data/**
 checkpoints/
 pretrained/
 runs/

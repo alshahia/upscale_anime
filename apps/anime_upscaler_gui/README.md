@@ -5,6 +5,7 @@ Standalone Tkinter desktop app for running the vendored anime super-resolution m
 ## Documentation
 
 - [`docs/EXTENDING.md`](docs/EXTENDING.md) -- recipes for adding a new model kind, setting, backend, or preset (no orchestrator edits required).
+- [`anime_upscaler_gui/_models/NOTICE.md`](anime_upscaler_gui/_models/NOTICE.md) -- upstream attribution for the vendored model code (licensing/attribution review is required before public release).
 - [`../../docs/PUBLIC_API.md`](../../docs/PUBLIC_API.md) -- stable public surface (`RunJob`, `JobEvent`, `PipelineWorker`, `Settings`, `ModelRegistry`, `build`, `register_arch`, `build_run_job`, `select_backend`, ...) for downstream scripts.
 - [`docs/onboarding.md`](docs/onboarding.md) -- first-time user walkthrough.
 - [`docs/themes.md`](docs/themes.md) -- theme tokens and accessibility.
@@ -76,11 +77,12 @@ The catalog also lists unsupported architectures so they are visible rather than
 Two extension paths, both additive -- nothing existing is modified:
 
 1. **New preset for an already-supported architecture.** Add an entry to
-   `apps/anime_upscaler_gui/data/registry.json` under `models` (same shape as
-   the catalog table above; a `kind` of `srvgg`, `span`, `era`, `animesr`,
-   `rfdn_student` or `srvgg_student` is already loadable). Entries with an id
-   matching a built-in preset override it; malformed entries are skipped with a
-   logged warning. The app-data folder can also carry its own registry.json via
+   `anime_upscaler_gui/data/registry.json` under `models` (this file ships
+   inside the package/wheel; same shape as the catalog table above; a `kind`
+   of `srvgg`, `span`, `era`, `animesr`, `rfdn_student` or `srvgg_student` is
+   already loadable). Entries with an id matching a built-in preset override
+   it; malformed entries are skipped with a logged warning. The app-data
+   folder can also carry its own registry.json via
    `_ModelRegistry(pretrained_dir, presets_path=...)`.
 2. **New checkpoint family.** Register an `ArchSpec` (a `detect` + `loader`
    pair + a `Capability`) in `anime_upscaler_gui/archs.py` (or from any
@@ -167,7 +169,7 @@ The test suite covers state validation, settings and queue persistence, model re
 - Drag-and-drop needs the `tkinterdnd2` dependency (declared in requirements.txt); without it the input panel falls back to the file picker.
 - ONNX is wired in the backend but is not exposed by the GUI.
 - Live video scrubbing re-decodes frames; the thumbnail strip is faster for long videos.
-- APISR, RRDB, and MambaIRv2 architecture classes are bundled inside the wheel under `anime_upscaler_gui/_models/`; see `scripts/sync_vendored_models.py`.
+- The wheel bundles the torch-only model code closure for the supported kinds (`srvgg`, `span`, `era`, `animesr`, `rfdn_student`, `srvgg_student`), generated from `src/anime_sr/models/` by `scripts/sync_vendored_models.py`. APISR, RRDB, and MambaIRv2 are not bundled. See `anime_upscaler_gui/_models/NOTICE.md` for upstream attribution and the required pre-release licensing review.
 - The Arabic catalog has 35 hand-translated strings; native-speaker review is pending before shipping to Arabic users.
 
 See the [UI/UX overhaul plan](docs/plans/ui_ux_overhaul.md) and [resume point](docs/RESUME.md) for the implementation roadmap.
