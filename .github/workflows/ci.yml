@@ -40,7 +40,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install OpenCV runtime libraries
-        run: sudo apt-get install -y libgl1 libglib2.0-6
+        # `libglib2.0-6` does not exist; Ubuntu 26.04 ships libglib2.0-0t64
+        # (the pre-t64 name is a fallback for older runner images).
+        run: |
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libglib2.0-0t64 || sudo apt-get install -y libglib2.0-0
 
       - name: Install PyTorch (CPU wheel)
         # The PyPI default is the CUDA-bundled wheel (~2.5 GB). Pull the CPU
@@ -118,10 +122,12 @@ jobs:
 
       - name: Install system dependencies
         # tkinter + a virtual display: Tk aborts without $DISPLAY on Linux.
+        # ffmpeg/ffprobe are GUI runtime requirements (video muxing and the
+        # --self-check report); libglib2.0-6 does not exist on Ubuntu 26.04.
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk xvfb
-          sudo apt-get install -y libgl1 libglib2.0-6
+          sudo apt-get install -y python3-tk xvfb ffmpeg libgl1
+          sudo apt-get install -y libglib2.0-0t64 || sudo apt-get install -y libglib2.0-0
 
       - name: Install PyTorch (CPU wheel)
         run: |
@@ -191,7 +197,10 @@ jobs:
             requirements.txt
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libgl1 libglib2.0-6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libgl1
+          sudo apt-get install -y libglib2.0-0t64 || sudo apt-get install -y libglib2.0-0
 
       - name: Install PyTorch (CPU wheel)
         run: |
