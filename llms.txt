@@ -1,0 +1,54 @@
+# Anime Upscaler GUI & anime-sr
+
+> Anime super-resolution and anime upscaling toolkit in PyTorch: a standalone Windows GUI for image and video upscaling, plus a research/training package with SPAN, Mamba, ERANet, AnimeSR, Real-ESRGAN and distilled lightweight students.
+
+- Repository: https://github.com/alshahia/upscale_anime
+- Branch: release/gui-preview
+- Released artifact: v0.2.0-preview (GitHub pre-release; the wheel is not on PyPI)
+- License: MIT (the repository; vendored model code keeps its upstream licenses, see the GUI NOTICE file)
+
+## Docs
+
+- [README (English)](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/README.md): overview, GUI install, research pipeline, benchmarks, project status.
+- [README (Arabic)](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/README.ar.md): full Arabic translation of the README.
+- [Documentation index](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/index.md): docs site navigation and quick start.
+- [Citation guide](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/citation.md): how to cite the software and the key upstream papers, with BibTeX.
+- [GUI README](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/apps/anime_upscaler_gui/README.md): GUI walkthrough, supported models, shortcuts, extension recipes.
+- [AGENTS.md](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/AGENTS.md): concise instructions for coding agents (layout, commands, constraints).
+- [Detailed agent rules](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/AGENTS.md): long-form internal contributor/agent rules.
+- [Citation metadata](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/CITATION.cff): CFF 1.2.0 citation file.
+
+## Installation
+
+- GUI (Windows): download https://github.com/alshahia/upscale_anime/releases/download/v0.2.0-preview/anime_upscaler_gui-0.2.0-py3-none-any.whl and https://github.com/alshahia/upscale_anime/releases/download/v0.2.0-preview/SHA256SUMS.txt, then `python -m venv .venv-anime-gui` and `.venv-anime-gui\Scripts\python.exe -m pip install anime_upscaler_gui-0.2.0-py3-none-any.whl`. Requires ffmpeg and ffprobe on PATH for video. No model weights are bundled.
+- Research package: clone the repository, create a virtual environment, run `pip install -e ".[dev]"`; optional extras: `pip install -e ".[api]"`, `pip install -e ".[mamba]"`. Requires Python 3.12+ and PyTorch 2.4+.
+- Self-check after installing the GUI: `anime-upscaler-gui --self-check` (prints JSON: version, ffmpeg, ffprobe, bundled_registry, architectures).
+
+## Usage
+
+- Headless inference: `anime-sr infer --checkpoint checkpoints/model_best.pt --input ./input_images --output ./output --scale 4 --device cuda` (add `--tta` or `--tile 512` if needed).
+- GUI: launch `anime-upscaler-gui` (or from a source checkout, see the GUI README).
+- API server: `anime-sr serve --config configs/api/default.yaml --host 127.0.0.1 --port 8000`.
+- Test commands: `pytest`, `pytest apps/anime_upscaler_gui/tests -q`, `pytest tests/release -q`, `python -m mkdocs build --strict`.
+
+## Research
+
+- [Training guide](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/training.md): training procedures, distillation losses, configuration.
+- [Model architectures](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/models.md): SPAN, Mamba-PAN, RFDN, TinySRVGG, MambaIRv2 details.
+- [CLI reference](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/cli.md) and [configuration](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/configuration.md).
+- [Measured status 2026-11-16](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/status/MEASURED_STATUS_2026-11-16.md): raw release-day measurement snapshot.
+- [v7 results](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/v7_results.md), [v8 results](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/v8_results.md), [RFDN real-time report](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/rfdn_realtime_report.md).
+- Methods: progressive ensemble distillation, MTKD + FAKD, SPAN-Tiny teacher, Mamba-PAN, RFDN/TinySRVGG students. All reported numbers are project-reported single-machine measurements, not an independent benchmark suite.
+
+## Machine-readable
+
+- [CITATION.cff](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/CITATION.cff): citation metadata (CFF 1.2.0).
+- [docs/citation.md](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/citation.md): BibTeX for the software and key papers.
+- [docs/llms.txt](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/llms.txt): documentation-site-oriented index with relative links.
+- [Release page](https://github.com/alshahia/upscale_anime/releases/tag/v0.2.0-preview): wheel + SHA256SUMS.txt assets.
+- Repository structure: src/anime_sr (research package), apps/anime_upscaler_gui (GUI), configs/, scripts/, tests/, docs/.
+
+## Optional
+
+- [Documentation site sources](https://github.com/alshahia/upscale_anime/tree/release/gui-preview/docs): MkDocs Material sources for the docs site.
+- [Release notes](https://raw.githubusercontent.com/alshahia/upscale_anime/release/gui-preview/docs/release/v0.2.0-preview-notes.md): install/verification notes for the v0.2.0-preview release.

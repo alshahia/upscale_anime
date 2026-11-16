@@ -1,6 +1,8 @@
 # Anime Upscaler GUI
 
-Standalone Tkinter desktop app for running the vendored anime super-resolution models over images and videos. It can be copied out of the main repository and keeps settings outside the source tree.
+[English](README.md) | [العربية](../../README.ar.md)
+
+Part of the [Anime Upscaler project](../../README.md): a standalone Tkinter desktop app for **anime upscaling** and **anime super-resolution** of images and videos using the vendored SPAN, Mamba, ERANet, AnimeSR, Real-ESRGAN and distilled lightweight student models. It can be copied out of the main repository and keeps settings outside the source tree.
 
 ## Documentation
 
@@ -144,7 +146,7 @@ The AnimeSR recurrent model does not support spatial tiling and falls back to wh
 
 ## Standalone deployment
 
-The GUI ships as a wheel attached to the GitHub pre-release. `--self-check` is added in Task 17.
+The GUI ships as a wheel attached to the GitHub pre-release. `--self-check` verifies `ffmpeg`/`ffprobe`, the bundled registry, and the supported architectures, and exits non-zero when a required component is missing.
 
 ```powershell
 python -m venv .venv-anime-gui

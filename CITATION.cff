@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it using the metadata below."
+title: "Anime Upscaler GUI & anime-sr: anime super-resolution toolkit"
+type: software
+authors:
+  - family-names: "alshahia"
+    website: "https://github.com/alshahia"
+version: "0.2.0-preview"
+date-released: "2026-11-16"
+url: "https://github.com/alshahia/upscale_anime"
+repository-code: "https://github.com/alshahia/upscale_anime"
+license: MIT
+keywords:
+  - "anime super-resolution"
+  - "image upscaling"
+  - "video upscaling"
+  - "knowledge distillation"
+  - "state space model"
+  - "Mamba"
+  - "SPAN"
+  - "RFDN"
+  - "PyTorch"
+  - "computer vision"
