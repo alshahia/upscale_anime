@@ -240,6 +240,7 @@ jobs:
         # Real checkpoints are multi-GB artifacts that never belong in CI; a
         # freshly initialised model exercises the same load/save/infer paths.
         run: |
+          mkdir -p checkpoints/span
           python - <<'PY'
           import torch
           from anime_sr.models.span import create_span_model
@@ -275,12 +276,15 @@ jobs:
             --model-type span
 
       - name: Verify CLI entry point
+        # The infer CLI treats --output as a directory and writes
+        # <input-stem>_sr<ext> inside it (see _handle_infer in
+        # src/anime_sr/__main__.py), so assert the produced file there.
         run: |
           anime-sr infer --checkpoint checkpoints/span/spanx4_ch48.pth \
             --input data/test_hr/dummy_0000.png \
-            --output output/cli_smoke.png \
+            --output output/cli_smoke \
             --device cpu
-          test -f output/cli_smoke.png
+          test -f output/cli_smoke/dummy_0000_sr.png
 
       - name: Upload integration outputs
         if: ${{ !cancelled() }}
@@ -317,6 +321,7 @@ jobs:
 
       - name: Generate synthetic checkpoint and data
         run: |
+          mkdir -p checkpoints/span
           python - <<'PY'
           import torch
           from anime_sr.models.span import create_span_model

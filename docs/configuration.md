@@ -350,7 +350,7 @@ All options below live in 'configs/default.yaml' with the shown defaults.
 
 | Key | Default | Type | Valid range / choices |
 |---|---|---|---|
-| api.host | '0.0.0.0' | str | |
+| api.host | '127.0.0.1' | str | |
 | api.port | 8000 | int | 1–65535 |
 | api.api_key | null | str/null | env: DSH_API_KEY; null = dev mode (auth disabled) |
 | api.allowed_origins | ['http://localhost:3000', 'http://localhost:8000'] | list | |

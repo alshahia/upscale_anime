@@ -18,12 +18,19 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from anime_sr.models.span import create_span_model
-from anime_sr.utils.image_utils import tensor_to_image, image_to_tensor
+from anime_sr.utils.visualizer import tensor_to_image
+
+
+def image_to_tensor(image: Image.Image) -> torch.Tensor:
+    """Convert a PIL image to a float32 [C, H, W] tensor in [0, 1]."""
+    array = np.asarray(image, dtype=np.float32) / 255.0
+    return torch.from_numpy(array).permute(2, 0, 1)
 
 
 def calculate_psnr(img1: np.ndarray, img2: np.ndarray, max_val: float = 255.0) -> float:
     """Calculate PSNR between two images."""
-    mse = np.mean((img1 - img2) ** 2)
+    diff = img1.astype(np.float64) - img2.astype(np.float64)
+    mse = np.mean(diff ** 2)
     if mse == 0:
         return float('inf')
     return 20 * np.log10(max_val / np.sqrt(mse))
@@ -107,9 +114,9 @@ def benchmark_single_image(model: nn.Module,
         sr_tensor = model(lr_tensor)
         inference_time = time.time() - start_time
     
-    # Convert to numpy for PSNR/SSIM
-    sr_np = (tensor_to_image(sr_tensor.squeeze(0)) * 255).astype(np.uint8)
-    hr_np = (tensor_to_image(hr_tensor.squeeze(0)) * 255).astype(np.uint8)
+    # Convert to numpy for PSNR/SSIM (tensor_to_image already scales to 0-255)
+    sr_np = tensor_to_image(sr_tensor.squeeze(0))
+    hr_np = tensor_to_image(hr_tensor.squeeze(0))
     
     # Calculate metrics
     metrics = {
@@ -191,17 +198,10 @@ def load_model(checkpoint_path: str, device: str = 'cuda') -> nn.Module:
     except Exception:
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
-    # Create model
-    from omegaconf import OmegaConf
-    config = OmegaConf.create({
-        'model': {
-            'type': 'span',
-            'channels': 32,
-            'scale': 4
-        }
-    })
-    
-    model = create_span_model(config.model)
+    # Create the same default SPAN architecture that the CI and rehearsal
+    # checkpoints are generated from (create_span_model({})), so the
+    # checkpoint's tensors match the model exactly without a config file.
+    model = create_span_model({})
     
     # Load weights
     if 'model_state_dict' in checkpoint:

@@ -628,8 +628,8 @@ if __name__ == "__main__":
     # Run the API
     uvicorn.run(
         "inference_api:app",
-        host="0.0.0.0",
-        port=8000,
+        host=os.environ.get("ANIME_SR_API_HOST", "127.0.0.1"),
+        port=int(os.environ.get("ANIME_SR_API_PORT", "8000")),
         reload=False,
         log_level="info"
     )

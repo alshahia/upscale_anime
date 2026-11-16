@@ -148,7 +148,7 @@ DEFAULT_SCHEMA: Dict[str, Dict[str, Any]] = {
     "system.cuda_visible_devices": {"type": _STR_OR_NONE, "default": None},
 
     # ---- api ----
-    "api.host": {"type": str, "default": "0.0.0.0"},
+    "api.host": {"type": str, "default": "127.0.0.1"},
     "api.port": {"type": int, "default": 8000, "range": (1, 65535)},
     "api.max_file_size_mb": {"type": int, "default": 50, "range": (1, 10240)},
     "api.rate_limit_per_min": {"type": int, "default": 60, "range": (1, 100000)},

@@ -586,8 +586,8 @@ Examples:
     serve_parser.add_argument(
         "--host",
         type=str,
-        default="0.0.0.0",
-        help="Server host (default: 0.0.0.0)",
+        default="127.0.0.1",
+        help="Server host (default: 127.0.0.1; pass 0.0.0.0 to expose the API)",
     )
     serve_parser.add_argument(
         "--port",

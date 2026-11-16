@@ -171,7 +171,7 @@ anime-sr serve --config configs/api.yaml [options]
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--config` | str | `configs/api.yaml` | Path to API configuration |
-| `--host` | str | `0.0.0.0` | Server host |
+| `--host` | str | `127.0.0.1` | Server host (pass `0.0.0.0` to expose the API) |
 | `--port` | int | 8000 | Server port |
 | `--reload` | flag | False | Enable auto-reload (development) |
 | `--workers` | int | 1 | Number of worker processes |
