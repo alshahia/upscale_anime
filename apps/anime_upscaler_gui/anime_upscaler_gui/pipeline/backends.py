@@ -157,7 +157,9 @@ def select_backend(
 
 
 def _tta_forward(model, x):
-    from anime_sr.inference.tta import tta_forward as _fwd
+    # Task 12: vendored with the rest of the torch-only closure so the GUI
+    # stays standalone (no anime_sr import at runtime, even lazily).
+    from .._models.inference.tta import tta_forward as _fwd
     return _fwd(model, x)
 
 

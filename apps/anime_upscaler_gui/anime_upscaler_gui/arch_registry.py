@@ -1,7 +1,8 @@
 """Architecture registry for the anime-upscaler-gui.
 
-Replaces the vendored archs.py. Model architectures are imported from
-anime_sr.models (single source of truth) instead of being vendored copies.
+Replaces the vendored archs.py. Model architectures live in the package-local
+_models/ tree, generated from src/anime_sr/models (single source of truth) by
+scripts/sync_vendored_models.py, so the GUI wheel is standalone (no anime_sr).
 
 Supported architectures (kind strings used by registry.py and the GUI dropdown):
   - "srvgg"        SRVGGNetCompact (Real-ESRGAN compact: animevideov3, LSDIRCompactv2)
@@ -19,10 +20,10 @@ import cv2
 import torch
 import torch.nn as nn
 
-from anime_sr.models.students import RFDN, TinySRVGGStudent
-from anime_sr.models.span.neosr_span import NeosrSPAN
-from anime_sr.models.eranet import ERANet
-from anime_sr.models.msrsr import MSRSWVSR
+from ._models.students import RFDN, TinySRVGGStudent
+from ._models.span.neosr_span import NeosrSPAN
+from ._models.eranet import ERANet
+from ._models.msrsr import MSRSWVSR
 
 
 # ============================================================================ #
@@ -156,7 +157,7 @@ def _detect_srvgg(state: dict) -> Optional[str]:
 
 
 def _load_srvgg(ckpt_path: str) -> nn.Module:
-    from anime_sr.models.teachers.spandrel import SRVGGNetCompact
+    from ._models.teachers.spandrel import SRVGGNetCompact
     m = SRVGGNetCompact()
     m.load_state_dict(_load_state_dict(ckpt_path), strict=False)
     return m
