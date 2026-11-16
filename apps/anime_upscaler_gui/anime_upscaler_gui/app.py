@@ -404,20 +404,36 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             self.cut_window.hide()
 
     def _compute_output_path(self, input_path: Path) -> Path:
-        """Pick an output path based on settings.output_mode + suffix.
+        """Build the destination from *live* widget state.
 
-        Phase A3: thin wrapper around controllers.job_builder.compute_output_path --
-        the orchestrator's only job here is to read settings + widget state and
-        pass them as primitives to the pure helper.
+        The output-mode radios and the suffix entry have no trace, so
+        settings.data only changes on Save; building from settings sends the
+        next file to the previous destination.
         """
-        d = self.settings.data
         return _compute_output_path_ctrl(
             input_path,
-            output_mode=d.output_mode,
-            single_file_suffix=d.single_file_suffix,
-            batch_folder_name=d.batch_folder_name,
+            output_mode=self.output_panel.output_mode_var.get(),
+            single_file_suffix=self.output_panel.suffix_var.get(),
+            batch_folder_name=self.output_panel.batch_folder_var.get(),
             custom_output_dir=self.output_panel.output_dir_var.get(),
         )
+
+    def _compute_output_path_or_none(self, input_path: Path):
+        """Build + validate the destination; None (with a dialog) on refusal.
+
+        Task 8: an output that resolves to the input file would truncate the
+        user source as soon as the encoder opens it. Refuse here, before the
+        job is queued, so no file is touched. The worker re-validates at run
+        time for jobs that came from queue persistence.
+        """
+        from .controllers.job_builder import validate_output_path
+        try:
+            out = self._compute_output_path(input_path)
+            validate_output_path(input_path, out)
+            return out
+        except ValueError as e:
+            messagebox.showerror("Output folder", str(e))
+            return None
 
     def _next_job_id(self) -> int:
         self._job_counter += 1
@@ -672,10 +688,13 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             # single run never appears in the batch queue list -- the queue
             # (and its filter) is a batch-only view.
             cut_s, cut_e = self._effective_cut_window()
+            out = self._compute_output_path_or_none(self.input_path)
+            if out is None:
+                return  # refused: never queue a job that would overwrite the source
             jobs_to_run = [Job(
                 id=self._next_job_id(),
                 input=self.input_path,
-                output=self._compute_output_path(self.input_path),
+                output=out,
                 is_video=self._is_video_path(self.input_path),
                 cut_start=cut_s,
                 cut_end=cut_e,

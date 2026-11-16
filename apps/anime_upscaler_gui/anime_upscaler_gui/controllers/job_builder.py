@@ -15,6 +15,7 @@ a queued Job, a value-provider callable (so the GUI panel and unit tests can
 both call it without depending on Tk), and the few orchestrator-supplied
 callables (model/kind resolvers, frame-error callback). No Tk imports here.
 """
+import os
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -56,6 +57,46 @@ def compute_output_path(
     else:
         out_dir = Path(custom_output_dir)
     return out_dir / f"{input_path.stem}{single_file_suffix}{input_path.suffix}"
+
+
+def _same_file(input_path: Path, output_path: Path) -> bool:
+    """True when the two paths name the same filesystem entry (no writes).
+
+    ``os.path.samefile`` is the strongest check when both entries exist
+    (catches hard links too); for a destination that does not exist yet
+    (e.g. suffix changed) we compare ``realpath`` values with
+    ``os.path.normcase`` so ``..``, mixed separators, symlinks and - on
+    Windows - letter case cannot sneak past the guard.
+    """
+    try:
+        if input_path.exists() and output_path.exists():
+            return os.path.samefile(input_path, output_path)
+    except OSError:
+        pass
+    try:
+        a = os.path.realpath(os.fspath(input_path))
+        b = os.path.realpath(os.fspath(output_path))
+    except (OSError, ValueError):
+        a = os.path.abspath(os.fspath(input_path))
+        b = os.path.abspath(os.fspath(output_path))
+    return os.path.normcase(a) == os.path.normcase(b)
+
+
+def validate_output_path(input_path: Path, output_path: Path) -> None:
+    """Raise ValueError when the destination would overwrite the input.
+
+    Raises for an empty output folder (Path("") is the process CWD, never
+    what the user meant) and for any destination that resolves to the input
+    file. Opening an encoder on the input path truncates the user source
+    before a single frame is read, so this is checked before any file is
+    touched.
+    """
+    if str(output_path).strip() in ("", "."):
+        raise ValueError("output folder is empty; choose a folder before starting")
+    if _same_file(input_path, output_path):
+        raise ValueError(
+            f"output path equals the input file ({input_path}); "
+            "change the suffix or choose a different output folder")
 
 
 # --- Phase B2: build_run_job -------------------------------------------
@@ -179,6 +220,7 @@ def build_run_job(
 
 __all__ = [
     "compute_output_path",
+    "validate_output_path",
     "build_run_job",
     "make_panel_value_provider",
 ]

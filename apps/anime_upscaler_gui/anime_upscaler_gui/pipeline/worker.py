@@ -387,6 +387,18 @@ class PipelineWorker(threading.Thread):
             self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"input not found: {job.input_path}"))
             return
+        # Task 8: an encoder opened on the input path truncates the user
+        # source before a frame is read. Refuse before any file is touched
+        # (the GUI validates too; this catches persisted/reloaded queues).
+        try:
+            same = job.output_path.resolve() == job.input_path.resolve()
+        except OSError:
+            same = (str(job.output_path.absolute()).lower()
+                    == str(job.input_path.absolute()).lower())
+        if same:
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
+                                message="output path equals input path; refusing to overwrite the source"))
+            return
         try:
             if job.is_video:
                 self._run_video(job)
