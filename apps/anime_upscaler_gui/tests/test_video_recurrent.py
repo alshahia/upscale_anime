@@ -136,8 +136,10 @@ class _FakePipe:
             arr = np.frombuffer(data, dtype=np.uint8)
             self.values.append(int(arr[0]) if arr.size else -1)
             # The real encoder creates the file when it spawns; emulate
-            # that so the partial-output cleanup contract is testable.
-            self._out_path.write_bytes(b"")
+            # that so the partial-output cleanup contract is testable. The
+            # bytes are non-empty so the Task 7 post-encode gate sees a usable
+            # output on the happy path.
+            self._out_path.write_bytes(b"encoded")
 
         def close(self):
             self.closed = True
@@ -614,3 +616,23 @@ def test_recurrent_start_only_cut_remuxes_the_encoded_window(monkeypatch, tmp_pa
     # helper falls back to the encoded frame count / fps (10 frames @ 25 fps).
     assert calls[0]["duration_seconds"] == pytest.approx(10 / FPS), (
         "audio duration must match the encoded picture, not the full source")
+
+# ---- Task 7: a failed encode must not be reported as finished ----
+def test_recurrent_failed_encode_is_error_not_finished(monkeypatch, tmp_path):
+    """A non-zero encoder exit is terminal ERROR: no finished, no kept file."""
+    _force_cpu(monkeypatch)
+    out_path = Path(str(tmp_path)) / "out.mp4"
+    pipe = _FakePipe(out_path)
+    pipe.wait = lambda timeout=None: 1  # ffmpeg exits non-zero after the frames
+    _install(monkeypatch, _FakeRecurrentModel(), pipe, _frames(20))
+    job = _job(tmp_path)
+    w = _worker()
+    w._run_one(job)
+
+    evts = _drain(w.out_queue)
+    kinds = _kinds(evts)
+    assert kinds[-1] == "error", kinds
+    assert "finished" not in kinds, "a failed encode must never be reported DONE"
+    err = [e for e in evts if e.kind == "error"][-1]
+    assert "encoder failed (exit 1)" in err.message, err.message
+    assert not out_path.exists(), "the failed encode output must be discarded"

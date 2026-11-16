@@ -88,6 +88,28 @@ def _unlink_partial_output(out_path) -> None:
         pass
 
 
+def _handle_encode_result(worker, job, out_path, encode_rc, frames) -> bool:
+    """Shared post-encode gate: True only when the output may be reported.
+
+    Task 7: both video paths used to ignore the ffmpeg exit code (and an
+    empty output file), so a failed encode could still be announced as
+    "finished" and leave a truncated file behind. When this returns False
+    the error event emitted below is the job single terminal event, so the
+    caller must return without emitting "finished" or remuxing audio.
+    """
+    if encode_rc != 0:
+        _unlink_partial_output(out_path)
+        worker.emit(JobEvent(kind="error", job_id=job.job_id,
+                             message=f"encoder failed (exit {encode_rc}); output discarded"))
+        return False
+    if frames == 0 or not out_path.exists() or out_path.stat().st_size == 0:
+        _unlink_partial_output(out_path)
+        worker.emit(JobEvent(kind="error", job_id=job.job_id,
+                             message="encoder produced no usable output"))
+        return False
+    return True
+
+
 def _mux_job_audio(out_path, input_path, *, start_seconds: float = 0.0,
                    duration_seconds: float | None = None) -> bool:
     """Remux the source audio into the encoded output.
@@ -630,6 +652,7 @@ class PipelineWorker(threading.Thread):
 
         skip_remaining = False
         proc = 0
+        encode_rc = 0
         t_wall = time.perf_counter()
         last_emit = t_wall
         # Batched path is incompatible with TTA (8 augmentations x N would
@@ -760,18 +783,26 @@ class PipelineWorker(threading.Thread):
                     _maybe_emit_gpu_util(self.emit, job.job_id, [last_emit])
                     last_emit = now
         finally:
+            # Task 7: capture the encoder exit code. A non-zero rc must become
+            # an "error" event with no "finished" and the output discarded --
+            # it used to be ignored and the job was reported DONE.
             if use_pipe:
                 pipe.stdin.close()
                 try:
-                    pipe.wait(timeout=30)
+                    encode_rc = pipe.wait(timeout=30)
                 except subprocess.TimeoutExpired:
                     # Encoder wedged (e.g. NVENC session hang): kill it so
                     # the worker thread doesn't block forever.
                     pipe.kill()
-                    pipe.wait()
+                    encode_rc = pipe.wait()
             else:
                 writer.release()
             sync_reader.release()
+
+        # Task 7: a non-zero encoder exit (or an empty/unusable output) is a
+        # failure, not a finished job -- check before remuxing or reporting.
+        if not _handle_encode_result(self, job, out_path, encode_rc, proc):
+            return
 
         wall = time.perf_counter() - t_wall
         avg_fps = proc / max(wall, 1e-6)
@@ -915,6 +946,7 @@ class PipelineWorker(threading.Thread):
         # error path only unlinks what the encoder opened.
         started_writing = False
         failed = False
+        encode_rc = 0
         stage = "decode"  # which step an unexpected exception came from
         try:
             pipe = open_encoder(
@@ -1009,12 +1041,12 @@ class PipelineWorker(threading.Thread):
                 except OSError:
                     pass
                 try:
-                    pipe.wait(timeout=30)
+                    encode_rc = pipe.wait(timeout=30)
                 except subprocess.TimeoutExpired:
                     # Encoder wedged (e.g. NVENC session hang): kill it so
                     # the worker thread doesn't block forever.
                     pipe.kill()
-                    pipe.wait()
+                    encode_rc = pipe.wait()
             sync_reader.release()
             if failed and started_writing:
                 _unlink_partial_output(out_path)
@@ -1025,6 +1057,11 @@ class PipelineWorker(threading.Thread):
         # window mirrors the encoded frames, never the raw cut fields (End=0
         # means "to EOF", so Start-only cuts are positive windows).
         if not failed:
+            # Task 7: a non-zero encoder exit (or an empty/unusable output) is
+            # a failure, not a finished job -- check before remuxing or
+            # reporting; the output file is discarded by the helper.
+            if not _handle_encode_result(self, job, out_path, encode_rc, n_frames):
+                return
             audio_ok = True
             if use_pipe:
                 mux_start, mux_duration = _audio_mux_window(
