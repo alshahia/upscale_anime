@@ -300,8 +300,8 @@ Total: **18 files** modified across the codebase:
 - **Fix:** Replaced with `time.time()` for accurate timestamps
 - **Impact:** Provides meaningful timestamps without CUDA overhead
 
-### 9.4 `os.chdir()` in package_project.py
-- **File:** `scripts/package_project.py:109, 163, 201`
+### 9.4 `os.chdir()` in package_project.py (DEPRECATED script)
+- **File:** `scripts/package_project.py:109, 163, 201` (DEPRECATED - do not use for releases)
 - **Issue:** `os.chdir()` mutates process state, affects subsequent operations
 - **Fix:** Replaced with `cwd=` parameter in `subprocess.run()`
 - **Impact:** Prevents side effects from directory changes

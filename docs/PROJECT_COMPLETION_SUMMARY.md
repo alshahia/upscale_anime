@@ -108,7 +108,7 @@ The Anime Super-Resolution project has been successfully developed and is now **
 - `scripts/train.py` - Training script
 - `scripts/inference.py` - Inference script
 - `scripts/deploy_api.py` - API deployment
-- `scripts/package_project.py` - Project packaging
+- `scripts/package_project.py` - DEPRECATED legacy packager; release builds use `python -m build`
 - `scripts/run_tests.py` - Test runner
 - `scripts/benchmark_performance.py` - Performance testing
 

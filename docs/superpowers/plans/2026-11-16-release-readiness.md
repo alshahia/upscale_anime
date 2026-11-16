@@ -1455,13 +1455,13 @@ git commit -m "fix(gui): weights_only checkpoint loading; unsafe pickle requires
 ## Task 15: Retire the broken legacy packager from the release path
 
 **Files:**
-- Modify: `scripts/package_project.py` (deprecation banner)
+- Modify: `scripts/package_project.py` (DEPRECATED: add deprecation banner)
 - Create: `scripts/legacy/README.md`
 - Create: `tests/release/test_no_legacy_packager.py`
 
 - [ ] **Step 15.1: Add the deprecation marker**
 
-At the top of scripts/package_project.py insert:
+At the top of scripts/package_project.py (DEPRECATED) insert:
 
 ```python
 """DEPRECATED - do not use for releases.
@@ -1473,7 +1473,7 @@ declares entry points for modules that are not installed. Releases use
 Full repair or deletion is Task 27 (post-release).
 """
 import sys as _sys
-print("WARNING: scripts/package_project.py is deprecated; use python -m build",
+print("WARNING: scripts/package_project.py is deprecated; use python -m build",  # DEPRECATED
       file=_sys.stderr)
 ```
 
@@ -1486,7 +1486,7 @@ Create `tests/release/test_no_legacy_packager.py`:
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-BAD = "package_project.py"
+BAD = "package_project.py"  # DEPRECATED legacy packager
 
 
 def _texts():
@@ -1508,8 +1508,9 @@ def test_no_release_docs_recommend_the_legacy_packager():
 
 ```powershell
 & $py -m pytest tests/release/test_no_legacy_packager.py -q -p no:cacheprovider "--basetemp=$basetemp"
-git add scripts/package_project.py scripts/legacy/README.md tests/release/test_no_legacy_packager.py
-git commit -m "chore: deprecate scripts/package_project.py; release builds use python -m build"
+git add scripts/package_project.py  # DEPRECATED legacy packager
+git add scripts/legacy/README.md tests/release/test_no_legacy_packager.py
+git commit -m "chore: deprecate scripts/package_project.py; release builds use python -m build"  # DEPRECATED
 ```
 
 Expected: 1 passed (if docs still reference the script, fix those docs in this step rather than relaxing the test).
@@ -2145,14 +2146,14 @@ git commit -m "test: replace placeholder assertions and silent import skips with
 ## Task 26: Repair or delete the legacy packager; clean history; unblock strict CI
 
 **Files:**
-- Modify or delete: `scripts/package_project.py`
+- Modify or delete: `scripts/package_project.py` (DEPRECATED legacy packager)
 - Modify: `tests/unit/performance/test_benchmarking.py` (only if Task 25 left debt)
 - Modify: `.github/workflows/ci.yml` (turn advisory lint/mypy blocking)
 - History: repository rewrite before going public
 
 - [ ] **Step 26.1: Decide and execute the packager outcome**
 
-If keeping it: replace its wheel assembly with a call to the standard build (`python -m build --wheel`) and delete the generated-setup.py path and the bogus entry points (`anime-sr-train=scripts.train:main`, `anime-sr-api=src.api.inference_api:main`; src/api does not exist). If deleting: remove `scripts/package_project.py` and `scripts/legacy/` and update the guard test from Task 15 to require absence. Either way add `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` wherever it prints non-ASCII.
+If keeping it: replace its wheel assembly with a call to the standard build (`python -m build --wheel`) and delete the generated-setup.py path and the bogus entry points (`anime-sr-train=scripts.train:main`, `anime-sr-api=src.api.inference_api:main`; src/api does not exist). If deleting: remove `scripts/package_project.py` and `scripts/legacy/` and update the guard test from Task 15 to require absence. Either way add `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` wherever it prints non-ASCII. The legacy packager is DEPRECATED and stays off the release path until then.
 
 - [ ] **Step 26.2: Remove the compiled-Python history before publication**
 
