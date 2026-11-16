@@ -5,7 +5,6 @@ Channel Attention mechanism for SR with very deep networks.
 """
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ChannelAttention(nn.Module):

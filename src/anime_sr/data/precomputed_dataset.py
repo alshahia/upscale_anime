@@ -2,14 +2,13 @@
 Precomputed dataset for fast loading of pre-generated LR/HR pairs.
 Eliminates on-the-fly degradation overhead during training.
 """
-import os
 import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from PIL import Image
-from typing import Optional, Dict
+from typing import Dict
 
 
 class PrecomputedDataset(Dataset):

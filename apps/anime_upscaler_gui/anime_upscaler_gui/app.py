@@ -160,15 +160,39 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         # Keyboard shortcuts (root-level so they work regardless of focus).
         self._bind_shortcuts()
         # Phase 10: focus outline + status triplet + dynamic wraplength.
-        from .a11y import install_focus_outline, status_triplet
+        from .a11y import install_focus_outline
         install_focus_outline(self)
 
     # ============================================================================ #
     # UI construction
     # ============================================================================ #
     def _build_ui(self):
+        # Idempotent: _on_theme_change / _reset_settings / _import_settings /
+        # _toggle_locale all call this again on an already-built window. Packing
+        # a second outer frame would leave the first UI alive (and on top),
+        # so N rebuilds used to leave N stacked copies. Tear the previous tree
+        # down first -- destroying the outer frame destroys every panel in it.
+        previous = getattr(self, "_ui_frame", None)
+        if previous is not None:
+            # Stop the GPU monitor's poll thread before its panel goes away:
+            # it schedules `after(0, ...)` callbacks onto widgets that would
+            # otherwise be dead by the next tick.
+            monitor = getattr(self, "gpu_monitor", None)
+            if monitor is not None:
+                try:
+                    monitor.stop()
+                except Exception:
+                    pass
+            try:
+                previous.destroy()
+            except tk.TclError:
+                # Already gone (window closed / never mapped). Nothing to do.
+                pass
+            self._ui_frame = None
+
         outer = ttk.Frame(self, padding=GROUP_PAD)
         outer.pack(fill="both", expand=True)
+        self._ui_frame = outer
 
         # Layout (top -> bottom):
         #   Notebook (fills most)
@@ -222,14 +246,18 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
 
         self.log_panel = _LogPanel(bottom, self)
         self.log_panel.pack(side="bottom", fill="x", pady=(PAD_Y, 0))
-        # Wire the panel into the logger
+        # Wire the panel into the logger. The handler itself is created once
+        # (it is attached to the root logger by attach_panel), but its target
+        # widget is per-build: every _build_ui destroys the previous log panel
+        # with the rest of the UI tree, so re-point it at the fresh panel or
+        # records would be forwarded to a dead widget.
         if self._log_handler is None:
             self._log_handler = _LogPanelHandler()
             self._log_handler.setFormatter(logging.Formatter(
                 "%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"
             ))
-            self._log_handler.set_target(self.log_panel)
             attach_panel(self._log_handler)
+        self._log_handler.set_target(self.log_panel)
 
     def _build_preview_section(self, parent):
         # Fixed-height preview so the actions row underneath is always visible.
@@ -252,11 +280,43 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         inner = ttk.Frame(canvas)
         # Track inner frame size so the scrollregion updates as content changes.
         inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        # Allow mousewheel scrolling when the cursor is over the canvas.
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
-        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
-        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+        # Mousewheel scrolling. bind_all is needed because Tk does not bubble
+        # wheel events from a child widget to its parent canvas, but the
+        # handler is guarded so it only acts when the pointer is actually over
+        # this canvas subtree -- and never over a widget that scrolls itself
+        # (the queue listbox, the log text). Without the guard the global
+        # binding stole scrolling from every other panel.
+        self_scrolling = (tk.Listbox, tk.Text, ttk.Treeview, ttk.Combobox)
+
+        def _pointer_over_canvas(event) -> bool:
+            w = canvas.winfo_containing(event.x_root, event.y_root)
+            while w is not None:
+                if isinstance(w, self_scrolling):
+                    return False
+                if w is canvas or w is inner:
+                    return True
+                w = getattr(w, "master", None)
+            return False
+
+        def _on_mousewheel(event):
+            if not _pointer_over_canvas(event):
+                return
+            steps = int(-1 * (event.delta / 120))
+            if steps == 0:
+                steps = -1 if event.delta > 0 else 1
+            canvas.yview_scroll(steps, "units")
+
+        def _on_wheel_up(event):
+            if _pointer_over_canvas(event):
+                canvas.yview_scroll(-1, "units")
+
+        def _on_wheel_down(event):
+            if _pointer_over_canvas(event):
+                canvas.yview_scroll(1, "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind_all("<Button-4>", _on_wheel_up)
+        canvas.bind_all("<Button-5>", _on_wheel_down)
         window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
         # Stretch inner to canvas width.
         def _on_canvas_resize(e):
@@ -268,7 +328,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=(PAD_Y, 0))
 
-        def _iconbtn(parent_row, name: str, text: str, command, primary: bool = False):
+        def _iconbtn(parent_row, name: str, text: str, command):
             ic = _load_icon(name, 24)
             kw = {"text": text}
             if ic is not None:
@@ -277,7 +337,7 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             btn = ttk.Button(parent_row, command=command, **kw)
             return btn
 
-        self.start_btn = _iconbtn(row, "play", "Start", self._on_start, primary=True)
+        self.start_btn = _iconbtn(row, "play", "Start", self._on_start)
         self.start_btn.pack(side="left")
         _iconbtn(row, "save", "Save settings", self._save_settings).pack(side="left", padx=(PAD_X, 0))
         _iconbtn(row, "refresh", "Reset to defaults", self._reset_settings).pack(side="left", padx=(PAD_X, 0))
@@ -293,12 +353,20 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
     # Actions
     # ============================================================================ #
     # ---- batch queue ----
-    def _add_files(self):
-        paths = filedialog.askopenfilenames(
-            title="Add images / videos",
-            filetypes=[("Images + Video", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.mp4 *.mkv *.avi *.mov *.webm"),
-                       ("All files", "*.*")],
-        )
+    def _add_files(self, paths=None):
+        """Add files to the queue (batch) or set the single input.
+
+        The paths argument is supplied by the drag-and-drop handler as a list
+        of already-filtered paths. When omitted (the Add files... button), the
+        file picker runs instead. Both entry points must stay on one code
+        path so drops and picks behave identically.
+        """
+        if paths is None:
+            paths = filedialog.askopenfilenames(
+                title="Add images / videos",
+                filetypes=[("Images + Video", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.mp4 *.mkv *.avi *.mov *.webm"),
+                           ("All files", "*.*")],
+            )
         if not paths:
             return
         # In single mode, just keep the first one as input_path.
@@ -533,6 +601,35 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         sel_idx = _pick_default_index(items, last_model=self.settings.data.last_model)
         self.model_panel.model_dropdown.current(sel_idx)
 
+    def _rebuild_ui(self, *, preserve_live_state: bool = True) -> None:
+        """Rebuild the widget tree and restore the state the widgets hold.
+
+        _build_ui() recreates every panel. Anything the panels read from
+        settings (queue mode) or hold as data (queue listbox rows, model
+        dropdown, models list) must be re-applied afterwards, or the UI comes
+        back empty -- which is exactly what happened on theme change and
+        locale toggle. Theme change / locale switch keep the live queue mode
+        and filter; reset / import deliberately let the new settings win
+        (preserve_live_state=False).
+        """
+        live_mode = None
+        live_filter = None
+        if preserve_live_state:
+            try:
+                live_mode = self.input_panel.queue_mode_var.get()
+                live_filter = self.input_panel.filter_var.get()
+            except Exception:
+                pass
+        self._build_ui()
+        if live_mode is not None:
+            self.input_panel.queue_mode_var.set(live_mode)
+        if live_filter is not None:
+            self.input_panel.filter_var.set(live_filter)
+        self.input_panel._on_mode_change()
+        self._refresh_model_dropdown()
+        self.models_panel.refresh_listbox()
+        self._refresh_queue_listbox()
+
     def _on_start(self):
         # Resolve which jobs to run.
         if self.input_panel.queue_mode_var.get() == "batch":
@@ -571,6 +668,9 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
 
         if jobs_to_run is None:
             # Single mode: synthesize a one-element list with current input_path.
+            # These jobs are deliberately NOT appended to self._jobs, so a
+            # single run never appears in the batch queue list -- the queue
+            # (and its filter) is a batch-only view.
             cut_s, cut_e = self.cut_window.get_seconds()
             jobs_to_run = [Job(
                 id=self._next_job_id(),
@@ -588,6 +688,14 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 j.kind = chosen.kind
                 j.scale = chosen.scale
 
+        # Explicit Start is the user's intent to retry failed jobs, so reset
+        # ERROR -> PENDING here. _enqueue_next only auto-advances PENDING
+        # jobs, which is what stops an errored job from being retried forever
+        # after a failure (see the "error" branch of _handle_event).
+        for j in jobs_to_run:
+            if j.status == JobStatus.ERROR:
+                j.status = JobStatus.PENDING
+                j.error = ""
         self._running = True
         self.start_btn.config(state="disabled")
         self.status_bar.progress_var.set(0.0)
@@ -633,7 +741,10 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
         # one entry in widgets/settings_spec.py -- not editing this method.
         get_panel_value = _make_panel_value_provider(sp)
         for j in jobs_to_run:
-            if j.status in (JobStatus.PENDING, JobStatus.ERROR):
+            # Only PENDING is auto-advanced. An ERROR job is never retried
+            # automatically -- it waits for an explicit Start (which resets
+            # it to PENDING) so one bad file cannot loop the queue forever.
+            if j.status == JobStatus.PENDING:
                 j.status = JobStatus.RUNNING
                 j.error = ""
                 j.output.parent.mkdir(parents=True, exist_ok=True)
@@ -750,7 +861,15 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             for evt in pending:
                 if evt.job_id == job_id and evt.kind == "cancel":
                     cancel = True
-                self.ctl_queue.put(evt)
+                # Hand every event back to the worker control channel.
+                # self._ctl_queue IS that channel: it is the queue handed to
+                # PipelineWorker as `ctl_queue` in __init__, so this is the
+                # same put the GUI-side _send_pause/_send_resume/_send_cancel
+                # helpers use. Do NOT reach for `self.ctl_queue`: that
+                # attribute lives on the worker, not on the GUI, so reading
+                # it here raises AttributeError on the worker thread, which
+                # kills the job and leaves the resume modal open forever.
+                self._ctl_queue.put(evt)
             if cancel:
                 result_box["action"] = ABORT_JOB
                 result_box["_done"] = True

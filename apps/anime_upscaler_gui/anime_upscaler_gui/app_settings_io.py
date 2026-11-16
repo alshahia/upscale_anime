@@ -67,17 +67,19 @@ class SettingsIOMixin:
             return
         self.settings.data.theme = name
         self.settings.save()
-        self._build_ui()
-        self._refresh_model_dropdown()
-        self.models_panel.refresh_listbox()
+        self._rebuild_ui()
 
     def _reset_settings(self):
-        if not self._confirm_destructive("Reset", "Reset all settings to defaults?"):
+        if not self._confirm_destructive(
+            "Reset", "Reset all settings to defaults?\n\nQueued jobs are kept."
+        ):
             return
         from .settings import _Defaults
         self.settings.data = _Defaults()
         self.settings.save()
-        self._build_ui()  # simplest: rebuild the UI from defaults
+        # Defaults win (do not carry the live queue mode over), but the queue
+        # widgets are still repopulated -- _rebuild_ui does both.
+        self._rebuild_ui(preserve_live_state=False)
 
     def _open_settings_folder(self):
         path = self.paths.app_dir
@@ -122,7 +124,8 @@ class SettingsIOMixin:
             return
         try:
             self.settings.import_file(Path(path))
-            self._build_ui()  # refresh widget values from new settings
+            # Imported settings win; repopulate the queue widgets regardless.
+            self._rebuild_ui(preserve_live_state=False)
             self.status_bar.status_var.set(f"Settings imported from {Path(path).name}")
         except Exception as e:
             messagebox.showerror("Import failed", _humanize_error(e))

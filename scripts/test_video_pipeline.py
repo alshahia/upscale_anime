@@ -11,30 +11,23 @@ import cv2
 
 # Package installed via pip install -e . - no sys.path needed
 
-try:
-    from anime_sr.data.video_extraction import (
-        calculate_frame_quality,
-        calculate_frame_hash,
-        hash_similarity,
-        is_duplicate_frame,
-        extract_frames_from_video,
-        get_video_info,
-    )
-    from anime_sr.data.video_dataset import VideoDataset
-    from data import validate_dataset
-except ImportError as e:
-    print(f"Import error: {e}")
-    print("Trying alternative import path...")
-    from anime_sr.data.video_extraction import (
-        calculate_frame_quality,
-        calculate_frame_hash,
-        hash_similarity,
-        is_duplicate_frame,
-        extract_frames_from_video,
-        get_video_info,
-    )
-    from anime_sr.data.video_dataset import VideoDataset
-    from anime_sr.data import validate_dataset
+from anime_sr.data.video_extraction import (
+    calculate_frame_quality,
+    calculate_frame_hash,
+    hash_similarity,
+    is_duplicate_frame,
+    extract_frames_from_video,
+    get_video_info,
+)
+from anime_sr.data.video_dataset import VideoDataset
+from anime_sr.data import validate_dataset
+
+# This script prints status marks (check / cross / warning) on success lines.
+# Force a UTF-8 stdout so those marks survive on Windows consoles with a
+# non-UTF-8 code page (e.g. cp1256), where printing them raises
+# UnicodeEncodeError before any test can run.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 def create_test_video(output_path: Path, num_frames: int = 100, fps: int = 30, resolution: tuple = (1280, 720)):
@@ -199,7 +192,10 @@ def test_video_dataset():
     print("Test 6: VideoDataset Class")
     print("=" * 60)
     
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # ignore_cleanup_errors=True: on Windows an OpenCV capture can still
+    # hold the generated mp4 open, and TemporaryDirectory's cleanup would then
+    # raise WinError 32 after the actual dataset assertions already passed.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         video_dir = Path(tmpdir) / "videos"
         video_dir.mkdir()
         
@@ -253,17 +249,8 @@ def test_imports():
     print("Test 0: Import Validation")
     print("=" * 60)
     
-    try:
-        from data import VideoDataset, extract_from_folder, get_video_info
-        print("✓ Direct imports from data module work")
-    except ImportError as e:
-        print(f"⚠ Import from 'data' failed: {e}")
-        try:
-            from anime_sr.data import VideoDataset, extract_from_folder, get_video_info
-            print("✓ Alternative imports from 'src.data' work")
-        except ImportError as e2:
-            print(f"✗ Both import attempts failed: {e2}")
-            return False
+    from anime_sr.data import VideoDataset, extract_from_folder, get_video_info
+    print("✓ Direct imports from the anime_sr.data package work")
     
     return True
 

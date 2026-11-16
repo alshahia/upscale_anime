@@ -161,11 +161,11 @@ Run from the repository root so the `apps` package is importable:
 apps\anime_upscaler_gui\.venv\Scripts\python.exe -m pytest apps\anime_upscaler_gui\tests\ -q
 ```
 
-The test suite covers state validation, settings and queue persistence, model registry behavior, threading, themes, accessibility, telemetry, empty states, tiling, VRAM estimation, and documentation links.
+The test suite covers state validation, settings and queue persistence, model registry behavior, threading, themes, accessibility, telemetry, empty states, tiling, VRAM estimation, documentation links, packaging (bundled assets + dependency parity), drag-and-drop routing, UI-rebuild state, and filtered-queue selection.
 
 ## Current limitations
 
-- Drag-and-drop requires optional `tkinterdnd2` integration and is not enabled.
+- Drag-and-drop needs the `tkinterdnd2` dependency (declared in requirements.txt); without it the input panel falls back to the file picker.
 - ONNX is wired in the backend but is not exposed by the GUI.
 - Live video scrubbing re-decodes frames; the thumbnail strip is faster for long videos.
 - APISR, RRDB, and MambaIRv2 architecture classes are not included in this standalone GUI.
@@ -175,7 +175,7 @@ See the [UI/UX overhaul plan](docs/plans/ui_ux_overhaul.md) and [resume point](d
 
 ## Building the asset bundle
 
-Icon and splash assets are generated once from JPEG masters in `apps/anime_upscaler_gui/assets/`:
+Icon and splash assets are generated once from JPEG masters in `apps/anime_upscaler_gui/anime_upscaler_gui/assets/` (inside the package, so package-data ships them in the wheel):
 
 ```powershell
 apps\anime_upscaler_gui\.venv\Scripts\python.exe apps\anime_upscaler_gui\scripts\build_assets.py

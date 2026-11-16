@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Project packaging script for the anime super-resolution project.
 Creates distributable packages with all necessary components.
@@ -201,7 +201,6 @@ class ProjectPackager:
                 "conda-build", ".",
                 "--output-folder", str(self.dist_dir / "conda")
             ], capture_output=True, text=True, cwd=conda_dir)
-            ], capture_output=True, text=True)
             
             if result.returncode == 0:
                 print("[OK] Conda package created successfully")

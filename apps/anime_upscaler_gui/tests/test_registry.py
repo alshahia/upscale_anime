@@ -4,6 +4,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import pytest
+
 
 def _fresh_pretrained_dir() -> Path:
     d = Path(tempfile.gettempdir()) / f"aug_pretrained_{uuid.uuid4().hex[:8]}"
@@ -164,3 +166,85 @@ def test_registry_presets_listed():
     ids = [p.id for p in presets]
     assert "realesr-animevideov3" in ids
     assert "span_pix_pretrain_4x" in ids
+
+def test_bundled_registry_json_resolves_in_repo_layout():
+    """M5: the catalog must resolve via importlib.resources in the repo.
+
+    The file ships as ``anime_upscaler_gui/data/registry.json`` -- INSIDE the
+    package, declared as ``package-data`` in pyproject.toml -- so wheels and
+    sdists carry it. Running from a checkout, the package is only importable
+    under the ``apps.`` prefix, which is why the resolver anchors on
+    ``__package__`` instead of the literal name.
+    """
+    import importlib.resources as resources
+
+    from apps.anime_upscaler_gui.anime_upscaler_gui import registry as reg
+
+    bundled = reg._bundled_registry_json()
+    assert bundled is not None
+    assert bundled.is_file()
+
+    # It lives inside the package directory, next to registry.py itself.
+    package_root = Path(reg.__file__).resolve().parent
+    assert bundled.is_relative_to(package_root), (
+        f"bundled catalog {bundled} is outside the package dir {package_root}"
+    )
+    assert bundled == package_root / "data" / "registry.json"
+
+    # And importlib.resources is what actually finds it.
+    assert resources.files(reg.__package__).joinpath(
+        "data", "registry.json").is_file()
+    assert resources.files(reg.__package__).joinpath(
+        "data", "registry.json") == bundled
+
+
+def test_bundled_registry_json_resolves_in_package_layout(monkeypatch):
+    """M5: resolution must also work when the app is pip-installed.
+
+    In an installed wheel the package is importable as plain
+    ``anime_upscaler_gui`` (no ``apps.`` prefix). Register a synthetic module
+    under that installed name, anchored on the very same package directory,
+    and drive the resolver through it: the anchor must resolve to the inner
+    package dir and the catalog inside it.
+    """
+    import importlib
+    import importlib.util
+
+    from apps.anime_upscaler_gui.anime_upscaler_gui import registry as reg
+
+    inner = Path(reg.__file__).resolve().parent
+    # A module that looks exactly like the installed wheel package: name
+    # ``anime_upscaler_gui``, no ``apps.`` prefix, real loader, package.
+    spec = importlib.util.spec_from_file_location(
+        "anime_upscaler_gui", inner / "__init__.py",
+        submodule_search_locations=[str(inner)])
+    assert spec is not None and spec.loader is not None
+    installed = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "anime_upscaler_gui", installed)
+    monkeypatch.setattr(reg, "__package__", "anime_upscaler_gui")
+
+    anchor = importlib.resources.files(reg.__package__)
+    assert Path(str(anchor)) == inner
+    assert anchor.joinpath("data", "registry.json").is_file()
+
+    # And the resolver the app actually calls goes through the same anchor,
+    # so a wheel install finds the catalog that ships inside the package.
+    bundled = reg._bundled_registry_json()
+    assert bundled == inner / "data" / "registry.json"
+
+
+def test_bundled_registry_json_legacy_fallback_still_works(monkeypatch):
+    """M5: the pre-move source-tree copy is still the documented fallback."""
+    from apps.anime_upscaler_gui.anime_upscaler_gui import registry as reg
+
+    legacy = Path(reg.__file__).resolve().parent.parent / "data" / "registry.json"
+    if not legacy.is_file():
+        pytest.skip("legacy apps/anime_upscaler_gui/data/registry.json absent")
+
+    # Make the importlib.resources anchor unresolvable so the source-tree
+    # fallback is what gets exercised. A repo/editable checkout that only
+    # has the old copy must keep working.
+    monkeypatch.setattr(reg, "__package__", "__aug_no_such_package__")
+    bundled = reg._bundled_registry_json()
+    assert bundled == legacy
+    assert bundled.is_file()

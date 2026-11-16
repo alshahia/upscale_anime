@@ -1,8 +1,5 @@
 """Centralized utility imports with proper dependency management."""
 import warnings
-import logging
-import os
-from typing import Optional, List, Dict, Any
 
 # Only warn once in main process (suppress in dataloader workers)
 _IMPORT_WARNED = False
@@ -60,12 +57,12 @@ try:
         convert_spanf_checkpoint,
     )
     IMPORTS_AVAILABLE = True
-    
+
 except ImportError as e:
     # Fallback to relative imports with detailed error reporting
     _warn_once(f"Failed to import from anime_sr package: {e}. Falling back to relative imports.")
     IMPORTS_AVAILABLE = False
-    
+
     try:
         from anime_sr.utils.config import Config
         from anime_sr.utils.metrics import calculate_psnr, calculate_ssim, calculate_batch_metrics, MetricsTracker

@@ -11,7 +11,6 @@ loss (Lim & Ye, 2017) for both D and G; no-logits are exposed.
 
 Phase 3 handoff: docs/plans/student_adversarial_handoff_2026_08.md (A.1).
 """
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 

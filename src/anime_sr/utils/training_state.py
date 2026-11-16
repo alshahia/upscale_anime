@@ -3,7 +3,7 @@ Shared state for progressive training features.
 Allows dataloader and finetuner to share dynamic configuration during training.
 """
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List
 
 
 @dataclass

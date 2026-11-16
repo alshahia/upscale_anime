@@ -42,7 +42,6 @@ pip install -e .
 # Install with optional dependencies
 pip install -e ".[dev]"      # Development tools
 pip install -e ".[api]"      # API server dependencies
-pip install -e ".[gui]"      # GUI dependencies
 pip install -e ".[mamba]"    # Mamba model support
 ```
 
@@ -52,25 +51,25 @@ pip install -e ".[mamba]"    # Mamba model support
 
 ```bash
 # Train a model
-anime-sr train --config configs/train_config.yaml --tensorboard
+anime-sr train --config configs/train_config.yaml
 
 # Run inference
-anime-sr infer --input ./input_images --output ./output --model ./checkpoints/model_best.pt --scale 4
+anime-sr infer --checkpoint ./checkpoints/model_best.pt --input ./input_images --output ./output --scale 4
 
 # Export to ONNX
-anime-sr export --model ./checkpoints/model_best.pt --output ./exported/model.onnx --format onnx
+anime-sr export --checkpoint ./checkpoints/model_best.pt --output ./exported/model.onnx --format onnx
 
 # Start API server
-anime-sr serve --model ./checkpoints/model_best.pt --host 0.0.0.0 --port 8000
+anime-sr serve --config configs/api.yaml --host 127.0.0.1 --port 8000
 
 # Launch the desktop GUI (standalone app — see "Desktop GUI" below)
 python -m apps.anime_upscaler_gui
 
 # Validate model
-anime-sr validate --model ./checkpoints/model_best.pt --data ./validation_data
+anime-sr validate --checkpoint ./checkpoints/model_best.pt
 
 # Benchmark performance
-anime-sr benchmark --model ./checkpoints/model_best.pt --data ./test_data
+anime-sr benchmark --checkpoint ./checkpoints/model_best.pt --input ./input_images/sample.png --iterations 10
 ```
 
 ### Python API
@@ -78,32 +77,32 @@ anime-sr benchmark --model ./checkpoints/model_best.pt --data ./test_data
 ```python
 from anime_sr.inference.engine import InferenceEngine
 
-# Initialize engine
-engine = InferenceEngine(
-    model_path="./checkpoints/model_best.pt",
-    scale=4,
-    tile_size=512,
+# Initialize engine from a checkpoint
+engine = InferenceEngine.from_checkpoint(
+    checkpoint_path="./checkpoints/model_best.pt",
+    model_type="span",   # 'span' | 'neosr_span' | 'mamba_pan' | 'tiny_student'
+    device="cuda",       # or "cpu"
 )
 
-# Upscale a single image
-engine.infer_image("input.png", "output.png")
+# Upscale a single image (saves the result, returns a metrics dict)
+result = engine.process_image("input.png", "output.png", scale=4)
 
-# Upscale a directory
-engine.infer_directory("./input_images", "./output")
+# Optional: tiled processing for limited VRAM
+result = engine.process_image("input.png", "output.png", scale=4, tile_size=512)
 ```
 
 ### API Server
 
 ```bash
 # Start the server
-anime-sr serve --model ./checkpoints/model_best.pt --port 8000
+anime-sr serve --config configs/api.yaml --port 8000
 
 # Or using Python
 from anime_sr.api.inference_api import create_app
 import uvicorn
 
-app = create_app(model_path="./checkpoints/model_best.pt")
-uvicorn.run(app, host="0.0.0.0", port=8000)
+app = create_app(config={"api": {"api_key": "your-key-here"}})
+uvicorn.run(app, host="127.0.0.1", port=8000)
 ```
 
 ### Desktop GUI
@@ -209,7 +208,7 @@ upscale_anime/
 ├── assets/                # Example images and assets
 │   └── examples/          # Example input/output images
 ├── backups/               # Backup archives
-├── results/               # Benchmark and evaluation results
+├── runs/                  # TensorBoard run directories (gitignored)
 ├── checkpoints/           # Model checkpoints (gitignored)
 ├── output/                # Output files (gitignored)
 └── data/                  # Training data (gitignored)

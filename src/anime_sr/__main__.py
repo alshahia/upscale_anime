@@ -2,7 +2,8 @@
 Anime Super-Resolution CLI
 
 Unified command-line interface for all anime-sr operations.
-Provides subcommands for training, inference, export, serving, GUI, validation, and benchmarking.
+Provides subcommands for training, inference, export, serving, validation, and
+benchmarking. The desktop GUI is a standalone app: python -m apps.anime_upscaler_gui
 
 Usage:
     python -m anime_sr --help
@@ -12,16 +13,14 @@ Usage:
 
 import argparse
 import sys
-import os
 from pathlib import Path
 from typing import Optional, Sequence
 
 from anime_sr import __version__
 
-# Ensure src/anime_sr is in path for internal relative imports
-_src_path = str(Path(__file__).resolve().parent)
-if _src_path not in sys.path:
-    sys.path.insert(0, _src_path)
+# NOTE: all internal imports are absolute (anime_sr.*); the package is
+# importable from an installed wheel, an editable install, or via
+# `python -m anime_sr` - no sys.path shims are required.
 
 
 # --- Global helpers -----------------------------------------------------------
@@ -72,7 +71,7 @@ def _handle_train(args: argparse.Namespace) -> int:
     logging.basicConfig(level=getattr(logging, log_level), format="%(levelname)s: %(message)s")
 
     from anime_sr.utils.config import load_config
-    from anime_sr.training.orchestrator import TrainingOrchestrator, TrainingMode
+    from anime_sr.training.orchestrator import TrainingOrchestrator
 
     # Validate config file
     config_path = _validate_file(args.config, "Config file")
@@ -142,7 +141,6 @@ def _handle_infer(args: argparse.Namespace) -> int:
         print(f"Saved: {result['output_path']}")
     else:
         # Directory of images
-        from PIL import Image
         image_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
         image_files = sorted([f for f in input_path.iterdir() if f.suffix.lower() in image_exts])
 
@@ -248,28 +246,6 @@ def _handle_serve(args: argparse.Namespace) -> int:
         port=args.port,
         reload=args.reload,
     )
-    return 0
-
-
-def _handle_gui(args: argparse.Namespace) -> int:
-    """Handle the gui subcommand."""
-    # Load config if provided
-    config_dict = {}
-    if args.config:
-        from anime_sr.utils.config import load_config
-        config_path = _validate_file(args.config, "Config file")
-        config_dict = load_config(config_path)
-
-    try:
-        from anime_sr.gui import launch_gui
-    except ImportError:
-        _print_error(
-            "GUI dependencies not installed",
-            "Install with: pip install -e '.[gui]'"
-        )
-        return 1
-
-    launch_gui(config=config_dict)
     return 0
 
 
@@ -635,36 +611,6 @@ Examples:
         help="Suppress non-error output",
     )
     serve_parser.set_defaults(func=_handle_serve)
-
-    # --- GUI ----------------------------------------------------------------
-    gui_parser = subparsers.add_parser(
-        "gui",
-        help="Launch the desktop GUI",
-        description="Launch the graphical user interface for super-resolution.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""\
-Examples:
-  python -m anime_sr gui
-  python -m anime_sr gui --config configs/gui.yaml
-""",
-    )
-    gui_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to GUI config YAML",
-    )
-    gui_parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output",
-    )
-    gui_parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress non-error output",
-    )
-    gui_parser.set_defaults(func=_handle_gui)
 
     # --- Validate -----------------------------------------------------------
     validate_parser = subparsers.add_parser(

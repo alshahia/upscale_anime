@@ -1,6 +1,7 @@
 """
 Factory for creating knowledge aggregation networks.
-Supports multiple architectures: simple, adaptive, dctswin, multiscale
+Supports multiple architectures: simple, adaptive, dctswin, multiscale,
+feature
 """
 import torch.nn as nn
 from typing import Dict
@@ -10,27 +11,27 @@ import warnings
 def create_aggregation_network(config: Dict) -> nn.Module:
     """
     Factory function to create knowledge aggregation network based on config.
-    
+
     Args:
         config: Configuration dictionary with training.stage1 settings
-        
+
     Returns:
         Knowledge aggregation network instance
     """
     stage1_cfg = config.get('training', {}).get('stage1', {})
-    
+
     # Get aggregation type
     aggregation_type = stage1_cfg.get('aggregation_type', 'simple').lower()
-    
+
     # Get architecture parameters
     num_teachers = len(stage1_cfg.get('teachers', []))
     if num_teachers == 0:
         raise ValueError("No teachers configured for Stage 1")
-    
+
     scale = config.get('model', {}).get('scale', 4)
     num_blocks = stage1_cfg.get('num_blocks', 6)
     embed_dim = stage1_cfg.get('embed_dim', 96)
-    
+
     # Create appropriate aggregation network
     if aggregation_type == 'simple':
         from anime_sr.distillation.mtkd.simple_aggregation import SimpleKnowledgeAggregation
@@ -41,7 +42,7 @@ def create_aggregation_network(config: Dict) -> nn.Module:
             num_blocks=num_blocks,
             scale=scale,
         )
-        
+
     elif aggregation_type == 'adaptive':
         from anime_sr.distillation.mtkd.adaptive_aggregation import AdaptiveTeacherAggregation
         print(f"Creating AdaptiveTeacherAggregation (num_teachers={num_teachers}, embed_dim={embed_dim}, num_blocks={num_blocks})")
@@ -51,7 +52,7 @@ def create_aggregation_network(config: Dict) -> nn.Module:
             num_blocks=num_blocks,
             scale=scale,
         )
-        
+
     elif aggregation_type == 'dctswin':
         from anime_sr.distillation.mtkd.aggregation import KnowledgeAggregationNetwork
         warnings.warn(
@@ -66,7 +67,7 @@ def create_aggregation_network(config: Dict) -> nn.Module:
             num_blocks=num_blocks,
             scale=scale,
         )
-        
+
     elif aggregation_type == 'multiscale':
         from anime_sr.distillation.mtkd.multiscale_aggregation import MultiScaleKnowledgeAggregation
         print(f"Creating MultiScaleKnowledgeAggregation (num_teachers={num_teachers}, embed_dim={embed_dim})")
@@ -77,14 +78,24 @@ def create_aggregation_network(config: Dict) -> nn.Module:
             scale=scale,
             scale_factors=scale_factors,
         )
-        
+
+    elif aggregation_type == 'feature':
+        from anime_sr.distillation.mtkd.feature_aggregation import FeatureKnowledgeAggregation
+        print(f"Creating FeatureKnowledgeAggregation (num_teachers={num_teachers}, num_blocks={num_blocks})")
+        model = FeatureKnowledgeAggregation(
+            num_teachers=num_teachers,
+            feature_dims=stage1_cfg.get('feature_dims', None),
+            num_blocks=num_blocks,
+            scale=scale,
+        )
+
     else:
         raise ValueError(f"Unknown aggregation_type: {aggregation_type}. "
-                        f"Choose from: simple, adaptive, dctswin, multiscale")
-    
+                        f"Choose from: simple, adaptive, dctswin, multiscale, feature")
+
     return model
 
 
 def get_available_aggregation_types() -> list:
     """Return list of available aggregation types."""
-    return ['simple', 'adaptive', 'dctswin', 'multiscale']
+    return ['simple', 'adaptive', 'dctswin', 'multiscale', 'feature']

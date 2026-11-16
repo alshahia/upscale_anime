@@ -178,7 +178,7 @@ class TestV7PipelineCodecUsage:
         wiring (e.g. drops h264/h265 from stage2, or breaks the
         CompressionPipeline construction), this test catches it.
         """
-        from data import compression_modules as cm
+        from anime_sr.data import compression_modules as cm
 
         # CompressionPipeline._build_compressors instantiates
         # VideoCodecCompression (the PyAV facade) for h264/h265.

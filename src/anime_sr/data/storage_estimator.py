@@ -2,7 +2,6 @@
 Storage estimation tool for precomputed datasets.
 Calculates worst-case and best-case storage requirements before precomputing.
 """
-import os
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import numpy as np
@@ -18,31 +17,31 @@ def get_image_dimensions(img_path: Path) -> Tuple[int, int]:
         return 0, 0
 
 
-def estimate_single_image_size(width: int, height: int, channels: int = 3, 
+def estimate_single_image_size(width: int, height: int, channels: int = 3,
                                format: str = "png") -> Dict[str, float]:
     """
     Estimate storage size for a single HR+LR image pair.
-    
+
     Args:
         width: Image width in pixels
-        height: Image height in pixels  
+        height: Image height in pixels
         channels: Number of channels (default 3 for RGB)
         format: Storage format ("png" or "jpeg")
-    
+
     Returns:
         Dict with size estimates in MB for HR, LR, and total
     """
     # Raw bytes for float32 (4 bytes per channel)
     raw_bytes_per_pixel = channels * 4
-    
+
     # HR size (raw)
     hr_raw_bytes = width * height * raw_bytes_per_pixel
-    
+
     # LR size (at 4x downscale)
     lr_width = width // 4
     lr_height = height // 4
     lr_raw_bytes = lr_width * lr_height * raw_bytes_per_pixel
-    
+
     # Compression ratios (approximate)
     # PNG: ~3-5x compression for typical images
     # JPEG at 90%: ~10-15x compression
@@ -52,7 +51,7 @@ def estimate_single_image_size(width: int, height: int, channels: int = 3,
     else:  # jpeg
         hr_compressed = hr_raw_bytes / 12.0  # JPEG at 90% quality
         lr_compressed = lr_raw_bytes / 12.0
-    
+
     return {
         'hr_mb': hr_compressed / (1024 * 1024),
         'lr_mb': lr_compressed / (1024 * 1024),
@@ -109,22 +108,22 @@ def estimate_dataset_storage(
     sample_size = min(sample_images, total_images)
     rng = np.random.default_rng(seed)
     sample_indices = rng.choice(total_images, sample_size, replace=False)
-    
+
     dimensions = []
     for idx in sample_indices:
         w, h = get_image_dimensions(hr_images[idx])
         if w > 0 and h > 0:
             dimensions.append((w, h))
-    
+
     if not dimensions:
         return {'error': "Could not read image dimensions"}
-    
+
     # Calculate per-dimension storage
     # For crop-based storage, we use crop_size as the reference
     # But actual storage might be at original resolution or cropped
     avg_width = np.mean([d[0] for d in dimensions])
     avg_height = np.mean([d[1] for d in dimensions])
-    
+
     # Storage calculation using crop_size as reference
     # For precomputed pairs, we store full images (not crops) at original resolution
     # but crop during training
@@ -133,17 +132,17 @@ def estimate_dataset_storage(
         # Use actual image dimensions for storage
         size_info = estimate_single_image_size(w, h, format=format)
         sizes.append(size_info['total_mb'])
-    
+
     # Calculate statistics
     avg_size_per_image = np.mean(sizes)
     worst_case_size = np.max(sizes)  # Largest image
     best_case_size = np.min(sizes)   # Smallest image
-    
+
     # Total estimate
     total_storage_mb = avg_size_per_image * images_to_use
     worst_case_total_mb = worst_case_size * images_to_use
     best_case_total_mb = best_case_size * images_to_use
-    
+
     return {
         'hr_dir': str(hr_path),
         'total_images': total_images,
@@ -209,7 +208,7 @@ def estimate_multiple_datasets(
             sample_images=30,
             seed=seed,
         )
-        
+
         if 'error' not in estimate:
             dataset_name = Path(ds['hr_dir']).name
             breakdown[dataset_name] = {
@@ -219,7 +218,7 @@ def estimate_multiple_datasets(
             }
             total_mb += estimate['total_storage_mb']
             worst_case_mb += estimate['worst_case_total_gb'] * 1024
-    
+
     return {
         'total_storage_gb': total_mb / 1024,
         'worst_case_total_gb': worst_case_mb / 1024,
@@ -235,20 +234,20 @@ def check_against_available_space(
 ) -> Dict:
     """
     Check if estimated storage fits within available space.
-    
+
     Args:
         estimate: Storage estimate from estimate_dataset_storage or estimate_multiple_datasets
         available_gb: Available disk space in GB
-    
+
     Returns:
         Updated estimate with space check results
     """
     worst_case_gb = estimate.get('worst_case_total_gb', estimate.get('total_storage_gb', 0))
-    
+
     result = estimate.copy()
     result['available_space_gb'] = available_gb
     result['sufficient_space'] = worst_case_gb <= available_gb
-    
+
     if worst_case_gb > available_gb:
         result['space_shortage_gb'] = worst_case_gb - available_gb
         result['recommendation'] = (
@@ -259,7 +258,7 @@ def check_against_available_space(
     else:
         result['space_remaining_gb'] = available_gb - worst_case_gb
         result['recommendation'] = f"Sufficient space. {available_gb - worst_case_gb:.1f}GB will remain."
-    
+
     return result
 
 
@@ -267,28 +266,28 @@ def print_storage_estimate(estimate: Dict, verbose: bool = True) -> str:
     """Format and print storage estimate nicely."""
     if 'error' in estimate:
         return f"Error: {estimate['error']}"
-    
+
     lines = []
     lines.append("=" * 60)
     lines.append("STORAGE ESTIMATION REPORT")
     lines.append("=" * 60)
-    
+
     if 'per_dataset_breakdown' in estimate:
         # Multiple datasets
-        lines.append(f"\nDatasets:")
+        lines.append("\nDatasets:")
         for name, data in estimate['per_dataset_breakdown'].items():
             lines.append(f"  - {name}: {data['images']} images, ~{data['estimated_gb']:.2f}GB")
-        
-        lines.append(f"\nTotal Storage Required:")
+
+        lines.append("\nTotal Storage Required:")
         lines.append(f"  Estimated: {estimate['total_storage_gb']:.2f}GB")
         lines.append(f"  Worst Case: {estimate['worst_case_total_gb']:.2f}GB")
         best_case = estimate.get('best_case_total_gb')
         if best_case is not None and not isinstance(best_case, str):
             lines.append(f"  Best Case: {best_case:.2f}GB")
         else:
-            lines.append(f"  Best Case: N/A")
+            lines.append("  Best Case: N/A")
         lines.append(f"  Available: {estimate.get('available_space_gb', 'N/A')}GB")
-        
+
         if 'sufficient_space' in estimate:
             if estimate['sufficient_space']:
                 lines.append(f"  [OK] Sufficient space ({estimate.get('space_remaining_gb', 0):.2f}GB remaining)")
@@ -302,27 +301,27 @@ def print_storage_estimate(estimate: Dict, verbose: bool = True) -> str:
         lines.append(f"Avg Image Size: {estimate.get('avg_image_dims', 'N/A')}")
         lines.append(f"Crop Size: {estimate.get('crop_size', 0)}")
         lines.append(f"Format: {estimate.get('format', 'png')}")
-        lines.append(f"\nStorage per Image:")
+        lines.append("\nStorage per Image:")
         lines.append(f"  Average: {estimate.get('avg_size_per_image_mb', 0):.3f}MB")
         lines.append(f"  Worst Case: {estimate.get('worst_case_per_image_mb', 0):.3f}MB")
         lines.append(f"  Best Case: {estimate.get('best_case_per_image_mb', 0):.3f}MB")
-        lines.append(f"\nTotal Storage:")
+        lines.append("\nTotal Storage:")
         lines.append(f"  Estimated: {estimate.get('total_storage_gb', 0):.2f}GB")
         lines.append(f"  Worst Case: {estimate.get('worst_case_total_gb', 0):.2f}GB")
         lines.append(f"  Best Case: {estimate.get('best_case_total_gb', 0):.2f}GB")
-        
+
         if 'available_space_gb' in estimate:
             lines.append(f"\nAvailable Space: {estimate['available_space_gb']:.2f}GB")
             if estimate['sufficient_space']:
                 lines.append(f"[OK] {estimate.get('space_remaining_gb', 0):.2f}GB remaining")
             else:
                 lines.append(f"[WARNING] Need {estimate.get('space_shortage_gb', 0):.2f}GB more")
-    
+
     if 'recommendation' in estimate:
         lines.append(f"\nRecommendation: {estimate['recommendation']}")
-    
+
     lines.append("=" * 60)
-    
+
     output = "\n".join(lines)
     if verbose:
         print(output)
@@ -369,7 +368,7 @@ def create_default_dataset_configs() -> List[Dict]:
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Estimate storage for precomputed datasets")
     parser.add_argument('--hr_dir', type=str, help='HR images directory')
     parser.add_argument('--crop_size', type=int, default=128, help='Training crop size')
@@ -379,9 +378,9 @@ if __name__ == "__main__":
     parser.add_argument('--available_space', type=float, default=None, help='Available disk space in GB')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducible image sampling (Issue #13)')
     parser.add_argument('--all_datasets', action='store_true', help='Estimate all known datasets')
-    
+
     args = parser.parse_args()
-    
+
     if args.all_datasets:
         datasets = create_default_dataset_configs()
         estimate = estimate_multiple_datasets(
@@ -396,8 +395,8 @@ if __name__ == "__main__":
     else:
         print("Specify --hr_dir or --all_datasets")
         exit(1)
-    
+
     if args.available_space:
         estimate = check_against_available_space(estimate, args.available_space)
-    
+
     print_storage_estimate(estimate)

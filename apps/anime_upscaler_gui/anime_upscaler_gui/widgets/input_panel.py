@@ -214,9 +214,10 @@ class _InputPanel(ttk.LabelFrame):
         idxs = self.queue_listbox.curselection()
         if not idxs:
             return 0
-        # The listbox rows mirror self.app._jobs 1:1, so index == job index.
+        # The listbox is filtered, so a row index is NOT a job index. Map it
+        # through _visible_jobs() -- the same list the rows were built from.
         try:
-            return self.app._jobs[idxs[0]].id
+            return self.app._visible_jobs()[idxs[0]].id
         except (IndexError, AttributeError):
             return 0
 
@@ -240,7 +241,7 @@ class _InputPanel(ttk.LabelFrame):
             idxs = self.queue_listbox.curselection()
             if idxs:
                 try:
-                    j = self.app._jobs[idxs[0]]
+                    j = self.app._visible_jobs()[idxs[0]]
                 except (IndexError, AttributeError):
                     j = None
                 if j is not None:

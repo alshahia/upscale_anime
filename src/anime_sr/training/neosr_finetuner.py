@@ -58,10 +58,8 @@ logger = logging.getLogger(__name__)
 
 try:
     from anime_sr.models.span.neosr_span import create_neosr_span
-    from anime_sr.utils.checkpoint_loader import load_pretrained_weights
 except ImportError:
     from anime_sr.models.span.neosr_span import create_neosr_span
-    from anime_sr.utils.checkpoint_loader import load_pretrained_weights
 
 
 class NeosrSPANFinetuner:
@@ -115,12 +113,12 @@ class NeosrSPANFinetuner:
 
         use_compile = self.finetune_cfg.get('torch_compile', False)
         if use_compile and hasattr(torch, 'compile'):
-            print(f"[torch.compile] Compiling model with mode='reduce-overhead'")
+            print("[torch.compile] Compiling model with mode='reduce-overhead'")
             self.model = torch.compile(self.model, mode="reduce-overhead")
 
         use_checkpointing = self.finetune_cfg.get('gradient_checkpointing', False)
         if use_checkpointing and hasattr(self.model, 'gradient_checkpointing_enable'):
-            print(f"[Gradient Checkpointing] Enabled for memory saving")
+            print("[Gradient Checkpointing] Enabled for memory saving")
             self.model.gradient_checkpointing_enable()
 
         # Freeze layers if specified
@@ -262,7 +260,7 @@ class NeosrSPANFinetuner:
                     pc_defaults.get('default_crop_size', 128),
                 )
                 set_progressive_crop(True, self.progressive_stages, default_crop)
-                print(f"[Progressive Crop] Initialized in training_state")
+                print("[Progressive Crop] Initialized in training_state")
             except ImportError as e:
                 print(f"[Progressive Crop] WARNING: Failed to set training_state: {e}")
 
@@ -314,7 +312,7 @@ class NeosrSPANFinetuner:
     def _setup_losses(self):
         """Setup multi-loss system based on config."""
         loss_cfg = self.finetune_cfg.get('loss') or {}
-        
+
         # Pixel loss (L1/L2)
         pixel_cfg = loss_cfg.get('pixel', {})
         pixel_type = pixel_cfg.get('type', 'l1')
@@ -330,16 +328,16 @@ class NeosrSPANFinetuner:
             self.pixel_loss = CharbonnierLoss(eps=eps)
         else:
             self.pixel_loss = nn.L1Loss()
-        
+
         print(f"\n[Loss] Pixel loss: {pixel_type} (weight={self.pixel_weight})")
-        
+
         # Perceptual loss - DISTS for texture, Dual for structure
         perceptual_cfg = loss_cfg.get('perceptual', {})
         self.use_perceptual = perceptual_cfg.get('enabled', False)
         self.perceptual_weight = perceptual_cfg.get('weight', 0.1)
         self.perceptual_warmup_epochs = perceptual_cfg.get('warmup_epochs', 5)
         self.perceptual_loss = None
-        
+
         if self.use_perceptual:
             perceptual_type = perceptual_cfg.get('type', 'dists')
             try:
@@ -372,21 +370,21 @@ class NeosrSPANFinetuner:
                     self.perceptual_loss = TwinPerceptualLoss(**twin_kwargs)
                 elif perceptual_type == 'none' or perceptual_type == 'disabled':
                     self.use_perceptual = False
-                    print(f"[Loss] Perceptual loss: disabled")
+                    print("[Loss] Perceptual loss: disabled")
                 else:
                     from losses import DISTSLoss
                     self.perceptual_loss = DISTSLoss()
                     print(f"[Loss] Perceptual loss: DISTS (fallback) (weight={self.perceptual_weight})")
-                
+
                 if self.perceptual_loss is not None:
                     self.perceptual_loss = self.perceptual_loss.to(self.device)
             except Exception as e:
                 logger.warning("Failed to load perceptual loss: %s", e)
                 self.use_perceptual = False
-        
+
         # Anime-specific losses
         anime_cfg = loss_cfg.get('anime') or {}
-        
+
         # Line art preservation with multi-scale edge detection
         line_art_cfg = anime_cfg.get('line_art_preservation', {})
         self.use_line_art = line_art_cfg.get('enabled', False)
@@ -394,7 +392,7 @@ class NeosrSPANFinetuner:
         self.line_art_edge_method = line_art_cfg.get('edge_method', 'multi_scale')
         self.line_art_edge_weight = line_art_cfg.get('edge_weight', 3.0)
         self.line_art_loss = None
-        
+
         if self.use_line_art:
             try:
                 from losses import LineArtPreservationLoss
@@ -406,13 +404,13 @@ class NeosrSPANFinetuner:
             except Exception as e:
                 logger.warning("Failed to load line art loss: %s", e)
                 self.use_line_art = False
-        
+
         # Color consistency
         color_cfg = anime_cfg.get('color_consistency', {})
         self.use_color = color_cfg.get('enabled', False)
         self.color_weight = color_cfg.get('weight', 0.25)
         self.color_loss = None
-        
+
         if self.use_color:
             try:
                 from losses import ColorConsistencyLoss
@@ -421,13 +419,13 @@ class NeosrSPANFinetuner:
             except Exception as e:
                 logger.warning("Failed to load color loss: %s", e)
                 self.use_color = False
-        
+
         # Flat region preservation
         flat_cfg = anime_cfg.get('flat_region_preservation', {})
         self.use_flat = flat_cfg.get('enabled', False)
         self.flat_weight = flat_cfg.get('weight', 0.3)
         self.flat_loss = None
-        
+
         if self.use_flat:
             try:
                 from losses import FlatRegionPreservationLoss
@@ -436,7 +434,7 @@ class NeosrSPANFinetuner:
             except Exception as e:
                 logger.warning("Failed to load flat region loss: %s", e)
                 self.use_flat = False
-        
+
         # Adversarial loss (GAN)
         adv_cfg = loss_cfg.get('adversarial') or {}
         self.use_adversarial = adv_cfg.get('enabled', False)
@@ -455,9 +453,9 @@ class NeosrSPANFinetuner:
 
         if self.use_adversarial:
             try:
-                from losses import SRDiscriminator, RelativisticGANLoss, AdversarialLoss
+                from losses import SRDiscriminator, AdversarialLoss
                 adv_type = adv_cfg.get('type', 'relativistic')
-                
+
                 # Create discriminator
                 self.discriminator = SRDiscriminator(
                     in_channels=3,
@@ -466,9 +464,9 @@ class NeosrSPANFinetuner:
                 ).to(self.device)
 
                 if self.finetune_cfg.get('torch_compile', False) and hasattr(torch, 'compile'):
-                    print(f"[torch.compile] Compiling discriminator")
+                    print("[torch.compile] Compiling discriminator")
                     self.discriminator = torch.compile(self.discriminator, mode="reduce-overhead")
-                
+
                 # Create discriminator optimizer (slower learning rate for stability)
                 disc_lr = adv_cfg.get('discriminator_lr', self.lr * 0.25)
                 # CRITICAL FIX: Use larger epsilon for discriminator stability
@@ -478,17 +476,17 @@ class NeosrSPANFinetuner:
                     betas=(0.9, 0.99),
                     eps=1e-7,  # Increased for FP16 stability
                 )
-                
+
                 # Create adversarial loss
                 self.adversarial_loss_fn = AdversarialLoss(loss_type=adv_type)
-                
+
                 print(f"[Loss] Adversarial loss: {adv_type} (weight={self.adversarial_weight}, start_epoch={self.adversarial_start_epoch})")
                 print(f"  Discriminator LR: {disc_lr}")
                 print(f"  Gradient penalty: {self.use_gradient_penalty}")
             except Exception as e:
                 logger.warning("Failed to load adversarial loss: %s", e)
                 self.use_adversarial = False
-        
+
         # Frequency-aware loss (ESPAN)
         freq_cfg = loss_cfg.get('frequency') or {}
         self.use_frequency = freq_cfg.get('enabled', False)
@@ -496,7 +494,7 @@ class NeosrSPANFinetuner:
         self.frequency_block_size = freq_cfg.get('block_size', 8)
         self.frequency_high_weight = freq_cfg.get('high_freq_weight', 2.0)
         self.frequency_loss = None
-        
+
         if self.use_frequency:
             try:
                 from losses import FrequencyAwareLoss
@@ -573,19 +571,19 @@ class NeosrSPANFinetuner:
                 self.use_wavelet_guided = False
 
         print()
-    
+
     def _get_perceptual_weight(self) -> float:
         """Get current perceptual loss weight with warmup."""
         if not self.use_perceptual or self.perceptual_loss is None:
             return 0.0
-        
+
         # Linear warmup
         if self.current_epoch < self.perceptual_warmup_epochs:
             warmup_ratio = (self.current_epoch + 1) / self.perceptual_warmup_epochs
             return self.perceptual_weight * warmup_ratio
-        
+
         return self.perceptual_weight
-    
+
     def _get_phase_weights(self) -> Dict[str, float]:
         """
         Get loss weights for current phase in two-phase training.
@@ -690,7 +688,7 @@ class NeosrSPANFinetuner:
             return ramp_target * progress
 
         return ramp_target
-    
+
     def _get_adversarial_weight(self) -> float:
         """Get current adversarial loss weight with progressive schedule.
 
@@ -705,20 +703,20 @@ class NeosrSPANFinetuner:
             phase2_weight=target,
             in_phase1=True,
         )
-    
+
     def _get_current_crop_size(self, epoch: int) -> int:
         """
         Get the current crop size based on progressive schedule.
-        
+
         Args:
             epoch: Current epoch number (0-indexed)
-        
+
         Returns:
             Current crop size
         """
         if not self.use_progressive_crop or not self.progressive_stages:
             return self.current_crop_size
-        
+
         # Calculate cumulative epochs
         cumulative_epochs = 0
         for stage in self.progressive_stages:
@@ -726,26 +724,26 @@ class NeosrSPANFinetuner:
             if epoch < cumulative_epochs + stage_epochs:
                 return stage.get('crop_size', 128)
             cumulative_epochs += stage_epochs
-        
+
         # Return last stage crop size if we've exceeded total
         return self.progressive_stages[-1].get('crop_size', 128)
-    
+
     def _check_crop_size_change(self, epoch: int) -> bool:
         """
         Check if crop size should change at this epoch.
-        
+
         Args:
             epoch: Current epoch number (0-indexed)
-        
+
         Returns:
             True if crop size changes at this epoch
         """
         if not self.use_progressive_crop or not self.progressive_stages:
             return False
-        
+
         new_crop_size = self._get_current_crop_size(epoch)
         return new_crop_size != self.current_crop_size
-    
+
     def _update_crop_size(self, new_crop_size: int):
         """
         Update the current crop size and notify user.
@@ -761,32 +759,32 @@ class NeosrSPANFinetuner:
             state = get_training_state()
             state.progressive_crop.update_crop_size(new_crop_size)
             print(f"\n[Progressive Crop] Changing crop size: {old_crop_size} -> {new_crop_size}")
-            print(f"  Crop size updated in training state")
+            print("  Crop size updated in training state")
         except ImportError:
             print(f"\n[Progressive Crop] Changing crop size: {old_crop_size} -> {new_crop_size}")
-            print(f"  Note: Update training_state module for dataloader sync")
-    
+            print("  Note: Update training_state module for dataloader sync")
+
     def _compute_gradient_penalty(self, real_samples: torch.Tensor, fake_samples: torch.Tensor) -> torch.Tensor:
         """
         Compute gradient penalty for WGAN-GP style training.
         This regularizes the discriminator to have Lipschitz constraint.
-        
+
         CRITICAL FIX: Add epsilon to norm calculation to prevent NaN when gradients are zero.
         Reference: https://github.com/pytorch/pytorch/issues/2534
         """
         batch_size = real_samples.size(0)
-        
+
         # Random interpolation factor
         alpha = torch.rand(batch_size, 1, 1, 1, device=self.device)
-        
+
         # Interpolated samples
         interpolated = alpha * real_samples + (1 - alpha) * fake_samples
         interpolated.requires_grad_(True)
-        
+
         # Discriminator output on interpolated (FP32 for stability)
         with torch.amp.autocast('cuda', enabled=False):
             disc_interpolated = self.discriminator(interpolated.float())
-        
+
         # Compute gradients
         gradients = torch.autograd.grad(
             outputs=disc_interpolated,
@@ -796,20 +794,20 @@ class NeosrSPANFinetuner:
             retain_graph=True,
             only_inputs=True,
         )[0]
-        
+
         # CRITICAL FIX: Add epsilon before norm to prevent NaN
         # torch.norm() produces NaN when all gradients are zero
         gradients = gradients.view(batch_size, -1)
         gradient_norm = torch.sqrt((gradients ** 2).sum(dim=1) + 1e-12)
         penalty = ((gradient_norm - 1) ** 2).mean()
-        
+
         # Safety check
         if torch.isnan(penalty) or torch.isinf(penalty):
-            print(f"  [WARNING] NaN/Inf in gradient penalty, using zero penalty")
+            print("  [WARNING] NaN/Inf in gradient penalty, using zero penalty")
             penalty = torch.tensor(0.0, device=self.device, requires_grad=False)
-        
+
         return penalty
-    
+
     def _train_discriminator(self, real_images: torch.Tensor, fake_images: torch.Tensor) -> Dict[str, float]:
         """
         Train discriminator for one step.
@@ -867,7 +865,7 @@ class NeosrSPANFinetuner:
             '_disc_real_tensor': disc_real.detach(),
             '_disc_fake_tensor': disc_fake.detach(),
         }
-    
+
     def _compute_total_loss(
         self,
         sr: torch.Tensor,
@@ -958,7 +956,7 @@ class NeosrSPANFinetuner:
 
             loss_dict['total'] = total_loss
             return loss_dict
-        
+
         # Perceptual loss (DISTS) - MUST run in FP32
         if self.use_perceptual and self.perceptual_loss is not None:
             if perceptual_weight > 0:
@@ -966,57 +964,57 @@ class NeosrSPANFinetuner:
                     sr_fp32 = sr.float()
                     hr_fp32 = hr.float()
                     perc_loss = self.perceptual_loss(sr_fp32, hr_fp32)
-                
+
                 if torch.isnan(perc_loss) or torch.isinf(perc_loss):
-                    print(f"  [WARNING] NaN/Inf in perceptual loss, skipping")
+                    print("  [WARNING] NaN/Inf in perceptual loss, skipping")
                     perc_loss = torch.tensor(0.0, device=sr.device, requires_grad=False)
                 else:
                     loss_dict['perceptual'] = perc_loss
                     total_loss = total_loss + perceptual_weight * perc_loss
-        
+
         # Line art preservation loss
         if self.use_line_art and self.line_art_loss is not None:
             line_result = self.line_art_loss(sr, hr)
             line_loss = line_result['line_art'] if isinstance(line_result, dict) else line_result
 
             if torch.isnan(line_loss) or torch.isinf(line_loss):
-                print(f"  [WARNING] NaN/Inf in line art loss, skipping")
+                print("  [WARNING] NaN/Inf in line art loss, skipping")
                 line_loss = torch.tensor(0.0, device=sr.device, requires_grad=False)
             else:
                 loss_dict['line_art'] = line_loss
                 total_loss = total_loss + weights.get('line_art', self.line_art_weight) * line_loss
-        
+
         # Color consistency loss
         if self.use_color and self.color_loss is not None:
             color_result = self.color_loss(sr, hr)
             color_loss = color_result['color_consistency'] if isinstance(color_result, dict) else color_result
-            
+
             if torch.isnan(color_loss) or torch.isinf(color_loss):
-                print(f"  [WARNING] NaN/Inf in color loss, skipping")
+                print("  [WARNING] NaN/Inf in color loss, skipping")
                 color_loss = torch.tensor(0.0, device=sr.device, requires_grad=False)
             else:
                 loss_dict['color'] = color_loss
                 total_loss = total_loss + self.color_weight * color_loss
-        
+
         # Flat region preservation loss
         if self.use_flat and self.flat_loss is not None:
             flat_result = self.flat_loss(sr, hr)
             flat_loss = flat_result['flat_preservation'] if isinstance(flat_result, dict) else flat_result
 
             if torch.isnan(flat_loss) or torch.isinf(flat_loss):
-                print(f"  [WARNING] NaN/Inf in flat region loss, skipping")
+                print("  [WARNING] NaN/Inf in flat region loss, skipping")
                 flat_loss = torch.tensor(0.0, device=sr.device, requires_grad=False)
             else:
                 loss_dict['flat'] = flat_loss
                 total_loss = total_loss + weights.get('flat', self.flat_weight) * flat_loss
-        
+
         # Frequency-aware loss (ESPAN)
         if self.use_frequency and self.frequency_loss is not None:
             with torch.amp.autocast('cuda', enabled=False):
                 freq_loss = self.frequency_loss(sr.float(), hr.float())
 
             if torch.isnan(freq_loss) or torch.isinf(freq_loss):
-                print(f"  [WARNING] NaN/Inf in frequency loss, skipping")
+                print("  [WARNING] NaN/Inf in frequency loss, skipping")
                 freq_loss = torch.tensor(0.0, device=sr.device, requires_grad=False)
             else:
                 loss_dict['frequency'] = freq_loss
@@ -1076,21 +1074,21 @@ class NeosrSPANFinetuner:
                 wg_loss = self.wavelet_guided_loss(sr.float(), hr.float(), epoch=self.current_epoch)
 
             if torch.isnan(wg_loss) or torch.isinf(wg_loss):
-                print(f"  [WARNING] NaN/Inf in wavelet-guided loss, skipping")
+                print("  [WARNING] NaN/Inf in wavelet-guided loss, skipping")
                 wg_loss = torch.tensor(0.0, device=sr.device, requires_grad=False)
             else:
                 loss_dict['wavelet_guided'] = wg_loss
                 total_loss = total_loss + self.wavelet_guided_weight * wg_loss
-        
+
         # Final safety check
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"  [CRITICAL] Total loss is NaN/Inf, returning pixel loss only")
+            print("  [CRITICAL] Total loss is NaN/Inf, returning pixel loss only")
             total_loss = pixel_loss.detach()
             loss_dict = {'pixel': pixel_loss, 'total': total_loss}
-        
+
         loss_dict['total'] = total_loss
         return loss_dict
-    
+
     def _freeze_layers(self, freeze_layers: list):
         """Freeze specified layers."""
         for name, param in self.model.named_parameters():
@@ -1099,15 +1097,15 @@ class NeosrSPANFinetuner:
                     param.requires_grad = False
                     print(f"  Frozen: {name}")
                     break
-        
+
         trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         total = sum(p.numel() for p in self.model.parameters())
         print(f"  Trainable: {trainable/1e6:.2f}M / {total/1e6:.2f}M ({trainable/total*100:.1f}%)")
-    
+
     def _create_scheduler(self):
         """Create learning rate scheduler with warmup."""
         scheduler_type = self.finetune_cfg.get('scheduler', 'cosine')
-        
+
         if scheduler_type == 'cosine':
             base_scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
@@ -1142,7 +1140,7 @@ class NeosrSPANFinetuner:
                 T_max=self.epochs - self.warmup_epochs,
                 eta_min=self.min_lr,
             )
-        
+
         class WarmupScheduler:
             def __init__(self, base, warmup_epochs, base_lr, min_lr):
                 self.base = base
@@ -1150,7 +1148,7 @@ class NeosrSPANFinetuner:
                 self.base_lr = base_lr
                 self.min_lr = min_lr
                 self.current_epoch = 0
-            
+
             def step(self):
                 self.current_epoch += 1
                 if self.current_epoch <= self.warmup_epochs:
@@ -1159,16 +1157,16 @@ class NeosrSPANFinetuner:
                         param_group['lr'] = lr
                 else:
                     self.base.step()
-            
+
             def get_last_lr(self):
                 return [g['lr'] for g in self.base.optimizer.param_groups]
-        
+
         return WarmupScheduler(base_scheduler, self.warmup_epochs, self.lr, self.min_lr)
-    
+
     def train_epoch(self, train_loader) -> Dict[str, float]:
         """Train one epoch with multi-loss and adversarial support."""
         self.model.train()
-        
+
         # Accumulators for all loss components
         loss_accumulators = {'total': 0.0}
         num_batches = 0
@@ -1233,7 +1231,7 @@ class NeosrSPANFinetuner:
                     adv_loss = self.adversarial_loss_fn.generator_loss(disc_real, disc_fake)
 
                     if torch.isnan(adv_loss) or torch.isinf(adv_loss):
-                        print(f"  [WARNING] NaN/Inf in adversarial loss, skipping")
+                        print("  [WARNING] NaN/Inf in adversarial loss, skipping")
                         adv_loss = torch.tensor(0.0, device=sr.device, requires_grad=False)
                     else:
                         loss_dict['adversarial'] = adv_loss
@@ -1243,7 +1241,7 @@ class NeosrSPANFinetuner:
             if torch.isnan(loss_dict['total']) or torch.isinf(loss_dict['total']):
                 print(f"\n[WARNING] NaN/Inf detected in loss at batch {batch_idx}")
                 print(f"  Loss components: {', '.join([f'{k}={v.item():.4f}' for k, v in loss_dict.items() if k != 'total'])}")
-                print(f"  Skipping batch and zeroing gradients")
+                print("  Skipping batch and zeroing gradients")
                 self.optimizer.zero_grad(set_to_none=True)
                 continue
 
@@ -1344,11 +1342,11 @@ class NeosrSPANFinetuner:
             if 'wavelet_guided' in loss_dict:
                 postfix['wg'] = f"{loss_dict['wavelet_guided'].item():.4f}"
             pbar.set_postfix(postfix)
-        
+
         # Average losses
         avg_losses = {key: val / max(num_batches, 1) for key, val in loss_accumulators.items()}
         return avg_losses
-    
+
     @torch.no_grad()
     def validate(self, val_loader) -> Dict[str, float]:
         """Validate model with multi-loss and perceptual metrics."""
@@ -1422,72 +1420,72 @@ class NeosrSPANFinetuner:
             avg_losses['psnr'] = total_psnr / max(num_batches, 1)
             avg_losses['ssim'] = total_ssim / max(num_batches, 1)
             avg_losses['lpips'] = total_lpips / max(num_batches, 1)
-        
+
         return avg_losses
-    
+
     def _check_early_stopping(self, metrics: Dict[str, float]) -> bool:
         """
         Check if early stopping should be triggered.
-        
+
         Args:
             metrics: Current validation metrics
-        
+
         Returns:
             True if should stop early
         """
         if not self.use_early_stopping:
             return False
-        
+
         # Get current metric value
         current_value = metrics.get(self.early_stopping_metric)
         if current_value is None:
             return False
-        
+
         # Check if improved
         if self.early_stopping_mode == 'min':
             improved = current_value < self.best_metric_value - 1e-6
         else:
             improved = current_value > self.best_metric_value + 1e-6
-        
+
         if improved:
             self.best_metric_value = current_value
             self.early_stopping_counter = 0
         else:
             self.early_stopping_counter += 1
-        
+
         if self.early_stopping_counter >= self.early_stopping_patience:
             print(f"\n[Early Stopping] Triggered after {self.early_stopping_patience} epochs without improvement")
             print(f"  Best {self.early_stopping_metric}: {self.best_metric_value:.4f}")
             return True
-        
+
         return False
-    
+
     def _log_to_tensorboard(self, epoch: int, train_metrics: Dict, val_metrics: Optional[Dict] = None):
         """Log metrics to TensorBoard."""
         if not self.use_tensorboard or self.writer is None:
             return
-        
+
         # Log training metrics
         for key, value in train_metrics.items():
             self.writer.add_scalar(f'train/{key}', value, epoch)
-        
+
         # Log validation metrics
         if val_metrics is not None:
             for key, value in val_metrics.items():
                 self.writer.add_scalar(f'val/{key}', value, epoch)
-        
+
         # Log learning rate
         current_lr = self.optimizer.param_groups[0]['lr']
         self.writer.add_scalar('lr', current_lr, epoch)
-        
+
         self.writer.flush()
-    
+
     def load_checkpoint(self, checkpoint_path: str) -> int:
         """Load checkpoint to resume training.
-        
+
         Args:
             checkpoint_path: Path to checkpoint file
-            
+
         Returns:
             epoch to resume from (0-indexed)
         """
@@ -1530,24 +1528,24 @@ class NeosrSPANFinetuner:
             # Load optimizer state
             if 'optimizer_state_dict' in checkpoint and self.optimizer is not None:
                 self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                print(f"[Resume] Loaded optimizer state")
+                print("[Resume] Loaded optimizer state")
 
             # Load scheduler state
             if 'scheduler_state_dict' in checkpoint and self.scheduler is not None:
                 if checkpoint['scheduler_state_dict'] is not None:
                     self.scheduler.base.load_state_dict(checkpoint['scheduler_state_dict'])
-                    print(f"[Resume] Loaded scheduler state")
+                    print("[Resume] Loaded scheduler state")
 
             # Load GradScaler state (PR-2). Old checkpoints (pre-2026-06) do not
             # contain scaler_state_dict; the scaler then starts fresh and prints
             # a one-time warning. This is safe and forward-compatible.
             if 'scaler_state_dict' in checkpoint and self.scaler is not None:
                 self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
-                print(f"[Resume] Loaded GradScaler state")
+                print("[Resume] Loaded GradScaler state")
             elif self.scaler is not None and self.scaler._enabled:
                 # Only warn if AMP is actually active and the checkpoint predates
                 # the scaler change (no scaler_state_dict key present).
-                print(f"[Resume] WARNING: AMP active but checkpoint has no scaler_state_dict; scaler will start fresh")
+                print("[Resume] WARNING: AMP active but checkpoint has no scaler_state_dict; scaler will start fresh")
 
             # Restore best loss
             if 'best_loss' in checkpoint:
@@ -1601,7 +1599,7 @@ class NeosrSPANFinetuner:
                 if ema_payload is not None:
                     try:
                         ema.load_state_dict(ema_payload)
-                        print(f"[Resume] Loaded EMA shadow state")
+                        print("[Resume] Loaded EMA shadow state")
                     except Exception as e:
                         logger.warning("Failed to load EMA shadow state: %s", e)
                 else:
@@ -1618,9 +1616,9 @@ class NeosrSPANFinetuner:
 
         except Exception as e:
             logger.warning("Failed to load checkpoint: %s", e)
-            print(f"[Resume] Starting from epoch 0")
+            print("[Resume] Starting from epoch 0")
             return 0
-    
+
     def save_checkpoint(self, epoch: int, is_best: bool = False, val_metrics: Optional[Dict] = None):
         """Save model checkpoint."""
         checkpoint = {
@@ -1654,16 +1652,16 @@ class NeosrSPANFinetuner:
                 checkpoint['ema_model_state_dict'] = ema_sd
             except Exception as e:
                 logger.warning("Failed to serialize EMA state: %s", e)
-        
+
         # Save latest
         latest_path = self.checkpoint_dir / 'finetune_latest.pth'
         torch.save(checkpoint, latest_path)
-        
+
         if is_best:
             best_path = self.checkpoint_dir / 'finetune_best.pth'
             torch.save(checkpoint, best_path)
             print(f"  Saved best checkpoint with loss {self.best_loss:.4f}")
-        
+
         if (epoch + 1) % self.save_interval == 0:
             epoch_path = self.checkpoint_dir / f'finetune_epoch_{epoch+1}.pth'
             torch.save(checkpoint, epoch_path)
@@ -1681,10 +1679,10 @@ class NeosrSPANFinetuner:
                 updates['ssim'] = f"{val_metrics.get('ssim', 0.0):.4f}"
                 updates['lpips'] = f"{val_metrics.get('lpips', 0.0):.4f}"
             self.checkpoint_manager.update_run(updates)
-    
+
     def train(self, train_loader, val_loader=None, resume_from: str = None):
         """Full training loop with multi-loss and adversarial support.
-        
+
         Args:
             train_loader: Training data loader
             val_loader: Validation data loader (optional)
@@ -1698,7 +1696,7 @@ class NeosrSPANFinetuner:
         print(f"  Batch size: {self.finetune_cfg.get('batch_size', 4)}")
         print(f"  Gradient accumulation: {self.gradient_accumulation}x (effective batch: {self.finetune_cfg.get('batch_size', 4) * self.gradient_accumulation})")
         print(f"  Device: {self.device}")
-        print(f"\n  Loss Configuration:")
+        print("\n  Loss Configuration:")
         print(f"    Pixel: {self.pixel_weight}")
         if self.use_perceptual:
             print(f"    Perceptual: {self.perceptual_weight} (warmup: {self.perceptual_warmup_epochs} epochs)")
@@ -1710,7 +1708,7 @@ class NeosrSPANFinetuner:
             print(f"    Adversarial: {self.adversarial_weight} (starts epoch {self.adversarial_start_epoch}, max: {self.adversarial_max_weight})")
         if self.use_frequency:
             print(f"    Frequency: {self.frequency_weight} (block_size: {self.frequency_block_size})")
-        
+
         # Handle resume
         start_epoch = 0
         if resume_from:
@@ -1730,7 +1728,7 @@ class NeosrSPANFinetuner:
             else:
                 print(f"  Phase: Phase 2 (texture refinement) - {self.epochs - start_epoch} epochs remaining")
             print(f"  Phase1 epochs: {self.phase1_epochs} (restored from checkpoint)")
-        
+
         for epoch in range(start_epoch, self.epochs):
             self.current_epoch = epoch
 
@@ -1762,7 +1760,7 @@ class NeosrSPANFinetuner:
 
             # Train
             train_metrics = self.train_epoch(train_loader)
-            
+
             # Build training summary with crop size
             crop_info = f" [crop={self.current_crop_size}]" if self.use_progressive_crop else ""
             summary = f"Epoch {epoch+1}/{self.epochs}{crop_info}: loss={train_metrics['total']:.4f}"
@@ -1779,7 +1777,7 @@ class NeosrSPANFinetuner:
             if 'frequency' in train_metrics:
                 summary += f", freq={train_metrics['frequency']:.4f}"
             print(summary)
-            
+
             # Validate
             val_metrics = None
             if val_loader is not None and (epoch + 1) % self.val_interval == 0:
@@ -1788,7 +1786,7 @@ class NeosrSPANFinetuner:
                 if 'perceptual' in val_metrics:
                     val_summary += f", perc={val_metrics['perceptual']:.4f}"
                 print(val_summary)
-                
+
                 # Use LPIPS for best checkpoint selection if early stopping uses LPIPS
                 if self.early_stopping_metric == 'lpips':
                     current_best = val_metrics.get('lpips', 1.0)
@@ -1800,29 +1798,29 @@ class NeosrSPANFinetuner:
                     if val_metrics['total'] < self.best_loss:
                         self.best_loss = val_metrics['total']
                         self.save_checkpoint(epoch, is_best=True, val_metrics=val_metrics)
-                
+
                 # Check early stopping
                 if self._check_early_stopping(val_metrics):
                     print(f"\nStopping training at epoch {epoch+1}")
                     break
-            
+
             # Log to TensorBoard
             self._log_to_tensorboard(epoch, train_metrics, val_metrics)
-            
+
             # Step scheduler
             self.scheduler.step()
-            
+
             # Save checkpoint
             if (epoch + 1) % self.save_interval == 0:
                 self.save_checkpoint(epoch, val_metrics=val_metrics)
-        
+
         # Final save
         self.save_checkpoint(self.epochs - 1, val_metrics=val_metrics)
-        
+
         # Close TensorBoard
         if self.writer is not None:
             self.writer.close()
-        
+
         print("\n" + "="*50)
         print(f"Fine-tuning complete! Best loss: {self.best_loss:.4f}")
         print(f"Checkpoint: {self.checkpoint_dir / 'finetune_best.pth'}")

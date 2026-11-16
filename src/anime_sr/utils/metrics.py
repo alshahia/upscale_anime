@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import logging
-from typing import Union, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +54,14 @@ def get_lpips_model(net: str = 'alex') -> Optional[object]:
     """Get or create cached LPIPS model."""
     if not LPIPS_AVAILABLE:
         return None
-    
+
     cache_key = net
     if cache_key not in _lpips_model_cache:
         try:
             _lpips_model_cache[cache_key] = lpips.LPIPS(net=net).eval()
         except Exception:
             _lpips_model_cache[cache_key] = None
-    
+
     return _lpips_model_cache[cache_key]
 
 
@@ -69,14 +69,14 @@ def get_pyiqa_model(metric_name: str, device: torch.device) -> Optional[object]:
     """Get or create cached pyiqa metric model."""
     if not PYIQA_AVAILABLE:
         return None
-    
+
     cache_key = f"{metric_name}_{device}"
     if cache_key not in _pyiqa_model_cache:
         try:
             _pyiqa_model_cache[cache_key] = pyiqa.create_metric(metric_name, device=device).eval()
         except Exception:
             _pyiqa_model_cache[cache_key] = None
-    
+
     return _pyiqa_model_cache[cache_key]
 
 
@@ -88,12 +88,12 @@ def _move_to_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
 def calculate_psnr(img1: torch.Tensor, img2: torch.Tensor, max_val: float = 1.0) -> float:
     """
     Calculate PSNR between two images.
-    
+
     Args:
         img1: First image [B, C, H, W] or [C, H, W]
         img2: Second image [B, C, H, W] or [C, H, W]
         max_val: Maximum pixel value (1.0 for normalized images)
-    
+
     Returns:
         PSNR value in dB
     """
@@ -111,96 +111,96 @@ def calculate_ssim(
     """
     Calculate SSIM between two images.
     Simplified implementation.
-    
+
     Args:
         img1: First image [B, C, H, W]
         img2: Second image [B, C, H, W]
         window_size: Size of sliding window
         max_val: Maximum pixel value
-    
+
     Returns:
         SSIM value (0 to 1)
     """
     C1 = (0.01 * max_val) ** 2
     C2 = (0.03 * max_val) ** 2
-    
+
     sigma = 1.5
     gauss = torch.Tensor([
         np.exp(-(x - window_size//2)**2 / (2 * sigma**2))
         for x in range(window_size)
     ])
     gauss = gauss / gauss.sum()
-    
+
     window = gauss.unsqueeze(1) * gauss.unsqueeze(0)
     window = window.unsqueeze(0).unsqueeze(0).to(img1.device)
     window = window.repeat(img1.size(1), 1, 1, 1)
-    
+
     mu1 = F.conv2d(img1, window, padding=window_size//2, groups=img1.size(1))
     mu2 = F.conv2d(img2, window, padding=window_size//2, groups=img2.size(1))
-    
+
     mu1_sq = mu1 ** 2
     mu2_sq = mu2 ** 2
     mu1_mu2 = mu1 * mu2
-    
+
     sigma1_sq = F.conv2d(img1 ** 2, window, padding=window_size//2, groups=img1.size(1)) - mu1_sq
     sigma2_sq = F.conv2d(img2 ** 2, window, padding=window_size//2, groups=img2.size(1)) - mu2_sq
     sigma12 = F.conv2d(img1 * img2, window, padding=window_size//2, groups=img2.size(1)) - mu1_mu2
     # Clamp variances to >= 0 to avoid NaN from floating-point roundoff.
     sigma1_sq = sigma1_sq.clamp(min=0)
     sigma2_sq = sigma2_sq.clamp(min=0)
-    
+
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
                ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
-    
+
     return ssim_map.mean().item()
 
 
 def calculate_lpips(img1: torch.Tensor, img2: torch.Tensor, net: str = 'alex') -> float:
     """
     Calculate LPIPS (Learned Perceptual Image Patch Similarity).
-    
+
     LPIPS is a perceptual metric that correlates better with human judgment
     than PSNR/SSIM. Lower values indicate better perceptual quality.
-    
-    Reference: "The Unreasonable Effectiveness of Deep Features as a 
+
+    Reference: "The Unreasonable Effectiveness of Deep Features as a
     Perceptual Metric" (Zhang et al., 2018)
-    
+
     Args:
         img1: First image [B, C, H, W], range [0, 1]
         img2: Second image [B, C, H, W], range [0, 1]
         net: LPIPS network backbone ('alex', 'vgg', or 'squeeze')
-    
+
     Returns:
         LPIPS distance (lower is better, typical range 0.0 - 0.5)
     """
     if not LPIPS_AVAILABLE:
         return 0.0
-    
+
     lpips_model = get_lpips_model(net)
     if lpips_model is None:
         return 0.0
-    
+
     # Get device from input tensor
     device = img1.device
-    
+
     # Move model to device if needed
     lpips_model = lpips_model.to(device)
-    
+
     # Ensure inputs are in [0, 1] range for LPIPS
     img1 = _move_to_device(img1, device)
     img2 = _move_to_device(img2, device)
-    
+
     if img1.min() < 0 or img1.max() > 1:
         img1 = img1.clamp(0, 1)
     if img2.min() < 0 or img2.max() > 1:
         img2 = img2.clamp(0, 1)
-    
+
     with torch.no_grad():
         # LPIPS expects input in range [-1, 1], so convert
         img1_lpips = img1 * 2 - 1
         img2_lpips = img2 * 2 - 1
         distance = lpips_model(img1_lpips, img2_lpips)
-    
+
     return distance.mean().item()
 
 
@@ -281,26 +281,26 @@ def calculate_maniqa(img: torch.Tensor) -> float:
 def calculate_clipiqa(img: torch.Tensor) -> float:
     """
     Calculate CLIPIQA (CLIP-based Image Quality Assessment).
-    
-    CLIPIQA uses CLIP embeddings to assess image quality. Higher values 
+
+    CLIPIQA uses CLIP embeddings to assess image quality. Higher values
     indicate better quality. Particularly effective for anime content.
-    
+
     Reference: APISR (CVPR 2024)
-    
+
     Args:
         img: Image tensor [B, C, H, W], range [0, 1]
-    
+
     Returns:
         CLIPIQA score (higher is better, typical range 0 - 1). Returns NaN on failure.
     """
     if not PYIQA_AVAILABLE:
         return float('nan')
-    
+
     try:
         clipiqa_metric = get_pyiqa_model('clipiqa', img.device)
         if clipiqa_metric is None:
             return float('nan')
-        
+
         img_batch = img.to(clipiqa_metric.device)
         img_min = img_batch.min()
         img_max = img_batch.max()
@@ -403,68 +403,68 @@ def calculate_batch_metrics(
 ) -> dict:
     """
     Calculate metrics for a batch.
-    
+
     Args:
         preds: Predictions [B, C, H, W]
         targets: Ground truth [B, C, H, W]
         max_val: Maximum pixel value
         include_lpips: Whether to compute LPIPS (requires lpips library)
-    
+
     Returns:
         Dictionary with PSNR, SSIM, and optionally LPIPS
     """
     batch_size = preds.size(0)
-    
+
     psnr_total = 0.0
     ssim_total = 0.0
     lpips_total = 0.0
-    
+
     for i in range(batch_size):
         psnr = calculate_psnr(preds[i], targets[i], max_val)
         ssim = calculate_ssim(preds[i:i+1], targets[i:i+1], max_val=max_val)
-        
+
         psnr_total += psnr
         ssim_total += ssim
-        
+
         if include_lpips:
             lpips_val = calculate_lpips(preds[i:i+1], targets[i:i+1])
             lpips_total += lpips_val
-    
+
     result = {
         'psnr': psnr_total / batch_size,
         'ssim': ssim_total / batch_size,
     }
-    
+
     if include_lpips:
         result['lpips'] = lpips_total / batch_size
-    
+
     return result
 
 
 class MetricsTracker:
     """Track metrics during training/validation"""
-    
+
     def __init__(self):
         self.metrics = {}
         self.counts = {}
-    
+
     def update(self, metrics_dict: dict):
         """Update metrics"""
         for key, value in metrics_dict.items():
             if key not in self.metrics:
                 self.metrics[key] = 0.0
                 self.counts[key] = 0
-            
+
             self.metrics[key] += value
             self.counts[key] += 1
-    
+
     def get_average(self) -> dict:
         """Get average metrics"""
         return {
             key: self.metrics[key] / self.counts[key]
             for key in self.metrics.keys()
         }
-    
+
     def reset(self):
         """Reset metrics"""
         self.metrics = {}

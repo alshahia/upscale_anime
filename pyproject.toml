@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "anime-sr"
 version = "0.1.0"
 description = "Anime Super-Resolution with Progressive Ensemble Distillation (SPAN, Mamba-PAN)"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Anime SR Team", email = "anime-sr@example.com"},
 ]
@@ -48,9 +49,15 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest~=7.4.0",
+    "pytest-cov~=4.1.0",
+    "pytest-timeout~=2.2.0",
+    "coverage~=7.4.0",
     "black~=23.0.0",
     "flake8~=6.0.0",
     "mypy~=1.8.0",
+    "bandit~=1.7.0",
+    "build~=1.0.0",
+    "twine~=5.0.0",
 ]
 api = [
     "fastapi==0.104.1",
@@ -61,10 +68,6 @@ api = [
     "passlib[bcrypt]==1.7.4",
     "python-dotenv==1.0.0",
     "aiofiles==23.2.1",
-]
-gui = [
-    "customtkinter>=5.2.0",
-    "tkinterdnd2>=0.3.0",
 ]
 mamba = [
     "mamba-ssm>=1.1.0",
@@ -78,11 +81,13 @@ anime-sr = "anime_sr.__main__:main"
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "apps/anime_upscaler_gui/tests"]
+# Make `apps` importable no matter how pytest is launched (root or package dir).
+pythonpath = [".", "apps"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers"
 markers = [
     "unit: marks tests as unit tests (fast, isolated)",
     "integration: marks tests as integration tests (multi-component)",
@@ -91,14 +96,19 @@ markers = [
     "slow: marks tests as slow (deselect with -m 'not slow')",
     "gpu: marks tests that require GPU",
     "mamba: marks tests that require mamba-ssm",
+    "runslow: opt-in long-running tests (enable with --runslow or -m runslow)",
+    "requires_data: tests that need local datasets or checkpoints",
+    "requires_teachers: tests that need detached teacher-model checkpoints",
 ]
 filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::UserWarning",
+    # Third-party noise only - project code must not rely on blanket suppression.
+    "ignore:.*torch.meshgrid.*:UserWarning",
+    "ignore:.*pynvml.*:UserWarning",
+    "default",
 ]
 
 [tool.coverage.run]
-source = ["src/anime_sr"]
+source = ["anime_sr"]
 omit = [
     "*/tests/*",
     "*/test_*",
@@ -126,6 +136,5 @@ ignore_missing_imports = true
 exclude = [
     "tests/",
     "scripts/",
-    "anime_upscaler/",
     "apps/",
 ]

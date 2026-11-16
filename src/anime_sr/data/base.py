@@ -3,7 +3,6 @@ Base dataset class for Super-Resolution
 Supports multiple datasets, degradation pipelines, and flexible data loading
 Includes auto crop_size detection and smart quality-aware degradation
 """
-import os
 import random
 import numpy as np
 import torch
@@ -11,8 +10,7 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from PIL import Image
 import cv2
-from typing import Optional, Tuple, List, Dict, Callable, Any
-import torchvision.transforms as transforms
+from typing import Optional, Tuple, List, Dict, Any
 import warnings
 
 try:
@@ -42,7 +40,7 @@ class BaseDataset(Dataset):
     Universal base dataset for Super-Resolution.
     Handles HR/LR image loading, degradation, and augmentation.
     """
-    
+
     def __init__(
         self,
         hr_dir: str,
@@ -93,7 +91,7 @@ class BaseDataset(Dataset):
             sample_ratio: Optional ratio (0.0-1.0) to sample from dataset
         """
         super().__init__()
-        
+
         self.hr_dir = Path(hr_dir)
         self.lr_dir = Path(lr_dir) if lr_dir else None
         self.scale = scale
@@ -102,7 +100,7 @@ class BaseDataset(Dataset):
         self.degradation = degradation or {}
         self.preload = preload
         self.sample_ratio = sample_ratio  # NEW: for dataset sampling
-        
+
         # Validate directory exists
         if not self.hr_dir.exists():
             raise FileNotFoundError(
@@ -112,12 +110,12 @@ class BaseDataset(Dataset):
                 f"  python -c \"from anime_sr.data.data_utils import create_dummy_dataset; "
                 f"create_dummy_dataset('{self.hr_dir}', num_images=10)\""
             )
-        
+
         # Get image list
         self.hr_images = sorted(self.hr_dir.glob("*.png")) + \
                          sorted(self.hr_dir.glob("*.jpg")) + \
                          sorted(self.hr_dir.glob("*.jpeg"))
-        
+
         # Validate images found
         if len(self.hr_images) == 0:
             raise ValueError(
@@ -127,19 +125,19 @@ class BaseDataset(Dataset):
                 f"  python -c \"from anime_sr.data.data_utils import create_dummy_dataset; "
                 f"create_dummy_dataset('{self.hr_dir}', num_images=10)\""
             )
-        
+
         if max_images:
             self.hr_images = self.hr_images[:max_images]
-        
+
         # Apply dataset sampling if sample_ratio provided (NEW)
         # This is applied AFTER max_images but BEFORE any other processing
         if hasattr(self, 'sample_ratio') and self.sample_ratio is not None and self.sample_ratio < 1.0:
             num_to_sample = int(len(self.hr_images) * self.sample_ratio)
             self.hr_images = self.hr_images[:num_to_sample]
             print(f"[Dataset Sampling] Using {len(self.hr_images)} images ({self.sample_ratio:.0%} of total)")
-        
+
         print(f"Dataset loaded: {len(self.hr_images)} images from {self.hr_dir}")
-        
+
         # Auto-detect optimal crop size if enabled
         if crop_size_mode == 'auto':
             computed_crop = compute_optimal_crop_size(
@@ -154,14 +152,14 @@ class BaseDataset(Dataset):
         elif crop_size_mode == 'manual' and len(self.hr_images) > 0:
             # Warn if manual crop_size might be inappropriate for dataset
             self._validate_crop_size()
-        
+
         # Initialize quality analyzer if enabled
         self.use_quality_analyzer = use_quality_analyzer
         self.quality_analyzer = quality_analyzer
         if use_quality_analyzer:
             if self.quality_analyzer is None:
                 self.quality_analyzer = QualityAnalyzer()
-            print(f"[Quality Analyzer] Enabled - per-image quality-based degradation")
+            print("[Quality Analyzer] Enabled - per-image quality-based degradation")
             if self.degradation.get('mode') == 'auto':
                 self._setup_auto_degradation()
 
@@ -242,15 +240,15 @@ class BaseDataset(Dataset):
 
         # PreprocessingManager for unified preprocessing (NEW)
         self.preprocessing_manager = preprocessing_manager
-        
+
         # Preload images if requested
         self.gpu_degradation = gpu_degradation
-        
+
         self.cached_hr = {}
         if preload:
             for img_path in self.hr_images:
                 self.cached_hr[img_path] = self._load_image(img_path)
-        
+
         # Precompute LR paths if provided
         if self.lr_dir:
             self.lr_paths = {}
@@ -262,7 +260,7 @@ class BaseDataset(Dataset):
             print(f"Paired LR images: {len(self.lr_paths)}")
         else:
             self.lr_paths = {}
-        
+
         # Initialize RNG for reproducibility
         self._rng = torch.Generator()
         self._rng.manual_seed(torch.initial_seed() % (2**32))
@@ -297,22 +295,22 @@ class BaseDataset(Dataset):
             if isinstance(e, ValueError):
                 raise
             raise ValueError(f"Error loading image {path}: {e}") from e
-    
+
     def _validate_crop_size(self):
         """Validate that crop_size is appropriate for dataset images."""
         try:
             # Sample a few images to check dimensions
             sample_paths = self.hr_images[:5]
             min_h, min_w = float('inf'), float('inf')
-            
+
             for path in sample_paths:
                 with Image.open(path) as img:
                     w, h = img.size
                     min_h = min(min_h, h)
                     min_w = min(min_w, w)
-            
+
             smallest_dim = min(min_h, min_w)
-            
+
             if self.crop_size > smallest_dim:
                 warnings.warn(
                     f"[BaseDataset] crop_size ({self.crop_size}) is larger than smallest image dimension "
@@ -323,62 +321,62 @@ class BaseDataset(Dataset):
         except Exception:
             # If validation fails, continue silently
             pass
-    
+
     def _setup_auto_degradation(self):
         """Setup auto degradation based on dataset quality analysis."""
         try:
             print("[Auto Degradation] Analyzing dataset quality...")
             from anime_sr.data.quality_analyzer import analyze_dataset_quality
-            
+
             stats = analyze_dataset_quality(self.hr_images, sample_size=30)
-            
+
             if 'error' in stats:
                 print(f"[Auto Degradation] Failed to analyze: {stats['error']}")
                 return
-            
+
             recommended = stats['recommended_preset']
             mean_quality = stats['mean_quality']
-            
+
             print(f"[Auto Degradation] Mean quality: {mean_quality:.2f}")
             print(f"[Auto Degradation] Tier distribution: {stats['tier_distribution']}")
             print(f"[Auto Degradation] Recommended preset: '{recommended}'")
-            
+
             # Apply preset
             preset_config = get_degradation_preset_config(recommended, self.degradation)
             self.degradation.update(preset_config)
-            
+
             print(f"[Auto Degradation] Applied '{recommended}' preset")
-            
+
         except Exception as e:
             print(f"[Auto Degradation] Error during setup: {e}")
-    
+
     def _get_degradation_for_image(self, img: np.ndarray, img_path: Optional[Path] = None) -> Dict:
         """
         Get degradation config for a specific image based on quality.
-        
+
         Returns:
             Degradation config dict appropriate for image quality tier
         """
         if not self.use_quality_analyzer or self.quality_analyzer is None:
             return self.degradation
-        
+
         # Analyze image quality
         quality_score = self.quality_analyzer.analyze_image(img, img_path)
         tier = self.quality_analyzer.get_degradation_tier(quality_score)
-        
+
         # Get preset for this tier
         tier_config = get_degradation_preset_config(tier, self.degradation)
-        
+
         return tier_config
-    
+
     def _apply_degradation_with_quality(self, img: np.ndarray, img_path: Optional[Path] = None) -> np.ndarray:
         """
         Apply degradation with quality-aware selection.
-        
+
         Args:
             img: Input image
             img_path: Optional path for caching
-            
+
         Returns:
             Degraded LR image
         """
@@ -388,26 +386,26 @@ class BaseDataset(Dataset):
             lr_h, lr_w = h // self.scale, w // self.scale
             lr = cv2.resize(img, (lr_w, lr_h), interpolation=cv2.INTER_CUBIC)
             return lr
-        
+
         # Get quality-aware degradation config
         if self.use_quality_analyzer:
             cfg = self._get_degradation_for_image(img, img_path)
         else:
             cfg = self.degradation
-        
+
         # Apply first-order degradation with selected config
         img = self._apply_first_degradation_with_config(img, cfg)
-        
+
         # Resize to LR size
         h, w = img.shape[:2]
         lr_h, lr_w = h // self.scale, w // self.scale
         img = cv2.resize(img, (lr_w, lr_h), interpolation=cv2.INTER_LINEAR)
-        
+
         # Apply second-order degradation
         img = self._apply_second_degradation_with_config(img, cfg)
-        
+
         return img
-    
+
     def _apply_first_degradation_with_config(self, img: np.ndarray, cfg: Dict) -> np.ndarray:
         """Apply first-order degradation with specific config."""
         # Blur
@@ -417,58 +415,58 @@ class BaseDataset(Dataset):
             sigma_range = cfg.get('blur_sigma', [0.1, 3.0])
             sigma = random.uniform(*sigma_range[:2])
             img = self._apply_blur(img, kernel_size, sigma)
-        
+
         # Noise
         if random.random() < cfg.get('noise_prob', 0.5):
             sigma_range = cfg.get('noise_sigma', [0, 25])
             sigma = random.uniform(*sigma_range[:2])
             img = self._apply_noise(img, sigma)
-        
+
         # Random resize
         resize_probs = cfg.get('resize_prob', [0.2, 0.7, 0.1])
         resize_type = random.choices(['up', 'down', 'keep'], weights=resize_probs)[0]
-        
+
         if resize_type != 'keep':
             h, w = img.shape[:2]
             resize_range = cfg.get('resize_range', [0.15, 1.5])
-            
+
             if resize_type == 'up':
                 factor = random.uniform(1.0, resize_range[1])
             else:
                 factor = random.uniform(resize_range[0], 1.0)
-            
+
             new_h, new_w = int(h * factor), int(w * factor)
             img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        
+
         # JPEG compression
         if random.random() < cfg.get('jpeg_prob', 0.5):
             jpeg_qualities = cfg.get('jpeg_quality', [60, 70, 80, 90, 100])
             quality = random.choice(jpeg_qualities)
             img = self._apply_jpeg(img, quality)
-        
+
         return img
-    
+
     def _apply_second_degradation_with_config(self, img: np.ndarray, cfg: Dict) -> np.ndarray:
         """Apply second-order degradation with specific config."""
         # Use lower probabilities for second-order
         second_order_prob = cfg.get('second_order_prob', 0.3)
-        
+
         if random.random() < second_order_prob:
             kernel_size = random.choice([3, 5, 7])
             sigma = random.uniform(0.1, 1.0)
             img = self._apply_blur(img, kernel_size, sigma)
-        
+
         if random.random() < second_order_prob:
             sigma = random.uniform(0, 10)
             img = self._apply_noise(img, sigma)
-        
+
         if random.random() < second_order_prob:
             jpeg_qualities = cfg.get('jpeg_quality', [70, 80, 90, 100])
             quality = random.choice(jpeg_qualities)
             img = self._apply_jpeg(img, quality)
-        
+
         return img
-    
+
     def _apply_degradation(self, img: np.ndarray) -> np.ndarray:
         """
         Apply RealESRGAN-style high-order degradation to create LR image.
@@ -481,58 +479,58 @@ class BaseDataset(Dataset):
             lr_h, lr_w = h // self.scale, w // self.scale
             lr = cv2.resize(img, (lr_w, lr_h), interpolation=cv2.INTER_CUBIC)
             return lr
-        
+
         # First-order degradation
         img = self._first_degradation(img)
-        
+
         # Resize to LR size
         h, w = img.shape[:2]
         lr_h, lr_w = h // self.scale, w // self.scale
         img = cv2.resize(img, (lr_w, lr_h), interpolation=cv2.INTER_LINEAR)
-        
+
         # Second-order degradation
         img = self._second_degradation(img)
-        
+
         return img
-    
+
     def _first_degradation(self, img: np.ndarray) -> np.ndarray:
         """First-order degradation: blur, noise, resize, jpeg"""
         cfg = self.degradation
-        
+
         # Blur
         if random.random() < cfg.get('blur_prob', 0.7):
             kernel_size = random.choice(cfg.get('blur_kernel_size', [7, 9, 11]))
             sigma = random.uniform(*cfg.get('blur_sigma', [0.1, 3.0])[:2])
             img = self._apply_blur(img, kernel_size, sigma)
-        
+
         # Noise
         if random.random() < cfg.get('noise_prob', 0.5):
             sigma = random.uniform(*cfg.get('noise_sigma', [0, 25])[:2])
             img = self._apply_noise(img, sigma)
-        
+
         # Random resize
         resize_probs = cfg.get('resize_prob', [0.2, 0.7, 0.1])
         resize_type = random.choices(['up', 'down', 'keep'], weights=resize_probs)[0]
-        
+
         if resize_type != 'keep':
             h, w = img.shape[:2]
             resize_range = cfg.get('resize_range', [0.15, 1.5])
-            
+
             if resize_type == 'up':
                 factor = random.uniform(1.0, resize_range[1])
             else:
                 factor = random.uniform(resize_range[0], 1.0)
-            
+
             new_h, new_w = int(h * factor), int(w * factor)
             img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        
+
         # JPEG compression
         if random.random() < cfg.get('jpeg_prob', 0.5):
             quality = random.choice(cfg.get('jpeg_quality', [60, 70, 80, 90, 100]))
             img = self._apply_jpeg(img, quality)
-        
+
         return img
-    
+
     def _second_degradation(self, img: np.ndarray) -> np.ndarray:
         """Second-order degradation (lighter)"""
         cfg = self.degradation
@@ -649,14 +647,14 @@ class BaseDataset(Dataset):
             return cv2.resize(img, (lr_w, lr_h), interpolation=cv2.INTER_LINEAR)
         else:
             return self._apply_degradation(img)
-    
+
     def _apply_blur(self, img: np.ndarray, kernel_size: int, sigma: float) -> np.ndarray:
         """Apply Gaussian blur"""
         kernel = cv2.getGaussianKernel(kernel_size, sigma)
         kernel = kernel * kernel.T
         img = cv2.filter2D(img, -1, kernel)
         return img
-    
+
     def _apply_noise(self, img: np.ndarray, sigma: float) -> np.ndarray:
         """Apply Gaussian noise"""
         if sigma == 0:
@@ -665,14 +663,14 @@ class BaseDataset(Dataset):
         img = img.astype(np.float32) + noise
         img = np.clip(img, 0, 255).astype(np.uint8)
         return img
-    
+
     def _apply_jpeg(self, img: np.ndarray, quality: int) -> np.ndarray:
         """Apply JPEG compression"""
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
         _, encimg = cv2.imencode('.jpg', img, encode_param)
         img = cv2.imdecode(encimg, 1)
         return img
-    
+
     def _random_crop(self, hr: np.ndarray, lr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Random crop paired patches - supports progressive crop via training state"""
         hr_h, hr_w = hr.shape[:2]
@@ -738,30 +736,30 @@ class BaseDataset(Dataset):
             lr_crop = cv2.resize(lr_crop, (lr_crop_size, lr_crop_size), interpolation=cv2.INTER_CUBIC)
 
         return hr_crop, lr_crop
-    
+
     def _augment(self, hr: np.ndarray, lr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Random augmentation: flip and rotate"""
         # Horizontal flip
         if random.random() < 0.5:
             hr = np.fliplr(hr).copy()
             lr = np.fliplr(lr).copy()
-        
+
         # Vertical flip
         if random.random() < 0.5:
             hr = np.flipud(hr).copy()
             lr = np.flipud(lr).copy()
-        
+
         # Rotation (0, 90, 180, 270)
         rot = random.choice([0, 1, 2, 3])
         if rot > 0:
             hr = np.rot90(hr, rot).copy()
             lr = np.rot90(lr, rot).copy()
-        
+
         return hr, lr
-    
+
     def __len__(self) -> int:
         return len(self.hr_images)
-    
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
         Returns:
@@ -802,7 +800,7 @@ class BaseDataset(Dataset):
             'hr': hr,
             'name': hr_path.stem,
         }
-    
+
     def _random_crop_if_needed(self, img: np.ndarray, crop_size: int) -> np.ndarray:
         """Random crop image if larger than crop_size."""
         h, w = img.shape[:2]
@@ -927,26 +925,26 @@ class BaseDataset(Dataset):
         # Horizontal flip
         if torch.rand(1, generator=self._rng).item() < 0.5:
             img = np.fliplr(img).copy()
-        
+
         # Vertical flip
         if torch.rand(1, generator=self._rng).item() < 0.5:
             img = np.flipud(img).copy()
-        
+
         # Rotation (0, 90, 180, 270)
         rot = torch.randint(0, 4, (1,), generator=self._rng).item()
         if rot > 0:
             img = np.rot90(img, rot).copy()
-        
+
         return img
 
 
 class DatasetFactory:
     """Factory for creating datasets from config"""
-    
+
     @staticmethod
     def create(config: Dict, preprocessing_config: Optional[Dict] = None) -> BaseDataset:
         """Create dataset from config dict
-        
+
         Args:
             config: Dataset configuration dict
             preprocessing_config: Optional preprocessing configuration for PreprocessingManager
@@ -964,7 +962,7 @@ class DatasetFactory:
         compression_stage1 = degradation.get('compression_stage1', ['jpeg', 'webp'])
         compression_stage2 = degradation.get('compression_stage2', ['avif', 'h264', 'jpeg'])
         line_enhancement = config.get('line_enhancement', None)
-        
+
         # Create PreprocessingManager if preprocessing config provided (NEW)
         preprocessing_manager = None
         if preprocessing_config and preprocessing_config.get('mode'):
@@ -1002,7 +1000,7 @@ class DatasetFactory:
             preprocessing_manager=preprocessing_manager,
             sample_ratio=config.get('sample_ratio'),
         )
-    
+
     @staticmethod
     def create_multi_dataset(configs: List[Dict], weights: Optional[List[float]] = None,
                               weight_mode: str = 'fixed',
@@ -1010,7 +1008,7 @@ class DatasetFactory:
         """
         Create weighted combination of multiple datasets.
         Returns a MultiDataset that samples from each dataset according to weights.
-        
+
         Args:
             configs: List of dataset configurations
             weights: Optional list of weights (ignored if weight_mode='size_proportional')
@@ -1023,24 +1021,24 @@ class DatasetFactory:
 
 class MultiDataset(Dataset):
     """Weighted combination of multiple datasets
-    
+
     Supports two weight calculation modes:
     - 'fixed': Use provided weights (default behavior)
     - 'size_proportional': Calculate weights based on dataset sizes
-    
+
     Automatically standardizes crop_size across all datasets to ensure
     consistent tensor shapes for batching.
     """
-    
-    def __init__(self, datasets: List[Dataset], weights: Optional[List[float]] = None, 
+
+    def __init__(self, datasets: List[Dataset], weights: Optional[List[float]] = None,
                  weight_mode: str = 'fixed'):
         self.datasets = datasets
         self.weight_mode = weight_mode
-        
+
         # Standardize crop_size across all datasets
         # This is necessary because PyTorch DataLoader requires consistent tensor shapes
         self._standardize_crop_sizes()
-        
+
         if weight_mode == 'size_proportional':
             # Calculate weights proportional to dataset sizes
             dataset_sizes = []
@@ -1050,7 +1048,7 @@ class MultiDataset(Dataset):
                 except (TypeError, AttributeError):
                     # Fallback to equal weights if length unknown
                     dataset_sizes.append(1.0)
-            
+
             total_size = sum(dataset_sizes)
             if total_size > 0:
                 self.weights = [size / total_size for size in dataset_sizes]
@@ -1060,14 +1058,14 @@ class MultiDataset(Dataset):
         else:
             # Use provided or equal weights
             self.weights = weights or [1.0] * len(datasets)
-        
+
         # Normalize weights
         total = sum(self.weights)
         self.weights = [w / total for w in self.weights]
-        
+
         # Compute cumulative weights for sampling
         self.cum_weights = [sum(self.weights[:i+1]) for i in range(len(self.weights))]
-    
+
     def _standardize_crop_sizes(self):
         """
         Standardize crop_size across all datasets to ensure consistent tensor shapes.
@@ -1075,32 +1073,32 @@ class MultiDataset(Dataset):
         """
         if not self.datasets:
             return
-        
+
         # Collect crop_sizes from all datasets
         crop_sizes = []
         for ds in self.datasets:
             if hasattr(ds, 'crop_size'):
                 crop_sizes.append(ds.crop_size)
-        
+
         if not crop_sizes:
             return
-        
+
         # Find minimum crop_size
         min_crop_size = min(crop_sizes)
-        
+
         # Check if standardization is needed
         unique_sizes = set(crop_sizes)
         if len(unique_sizes) > 1:
             print(f"[MultiDataset] Standardizing crop_sizes: {crop_sizes} -> {min_crop_size}")
-            
+
             # Adjust all datasets to use the minimum crop_size
             for ds in self.datasets:
                 if hasattr(ds, 'crop_size') and ds.crop_size != min_crop_size:
                     ds.crop_size = min_crop_size
-    
+
     def __len__(self) -> int:
         return sum(len(d) for d in self.datasets)
-    
+
     def __getitem__(self, idx: int):
         for i, ds in enumerate(self.datasets):
             if idx < len(ds):

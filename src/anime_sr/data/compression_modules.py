@@ -12,7 +12,7 @@ import random
 import tempfile
 import cv2
 import numpy as np
-from typing import Optional, Tuple, List
+from typing import Tuple, List
 from PIL import Image
 
 

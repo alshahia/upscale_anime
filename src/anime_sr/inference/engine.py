@@ -13,7 +13,7 @@ import torch
 import numpy as np
 from pickle import UnpicklingError
 from pathlib import Path
-from typing import Union, Optional, List, Dict, Callable
+from typing import Union, Optional, List, Dict
 import cv2
 
 logger = logging.getLogger(__name__)
@@ -23,13 +23,12 @@ try:
     from torch.amp import autocast  # PyTorch 2.0+
 except ImportError:
     from torch.cuda.amp import autocast as _autocast  # PyTorch 1.x
-    
+
     def autocast(device_type=None, enabled=True):
         return _autocast(enabled=enabled)
 
-from anime_sr.models.span import create_span_model, SPANModel, create_neosr_span
-from anime_sr.models.mamba_pan import create_mamba_pan_model, MambaPANModel
-from anime_sr.models.ensemble import EnsembleTeacher, TinyStudent
+from anime_sr.models.span import create_span_model, create_neosr_span
+from anime_sr.models.mamba_pan import create_mamba_pan_model
 
 
 # TTA augmentation functions
@@ -67,14 +66,14 @@ TTA_TRANSFORMS = {
 class InferenceEngine:
     """
     High-level inference engine for super-resolution models.
-    
+
     Supports:
     - Single image inference
     - Batch inference
     - Video processing
     - Model switching
     """
-    
+
     def __init__(
         self,
         model: torch.nn.Module,
@@ -84,9 +83,9 @@ class InferenceEngine:
         self.device = torch.device(device) if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = model.to(self.device)
         self.model.eval()
-        
+
         self.use_amp = use_amp and self.device.type == 'cuda'
-    
+
     @classmethod
     def from_checkpoint(
         cls,
@@ -98,22 +97,22 @@ class InferenceEngine:
     ) -> 'InferenceEngine':
         """
         Create inference engine from checkpoint.
-        
+
         Args:
             checkpoint_path: Path to model checkpoint
             model_type: 'span', 'mamba_pan', or 'tiny_student'
             device: Device to load model on
             config: Optional model configuration
             use_ema: If True and EMA weights exist, use EMA model for inference
-        
+
         Returns:
             InferenceEngine instance
         """
         checkpoint_path = Path(checkpoint_path)
-        
+
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-        
+
         # Load checkpoint
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
@@ -121,9 +120,9 @@ class InferenceEngine:
             # Fallback: try with safe_globals for custom Config objects
             try:
                 from torch.serialization import safe_globals
-                import utils.config
+                from anime_sr.utils.config import Config
                 logger.warning(f"Checkpoint requires safe_globals for Config objects: {e}")
-                with safe_globals([utils.config.Config]):
+                with safe_globals([Config]):
                     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
             except (UnpicklingError, AttributeError, ModuleNotFoundError):
                 # Final fallback: load without weights_only (legacy behavior) - requires opt-in
@@ -134,7 +133,7 @@ class InferenceEngine:
                 import warnings
                 warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
                 checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-        
+
         # Determine config
         if config is None:
             if 'config' in checkpoint:
@@ -143,10 +142,10 @@ class InferenceEngine:
                     config = config.to_dict()
             else:
                 config = {}
-        
+
         # Create model
         model_config = config.get('model', {}) if 'model' in config else config
-        
+
         if model_type == 'span':
             model = create_span_model(model_config)
         elif model_type == 'neosr_span':
@@ -158,7 +157,7 @@ class InferenceEngine:
             model = TinyStudent(scale=model_config.get('scale', 4))
         else:
             raise ValueError(f"Unknown model type: {model_type}")
-        
+
         # Determine which weights to load (EMA preferred if available and requested)
         loaded_ema = False
         if use_ema and 'ema_model_state_dict' in checkpoint:
@@ -169,7 +168,7 @@ class InferenceEngine:
             except Exception as e:
                 print(f"Warning: Could not load EMA weights: {e}")
                 print("Falling back to regular model weights...")
-        
+
         if not loaded_ema:
             # Load regular weights
             if 'model_state_dict' in checkpoint:
@@ -179,11 +178,11 @@ class InferenceEngine:
             else:
                 model.load_state_dict(checkpoint)
             print(f"Loaded {model_type} model from {checkpoint_path}")
-        
+
         print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
-        
+
         return cls(model, device=device)
-    
+
     @classmethod
     def from_ensemble(
         cls,
@@ -194,13 +193,13 @@ class InferenceEngine:
     ) -> 'InferenceEngine':
         """
         Create inference engine from ensemble.
-        
+
         Args:
             model_a_checkpoint: Path to Model A checkpoint
             model_b_checkpoint: Path to Model B checkpoint
             device: Device to load models on
             weights: Ensemble weights [w_a, w_b]
-        
+
         Returns:
             InferenceEngine instance
         """
@@ -208,25 +207,25 @@ class InferenceEngine:
             weights = [0.6, 0.4]
 
         from anime_sr.models.ensemble import create_ensemble_teacher
-        
+
         ensemble = create_ensemble_teacher(
             str(model_a_checkpoint),
             str(model_b_checkpoint),
             device=device,
             weights=weights,
         )
-        
+
         print(f"Created ensemble teacher with weights: {weights}")
-        
+
         return cls(ensemble, device=device)
-    
+
     def preprocess(self, image: np.ndarray) -> torch.Tensor:
         """
         Preprocess numpy image to tensor.
-        
+
         Args:
             image: Input image [H, W, C] or [H, W], BGR or RGB
-        
+
         Returns:
             Preprocessed tensor [1, C, H, W]
         """
@@ -237,43 +236,43 @@ class InferenceEngine:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
         elif image.shape[2] == 3:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
+
         # Convert to tensor
         tensor = torch.from_numpy(image).float() / 255.0
-        
+
         # HWC to CHW
         tensor = tensor.permute(2, 0, 1).unsqueeze(0)
-        
+
         return tensor
-    
+
     def postprocess(self, tensor: torch.Tensor) -> np.ndarray:
         """
         Postprocess tensor to numpy image.
-        
+
         Args:
             tensor: Output tensor [1, C, H, W] or [C, H, W]
-        
+
         Returns:
             Numpy image [H, W, C], BGR format
         """
         # Remove batch dimension if present
         if tensor.dim() == 4:
             tensor = tensor.squeeze(0)
-        
+
         # Move to CPU and clamp
         tensor = tensor.detach().cpu().clamp(0, 1)
-        
+
         # CHW to HWC
         image = tensor.permute(1, 2, 0).numpy()
-        
+
         # To uint8
         image = (image * 255).astype(np.uint8)
-        
+
         # RGB to BGR
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        
+
         return image
-    
+
     def run(
         self,
         lr_image: Union[np.ndarray, torch.Tensor],
@@ -281,11 +280,11 @@ class InferenceEngine:
     ) -> Union[np.ndarray, torch.Tensor]:
         """
         Run inference on a single image.
-        
+
         Args:
             lr_image: Low-resolution image (numpy array or tensor)
             return_tensor: If True, return tensor instead of numpy array
-        
+
         Returns:
             Super-resolved image
         """
@@ -294,22 +293,22 @@ class InferenceEngine:
             lr_tensor = self.preprocess(lr_image).to(self.device)
         else:
             lr_tensor = lr_image.to(self.device)
-        
+
         # Add batch dimension if missing
         if lr_tensor.dim() == 3:
             lr_tensor = lr_tensor.unsqueeze(0)
-        
+
         # Inference
         with torch.no_grad():
             with autocast(device_type=self.device.type, enabled=self.use_amp):
                 sr_tensor = self.model(lr_tensor)
-        
+
         # Postprocess
         if return_tensor:
             return sr_tensor
-        
+
         return self.postprocess(sr_tensor)
-    
+
     def run_tta(
         self,
         lr_image: Union[np.ndarray, torch.Tensor],
@@ -319,79 +318,79 @@ class InferenceEngine:
     ) -> Union[np.ndarray, torch.Tensor]:
         """
         Run inference with Test-Time Augmentation (TTA).
-        
+
         Averages predictions across multiple augmented versions of the input
         for improved quality (+0.2-0.4 dB PSNR typical).
-        
+
         Args:
             lr_image: Low-resolution image (numpy array or tensor)
             return_tensor: If True, return tensor instead of numpy array
-            augmentations: List of augmentation names to use. 
+            augmentations: List of augmentation names to use.
                           Default: ['identity', 'flip_h', 'flip_v']
             merge_mode: How to merge predictions ('mean' or 'median')
-        
+
         Returns:
             Super-resolved image (higher quality than run())
         """
         if augmentations is None:
             # Default TTA: horizontal and vertical flips
             augmentations = ['identity', 'flip_h', 'flip_v']
-        
+
         # Preprocess if numpy
         if isinstance(lr_image, np.ndarray):
             lr_tensor = self.preprocess(lr_image).to(self.device)
         else:
             lr_tensor = lr_image.to(self.device)
-        
+
         # Add batch dimension if missing
         if lr_tensor.dim() == 3:
             lr_tensor = lr_tensor.unsqueeze(0)
-        
+
         # Collect predictions from all augmentations
         predictions = []
-        
+
         with torch.no_grad():
             for aug_name in augmentations:
                 if aug_name not in TTA_TRANSFORMS:
                     print(f"Warning: Unknown augmentation '{aug_name}', skipping")
                     continue
-                
+
                 forward_fn, inverse_fn = TTA_TRANSFORMS[aug_name]
-                
+
                 # Apply forward transform
                 augmented = forward_fn(lr_tensor)
-                
+
                 # Inference
                 with autocast(device_type=self.device.type, enabled=self.use_amp):
                     pred = self.model(augmented)
-                
+
                 # Apply inverse transform to prediction
                 pred = inverse_fn(pred)
-                
+
                 # Clamp to valid range
                 pred = torch.clamp(pred, 0, 1)
-                
+
                 predictions.append(pred)
-        
+
         # Merge predictions
         if len(predictions) == 0:
             raise ValueError("No valid predictions from TTA augmentations")
-        
+
         stacked = torch.stack(predictions)
-        
+
         if merge_mode == 'mean':
             sr_tensor = stacked.mean(dim=0)
         elif merge_mode == 'median':
             sr_tensor = stacked.median(dim=0)[0]
         else:
             raise ValueError(f"Unknown merge_mode: {merge_mode}")
-        
+
         # Postprocess
         if return_tensor:
             return sr_tensor
-        
+
         return self.postprocess(sr_tensor)
-    
+
     def run_batch(
         self,
         lr_images: List[Union[np.ndarray, torch.Tensor]],
@@ -529,56 +528,56 @@ class InferenceEngine:
     ) -> Dict[str, float]:
         """
         Benchmark inference speed.
-        
+
         Args:
             input_size: Input tensor size (C, H, W)
             num_runs: Number of benchmark runs
             warmup: Number of warmup runs
             scale: Upscaling factor (default: model.scale, falling back to 4)
-        
+
         Returns:
             Dictionary with benchmark results
         """
         import time
-        
+
         # Create dummy input
         dummy_input = torch.randn(1, *input_size).to(self.device)
-        
+
         # Warmup
         print(f"Warming up ({warmup} runs)...")
         for _ in range(warmup):
             with torch.no_grad():
                 _ = self.model(dummy_input)
-        
+
         if self.device.type == 'cuda':
             torch.cuda.synchronize()
-        
+
         # Benchmark
         print(f"Benchmarking ({num_runs} runs)...")
         times = []
-        
+
         for _ in range(num_runs):
             if self.device.type == 'cuda':
                 torch.cuda.synchronize()
-            
+
             start = time.time()
-            
+
             with torch.no_grad():
                 _ = self.model(dummy_input)
-            
+
             if self.device.type == 'cuda':
                 torch.cuda.synchronize()
-            
+
             times.append(time.time() - start)
-        
+
         # Compute statistics
         times = np.array(times)
-        
+
         h, w = input_size[1], input_size[2]
         if scale is None:
             scale = int(getattr(self.model, 'scale', 4))
         output_pixels = (h * scale) * (w * scale)
-        
+
         results = {
             'mean_time_ms': np.mean(times) * 1000,
             'std_time_ms': np.std(times) * 1000,
@@ -588,14 +587,14 @@ class InferenceEngine:
             'output_pixels': output_pixels,
             'output_resolution': f"{w*scale}x{h*scale}",
         }
-        
+
         print(f"\nBenchmark Results ({num_runs} runs):")
         print(f"  Mean time: {results['mean_time_ms']:.2f} ± {results['std_time_ms']:.2f} ms")
         print(f"  FPS: {results['fps']:.2f}")
         print(f"  Resolution: {results['output_resolution']}")
-        
+
         return results
-    
+
     def get_model_info(self) -> Dict:
         """Get model information"""
         return {
@@ -617,7 +616,7 @@ def quick_inference(
 ) -> np.ndarray:
     """
     Quick inference function for single image.
-    
+
     Args:
         checkpoint_path: Path to model checkpoint
         input_path: Path to input image
@@ -626,7 +625,7 @@ def quick_inference(
         device: Device to use
         use_ema: If True and EMA weights exist, use EMA model
         use_tta: If True, use Test-Time Augmentation (slower but better quality)
-    
+
     Returns:
         Super-resolved image as numpy array
     """
@@ -634,12 +633,12 @@ def quick_inference(
     engine = InferenceEngine.from_checkpoint(
         checkpoint_path, model_type, device, use_ema=use_ema
     )
-    
+
     # Load image
     image = cv2.imread(input_path)
     if image is None:
         raise ValueError(f"Failed to load image: {input_path}")
-    
+
     # Run inference (with or without TTA)
     if use_tta:
         sr_image = engine.run_tta(image)
@@ -647,21 +646,21 @@ def quick_inference(
     else:
         sr_image = engine.run(image)
         print(f"Inference completed (EMA={use_ema})")
-    
+
     # Save
     cv2.imwrite(output_path, sr_image)
     print(f"Saved to: {output_path}")
-    
+
     return sr_image
 
 
 class ModelSoup:
     """
     Model Soup: Averaging weights of multiple checkpoints.
-    
+
     Research shows weight averaging can improve accuracy without increasing
     inference time (Wortsman et al., 2022).
-    
+
     Example:
         >>> soup = ModelSoup.from_checkpoints([
         ...     'checkpoints/epoch_100.pth',
@@ -671,7 +670,7 @@ class ModelSoup:
         >>> averaged_state = soup.create_soup()
         >>> torch.save(averaged_state, 'checkpoints/soup.pth')
     """
-    
+
     def __init__(self, state_dicts: List[Dict], configs: List[Dict] = None):
         """
         Args:
@@ -680,10 +679,10 @@ class ModelSoup:
         """
         self.state_dicts = state_dicts
         self.configs = configs
-        
+
         if len(state_dicts) < 2:
             raise ValueError("Need at least 2 state dicts for soup")
-    
+
     @classmethod
     def from_checkpoints(
         cls,
@@ -692,22 +691,22 @@ class ModelSoup:
     ) -> 'ModelSoup':
         """
         Load model soup from checkpoint files.
-        
+
         Args:
             checkpoint_paths: List of checkpoint file paths
             prefer_ema: If True, use EMA weights when available
-        
+
         Returns:
             ModelSoup instance
         """
         state_dicts = []
         configs = []
-        
+
         for path in checkpoint_paths:
             path = Path(path)
             if not path.exists():
                 raise FileNotFoundError(f"Checkpoint not found: {path}")
-            
+
             # Load checkpoint with fallback for custom objects
             try:
                 checkpoint = torch.load(path, map_location='cpu', weights_only=True)
@@ -721,7 +720,7 @@ class ModelSoup:
                     import warnings
                     warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
                     checkpoint = torch.load(path, map_location='cpu', weights_only=False)
-            
+
             # Choose weights (EMA preferred)
             if prefer_ema and 'ema_model_state_dict' in checkpoint:
                 state_dict = checkpoint['ema_model_state_dict']
@@ -735,18 +734,18 @@ class ModelSoup:
             else:
                 state_dict = checkpoint
                 print(f"  {path.name}: Using full checkpoint")
-            
+
             state_dicts.append(state_dict)
-            
+
             # Extract config if available
             if 'config' in checkpoint:
                 config = checkpoint['config']
                 if hasattr(config, 'to_dict'):
                     config = config.to_dict()
                 configs.append(config)
-        
+
         return cls(state_dicts, configs if configs else None)
-    
+
     def create_soup(
         self,
         weights: Optional[List[float]] = None,
@@ -754,66 +753,66 @@ class ModelSoup:
     ) -> Dict[str, torch.Tensor]:
         """
         Create averaged (soup) state dict.
-        
+
         Args:
             weights: Optional weights for each checkpoint (default: equal weighting)
             exclude_keys: Keys to exclude from averaging (e.g., 'optimizer_state')
-        
+
         Returns:
             Averaged state dict
         """
         if weights is None:
             weights = [1.0 / len(self.state_dicts)] * len(self.state_dicts)
-        
+
         if len(weights) != len(self.state_dicts):
             raise ValueError("Number of weights must match number of state dicts")
-        
+
         exclude_keys = exclude_keys or []
-        
+
         # Get all keys from first state dict
         reference_dict = self.state_dicts[0]
         averaged = {}
-        
+
         print(f"Creating model soup from {len(self.state_dicts)} checkpoints...")
-        
+
         for key in reference_dict.keys():
             # Skip excluded keys
             if any(excluded in key for excluded in exclude_keys):
                 continue
-            
+
             # Collect tensors for this key from all state dicts
             tensors = []
             valid_weights = []
-            
+
             for i, state_dict in enumerate(self.state_dicts):
                 if key in state_dict:
                     tensors.append(state_dict[key].float())
                     valid_weights.append(weights[i])
-            
+
             if len(tensors) == 0:
                 print(f"  Warning: Key '{key}' not found in any state dict")
                 continue
-            
+
             # Normalize weights
             weight_sum = sum(valid_weights)
             normalized_weights = [w / weight_sum for w in valid_weights]
-            
+
             # Weighted average
             if len(tensors) == 1:
                 averaged[key] = tensors[0]
             else:
                 stacked = torch.stack(tensors)
                 weights_tensor = torch.tensor(normalized_weights, dtype=stacked.dtype)
-                
+
                 # Reshape weights for broadcasting
                 while weights_tensor.dim() < stacked.dim():
                     weights_tensor = weights_tensor.unsqueeze(-1)
-                
+
                 averaged[key] = (stacked * weights_tensor).sum(dim=0)
-        
+
         print(f"  Averaged {len(averaged)} parameters")
         return averaged
-    
+
     def save_soup(
         self,
         output_path: Union[str, Path],
@@ -822,17 +821,17 @@ class ModelSoup:
     ):
         """
         Create and save soup checkpoint.
-        
+
         Args:
             output_path: Where to save the soup checkpoint
             weights: Optional weights for averaging
             reference_config: Config to include in saved checkpoint
         """
         averaged_state = self.create_soup(weights)
-        
+
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         checkpoint = {
             'model_state_dict': averaged_state,
             'soup_metadata': {
@@ -840,15 +839,15 @@ class ModelSoup:
                 'weights': weights or [1.0 / len(self.state_dicts)] * len(self.state_dicts),
             }
         }
-        
+
         if reference_config:
             checkpoint['config'] = reference_config
         elif self.configs:
             checkpoint['config'] = self.configs[0]
-        
+
         torch.save(checkpoint, output_path)
         print(f"Model soup saved to: {output_path}")
-    
+
     @staticmethod
     def find_checkpoints(
         checkpoint_dir: Union[str, Path],
@@ -857,20 +856,20 @@ class ModelSoup:
     ) -> List[Path]:
         """
         Find recent checkpoints in a directory.
-        
+
         Args:
             checkpoint_dir: Directory to search
             pattern: Glob pattern for checkpoint files
             last_n: Number of most recent checkpoints to return
-        
+
         Returns:
             List of checkpoint paths
         """
         checkpoint_dir = Path(checkpoint_dir)
         if not checkpoint_dir.exists():
             return []
-        
+
         checkpoints = sorted(checkpoint_dir.glob(pattern))
-        
+
         # Return last N checkpoints
         return checkpoints[-last_n:] if len(checkpoints) > last_n else checkpoints

@@ -43,7 +43,7 @@ Deprecated aliases (kept for back-compat with existing scripts):
     _ModelDownloader -> ModelDownloader (in apps.anime_upscaler_gui.downloader)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 # Public API re-exports. These are the names external scripts should use.

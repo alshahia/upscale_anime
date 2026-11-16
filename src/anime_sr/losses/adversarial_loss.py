@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import warnings
-from typing import Tuple, Optional, Dict
+from typing import Optional, Dict
 
 
 class SRDiscriminator(nn.Module):
@@ -14,7 +14,7 @@ class SRDiscriminator(nn.Module):
     Discriminator for Super-Resolution GAN.
     PatchGAN-style architecture for local realism.
     """
-    
+
     def __init__(
         self,
         in_channels: int = 3,
@@ -22,13 +22,13 @@ class SRDiscriminator(nn.Module):
         num_layers: int = 3,
     ):
         super().__init__()
-        
+
         layers = []
-        
+
         # First layer
         layers.append(nn.Conv2d(in_channels, num_features, kernel_size=4, stride=2, padding=1))
         layers.append(nn.LeakyReLU(0.2, inplace=True))
-        
+
         # Middle layers
         nf = num_features
         for i in range(num_layers):
@@ -38,19 +38,19 @@ class SRDiscriminator(nn.Module):
             layers.append(nn.Conv2d(nf_prev, nf, kernel_size=4, stride=stride, padding=1))
             layers.append(nn.BatchNorm2d(nf))
             layers.append(nn.LeakyReLU(0.2, inplace=True))
-        
+
         # Final layer - output single value per patch
         layers.append(nn.Conv2d(nf, 1, kernel_size=4, stride=1, padding=1))
-        
+
         self.model = nn.Sequential(*layers)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
-        
+
         Args:
             x: Input image [B, 3, H, W]
-        
+
         Returns:
             Discriminator output [B, 1, H', W']
         """
@@ -59,11 +59,11 @@ class SRDiscriminator(nn.Module):
 
 class VanillaGANLoss(nn.Module):
     """Standard GAN loss (binary cross entropy)"""
-    
+
     def __init__(self):
         super().__init__()
         self.loss_fn = nn.BCEWithLogitsLoss()
-    
+
     def forward(
         self,
         disc_output: torch.Tensor,
@@ -71,11 +71,11 @@ class VanillaGANLoss(nn.Module):
     ) -> torch.Tensor:
         """
         Compute GAN loss.
-        
+
         Args:
             disc_output: Discriminator output
             is_real: True for real samples, False for fake
-        
+
         Returns:
             GAN loss
         """
@@ -189,10 +189,10 @@ class RelativisticGANLoss(nn.Module):
 
 class HingeGANLoss(nn.Module):
     """Hinge GAN loss (used in SAGAN, BigGAN)"""
-    
+
     def __init__(self):
         super().__init__()
-    
+
     def forward(
         self,
         disc_output: torch.Tensor,
@@ -200,11 +200,11 @@ class HingeGANLoss(nn.Module):
     ) -> torch.Tensor:
         """
         Compute hinge GAN loss.
-        
+
         Args:
             disc_output: Discriminator output
             is_real: True for real, False for fake
-        
+
         Returns:
             Hinge loss
         """
@@ -283,7 +283,7 @@ class GANTrainer:
     Helper class for training GAN components.
     Not a loss function, but manages discriminator training.
     """
-    
+
     def __init__(
         self,
         discriminator: nn.Module,
@@ -293,7 +293,7 @@ class GANTrainer:
         self.discriminator = discriminator
         self.adversarial_loss = AdversarialLoss(loss_type)
         self.optimizer = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.9, 0.99))
-    
+
     def train_step(
         self,
         real_images: torch.Tensor,
@@ -301,22 +301,22 @@ class GANTrainer:
     ) -> Dict[str, float]:
         """
         Train discriminator one step.
-        
+
         Args:
             real_images: Real HR images
             fake_images: Generated SR images
-        
+
         Returns:
             Dict with discriminator loss
         """
         self.optimizer.zero_grad()
-        
+
         # Discriminator on real
         disc_real = self.discriminator(real_images)
-        
+
         # Discriminator on fake
         disc_fake = self.discriminator(fake_images.detach())
-        
+
         # Compute loss
         if isinstance(self.adversarial_loss.loss_fn, RelativisticGANLoss):
             d_loss = self.adversarial_loss.loss_fn.discriminator_loss(disc_real, disc_fake)
@@ -324,10 +324,10 @@ class GANTrainer:
             loss_real = self.adversarial_loss.loss_fn(disc_real, is_real=True)
             loss_fake = self.adversarial_loss.loss_fn(disc_fake, is_real=False)
             d_loss = (loss_real + loss_fake) / 2
-        
+
         d_loss.backward()
         self.optimizer.step()
-        
+
         return {
             'd_loss': d_loss.item(),
             'disc_real': disc_real.mean().item(),

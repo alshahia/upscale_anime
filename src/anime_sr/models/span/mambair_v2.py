@@ -16,7 +16,6 @@ Exports:
     ASSM             -- input/output projections + CPE + route + scan
     MambaSPAB        -- SPAB-compatible wrapper (returns 3-tuple)
 """
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

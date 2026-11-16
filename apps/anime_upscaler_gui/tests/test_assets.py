@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 
-ASSETS = Path(__file__).resolve().parents[1] / "assets" / "icons" / "phosphor"
+ASSETS_ROOT = Path(__file__).resolve().parents[1] / "anime_upscaler_gui" / "assets"
+ASSETS = ASSETS_ROOT / "icons" / "phosphor"
 
 
 # ---- asset bundle exists -------------------------------------------------- #
@@ -28,7 +29,7 @@ def test_app_ico_exists():
 
 
 def test_splash_hero_exists():
-    splash = Path(__file__).resolve().parents[1] / "assets" / "splash" / "hero-800x600.png"
+    splash = ASSETS_ROOT / "splash" / "hero-800x600.png"
     assert splash.exists()
 
 
@@ -109,16 +110,25 @@ def test_splash_can_be_child_of_existing_tk_root(shared_tk_root):
 
 
 def test_app_title_is_anime_upscaler(shared_tk_root):
-    """Phase 11.8: window title is 'Anime Upscaler' (proper case), not 'anime upscaler gui'."""
+    """Phase 11.8: window title is 'Anime Upscaler' (proper case), not 'anime upscaler gui'.
+
+    Uses a Toplevel rather than a second `tk.Tk()`: creating *and destroying*
+    a second root permanently breaks Tk for the rest of the process on Windows
+    (see conftest.py). The source assertion keeps the real shell covered.
+    """
+    import inspect
     from apps.anime_upscaler_gui.anime_upscaler_gui.app import UpscaleGUI
-    app = UpscaleGUI.__new__(UpscaleGUI)
-    tk.Tk.__init__(app)
+
+    app = tk.Toplevel(shared_tk_root)
     try:
         # Replicate the line in __init__ so we don't have to spin up the full GUI.
         app.title("Anime Upscaler")
         assert app.title() == "Anime Upscaler"
     finally:
         app.destroy()
+
+    # ...and the real window class still sets that exact string.
+    assert 'self.title("Anime Upscaler")' in inspect.getsource(UpscaleGUI.__init__)
 
 
 def test_main_module_accepts_no_splash_flag():

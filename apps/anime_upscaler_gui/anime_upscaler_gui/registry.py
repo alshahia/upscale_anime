@@ -11,6 +11,7 @@ Phase 5 additions:
     prefix. Add new patterns when you train new variants.
 """
 import hashlib
+import importlib.resources
 import json
 import logging
 import math
@@ -284,9 +285,41 @@ def _validate_preset_entry(raw: dict, origin: str) -> Optional[PresetEntry]:
 
 
 def _bundled_registry_json() -> Optional[Path]:
-    """registry.json shipped next to the app (apps/anime_upscaler_gui/data/)."""
-    candidate = Path(__file__).resolve().parent.parent / "data" / "registry.json"
-    return candidate if candidate.is_file() else None
+    """Locate the preset catalog bundled inside the installed package.
+
+    The file ships at ``anime_upscaler_gui/data/registry.json`` (declared in
+    ``[tool.setuptools.package-data]`` in pyproject.toml) so wheels and sdists
+    carry it INSIDE the package directory instead of next to it.
+
+    Resolution order:
+      1. ``importlib.resources`` anchored on *this* package -- that is the real
+         ``anime_upscaler_gui`` for an installed wheel, and
+         ``apps.anime_upscaler_gui.anime_upscaler_gui`` when running straight
+         from a repo checkout. Using ``__package__`` (rather than the literal
+         "anime_upscaler_gui") is what keeps the source tree working, where
+         the inner package is only importable under the ``apps.`` prefix.
+      2. Source-tree fallback: ``<repo>/apps/anime_upscaler_gui/data/registry.json``,
+         the pre-move location, so a repo/editable checkout that still only
+         has the old copy keeps working.
+
+    Returns None when neither location exists; the built-in PRESET_CATALOG
+    still works on its own.
+    """
+    try:
+        anchor = importlib.resources.files(__package__)
+    except (ModuleNotFoundError, ValueError):
+        # Package not importable under this name (should not happen for a
+        # normally-installed app); fall through to the source-tree path.
+        anchor = None
+    if anchor is not None:
+        candidate = anchor.joinpath("data", "registry.json")
+        # Traversables may be non-filesystem (zip imports); only accept a real
+        # path so callers can open() it.
+        resource_path = Path(str(candidate))
+        if resource_path.is_file():
+            return resource_path
+    legacy = Path(__file__).resolve().parent.parent / "data" / "registry.json"
+    return legacy if legacy.is_file() else None
 
 
 def _load_preset_catalog(explicit_path: Optional[Path] = None) -> List[PresetEntry]:
@@ -308,11 +341,12 @@ def _load_preset_catalog(explicit_path: Optional[Path] = None) -> List[PresetEnt
             by_id[e.id] = e
             order.append(e.id)
     # Extension candidates, later ones override by id:
-    #   1. bundled   apps/anime_upscaler_gui/data/registry.json (ships with app)
+    #   1. bundled   anime_upscaler_gui/data/registry.json (ships inside the package)
     #   2. explicit  user extension (typically <app-data>/registry.json)
     candidates: List[Path] = []
-    if _bundled_registry_json() is not None:
-        candidates.append(_bundled_registry_json())
+    bundled = _bundled_registry_json()
+    if bundled is not None:
+        candidates.append(bundled)
     if explicit_path is not None:
         candidates.append(Path(explicit_path))
     for path in candidates:

@@ -1,0 +1,11 @@
+# One line ending everywhere: the Windows checkouts drifted into a CRLF/LF mix,
+# which polls W293 (blank line contains whitespace) in flake8 and makes diffs
+# look like whole-file rewrites. Normalize on checkin, LF in the working tree.
+*.py text eol=lf
+*.pyi text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.cfg text eol=lf

@@ -9,17 +9,17 @@ Provides:
 
 Example usage:
     >>> from inference import InferenceEngine, quick_inference
-    >>> 
+    >>>
     >>> # Basic inference with EMA weights
     >>> engine = InferenceEngine.from_checkpoint('checkpoints/best.pth', use_ema=True)
     >>> sr_image = engine.run(lr_image)
-    >>> 
+    >>>
     >>> # Inference with TTA for better quality
     >>> sr_image = engine.run_tta(lr_image, augmentations=['identity', 'flip_h', 'flip_v'])
-    >>> 
+    >>>
     >>> # Quick inference
     >>> quick_inference('checkpoints/best.pth', 'input.png', 'output.png', use_ema=True)
-    >>> 
+    >>>
     >>> # Create model soup from multiple checkpoints
     >>> from inference import ModelSoup
     >>> soup = ModelSoup.from_checkpoints([

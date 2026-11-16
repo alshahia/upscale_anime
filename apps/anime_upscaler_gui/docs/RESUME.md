@@ -4,6 +4,39 @@
 > conversation. The phases below are described in the master plan; this
 > file is the **state of play + how to continue + critical gotchas**.
 
+## Session update — production-readiness review (2026-10-11)
+
+A fresh review found the 14-phase overhaul is functionally complete and the
+engine works end-to-end, but the app is **not yet production-ready**: four real
+bugs ship today and the suite does not catch them.
+
+- Review (findings + evidence): `docs/audit/gui_review_2026-10.md`
+  (this also resolves the previously dangling link in this file).
+- Fix plan (milestones M0-M4, tasks PR-00..PR-14, release gate):
+  `docs/plans/production_readiness_fixes.md`
+
+Top items, in order:
+
+1. **BLOCKER** — batch mode retries a failed job forever; one bad file wedges
+   the whole queue (`app.py:664`, `app.py:1005-1007`).
+2. **BLOCKER** — drag-and-drop raises TypeError on every drop: `_on_drop` calls
+   `_add_files(paths=...)`, but `_add_files` takes no args
+   (`widgets/input_panel.py:153`, `app.py:324`). tkinterdnd2 IS installed, so
+   DnD is active and broken.
+3. **BLOCKER** — the queue listbox is never repopulated after a theme change /
+   locale toggle (`app_settings_io.py`, `app_window_chrome.py`).
+4. **BLOCKER** — Pause / Cancel / Resume act on the wrong job when a filter is
+   active (`widgets/input_panel.py:219,243`).
+5. **MED** — the built wheel ships no assets; `pynvml` is undeclared so the GPU
+   monitor is dead; `requirements.txt` and `pyproject.toml` disagree.
+
+Verified good in the same pass: **370/370 tests pass** (~37s); the GUI launches;
+light / dark / high-contrast all render; a real CPU upscale
+(RFDN 4x, 96x128 -> 192x256) finished in 150 ms.
+
+**Next session:** execute `docs/plans/production_readiness_fixes.md`
+starting at M0 (regression tests), then PR-01..PR-04.
+
 ## Session update — architecture + extensibility + video fixes
 
 Decisions and contracts to remember before touching these files again:
@@ -28,24 +61,32 @@ Decisions and contracts to remember before touching these files again:
    to EOF with an indeterminate progress display instead of failing with
    "cut window is empty". `decode=pyav` is honored for real (the old code
    silently re-opened with cv2); cut-start skip uses `_SkipFirstFrames`.
-6. **Known flake:** `test_empty_states.py::..._batch_mode` (and friends) can
-   fail once per session due to the Windows pytest tempfile race; re-run and
-   it passes (verified twice, 229/229).
+6. **Test count: 388 passed, 0 failed** (~53s), stable over consecutive
+   full-suite runs. Fixed 2026-10-01: stale `archs` import in worker.py, era
+   detection key, animesr Capability flags, era test key, recurrent-model video
+   path, and the Tk single-root violations that caused the test-ordering flake.
+   See docs/audit/gui_review_2026-10.md.
+
+   The only remaining flake is *cosmetic*: the atexit
+   `PermissionError: ...\pytest-of-<user>\pytest-current` printed after the
+   summary (Windows pytest tempfile race). It does not change the result.
 
 ### Remaining structural debt (next session candidates)
 
-- `app.py` still owns queue/model/download/event-polling logic (~840 lines).
+- `app.py` still owns queue/model/download/event-polling logic (~1130 lines as of 2026-10-11).
   Follow the same mixin-or-controller pattern as Defaults: the event-poll
   section and the model/download actions are the next extraction targets.
 - `preset_path` for arbitrary user preset dirs in Settings UI (plumbing done).
-- Arabic strings still need native-speaker review; drag-and-drop, ONNX not wired.
+- Arabic strings still need native-speaker review; ONNX not wired (drag-and-drop now works — PR-02).
 
 ## Where we are
 
 - **All 14 phases DONE.** Asset bundle built from supplied JPEG masters; iconography wired into action row + window title + taskbar icon; splash shown on launch with `--no-splash` opt-out.
-- **Test count: 229/229 passing** (~5s).
-- **app.py: ~1070 → ~845 lines** (settings/menu extracted into mixins)
-- **Test count: 198/198 passing** (~5s).
+- **Test count: 388 passed, 0 failed** (~53s), verified over consecutive
+  full-suite runs. Recurrent-model video path implemented 2026-10-01
+  (_run_video_recurrent: 5D frame stacking).
+- **app.py: ~1130 lines** as of 2026-10-11 (settings/menu extracted into mixins)
+- **Test count: 198/198 passing** (~5s) at that phase (historical).
 - **app.py: 692 → 734 lines** (locale toggle, window icon, action-row icon helpers).
 - **`apps/anime_upscaler_gui/assets/`**: 24 outline PNGs (8 icons x 16/24/32), 7 duotone app-icon PNGs + `app.ico`, splash hero PNG.
 
@@ -54,7 +95,9 @@ Decisions and contracts to remember before touching these files again:
 | File | Why |
 |---|---|
 | `docs/plans/ui_ux_overhaul.md` | The 14-phase master plan with full per-phase detail |
-| `docs/plans/ui_ux_overhaul_checklist.md` | Per-phase task list with current status (10/14 done) |
+| `docs/audit/gui_review_2026-10.md` | Production-readiness review (2026-10-11) — current findings |
+| `docs/plans/production_readiness_fixes.md` | M0-M4 fix plan + release gate for the review findings |
+| `docs/plans/ui_ux_overhaul_checklist.md` | Per-phase task list — all 14 phases complete (historical) |
 | `docs/audit/ui_ux_audit.md` | The initial audit that informed the plan |
 | `tests/conftest.py` | **MUST READ** — session-scoped `shared_tk_root` (Tk only allows one root per process) |
 | `apps/anime_upscaler_gui/docs/RESUME.md` | This file |
@@ -86,14 +129,18 @@ do not create a new one.
 
 ### 2. Toplevel fallback for fake `UpscaleGUI`
 
-`UpscaleGUI(tk.Tk)` IS the root, so the second test in a session can't
-construct another one. The fixtures in `test_async_blocking.py` and
-`test_shortcuts.py` work around this: the FIRST call creates a real
-`UpscaleGUI` Tk root; subsequent calls construct a `Toplevel` and bind
-the needed methods via `getattr(UpscaleGUI, name).__get__(a, type(a))`.
+`UpscaleGUI(tk.Tk)` IS the root, so tests can never construct another one.
+The fixtures in `test_async_blocking.py` and `test_shortcuts.py` therefore
+build a `tk.Toplevel(shared_tk_root)` and bind the methods under test onto it
+via `getattr(UpscaleGUI, name).__get__(a, type(a))`.
 
-When adding methods that tests call, extend the bound list in both
-fixtures.
+When adding methods that tests call, extend the bound list in both fixtures.
+
+`conftest.py` now **enforces** the rule: the session-scoped
+`_single_root_guard` fixture patches `tk.Tk.__init__` and raises a descriptive
+`AssertionError` if a second root is ever created. A violation fails one test
+with a clear message instead of poisoning every later Tk test with
+`invalid command name "tcl_findLibrary"`.
 
 ### 3. `winfo_ismapped()` unreliable on withdrawn roots
 

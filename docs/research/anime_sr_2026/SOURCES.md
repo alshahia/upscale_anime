@@ -377,7 +377,7 @@ URL: https://arxiv.org/pdf/2405.20392
 
 **[1] ZHCSOFT/Real-CUGAN**
 URL: https://github.com/ZHCSOFT/Real-CUGAN
-> Real Cascade U-Nets for Anime Image Super Resolution ------------------------------------------- [ ... ](README_CHS.md)  Real-CUGAN is an AI super resolution model for anime images, trained in a million scale anime dataset, using the same architecture as Waifu2x-CUNet. It supports **2x, 3x, 4x** super resolving. For different enhancement strength, now 2x Real-CUGAN supports 5 model weights, 3x and 4x Real-CUGAN supports 3 model weights. ... Download models and extract weights from archive to `we
+> Real Cascade U-Nets for Anime Image Super Resolution ------------------------------------------- [ ...  README_CHS.md  Real-CUGAN is an AI super resolution model for anime images, trained in a million scale anime dataset, using the same architecture as Waifu2x-CUNet. It supports **2x, 3x, 4x** super resolving. For different enhancement strength, now 2x Real-CUGAN supports 5 model weights, 3x and 4x Real-CUGAN supports 3 model weights. ... Download models and extract weights from archive to `we
 
 **[2] Image Upscaling | leejet/stable-diffusion.cpp | DeepWiki**
 URL: https://deepwiki.com/leejet/stable-diffusion.cpp/6.3-image-upscaling

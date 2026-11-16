@@ -303,4 +303,7 @@ class TestTrainerLogging:
         import anime_sr.training.neosr_finetuner as mod
         assert hasattr(mod, 'logger')
         assert isinstance(mod.logger, logging.Logger)
-        assert mod.logger.name == 'training.neosr_finetuner'
+        # The module builds its logger with logging.getLogger(__name__), so the
+        # logger name is the fully qualified package path of the module.
+        assert mod.logger.name == mod.__name__
+        assert mod.logger.name == 'anime_sr.training.neosr_finetuner'

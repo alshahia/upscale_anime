@@ -129,3 +129,18 @@ def test_settings_panel_spinboxes_have_return_binding(root):
             assert box.bind("<Return>"), "Return key not bound on a spinbox"
     finally:
         panel.destroy()
+
+
+# ---- PR-09: the status label must wrap dynamically ----
+
+def test_status_label_has_dynamic_wrap(gui_app):
+    """The status label used a fixed wraplength=900, wider than the 800px
+    minimum window, so long messages clipped. It now binds <Configure> and
+    re-wraps to its real width."""
+    gui_app._build_ui()
+    lbl = gui_app.status_bar.status_label
+    assert lbl.bind("<Configure>"), "status label must re-wrap on resize"
+    # Tk reports "" until the first Configure fires; either way it must never
+    # be the old fixed 900 that clipped long messages.
+    raw = str(lbl.cget("wraplength"))
+    assert raw == "" or int(raw) <= 800, f"fixed wraplength {raw!r} can clip"

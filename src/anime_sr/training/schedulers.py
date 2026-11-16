@@ -10,7 +10,7 @@ import math
 class WarmupCosineScheduler(_LRScheduler):
     """
     Cosine annealing scheduler with linear warmup.
-    
+
     Args:
         optimizer: PyTorch optimizer
         warmup_epochs: Number of epochs for linear warmup
@@ -18,7 +18,7 @@ class WarmupCosineScheduler(_LRScheduler):
         min_lr: Minimum learning rate after cosine annealing
         last_epoch: Last epoch index (for resuming)
     """
-    
+
     def __init__(
         self,
         optimizer,
@@ -31,9 +31,9 @@ class WarmupCosineScheduler(_LRScheduler):
         self.total_epochs = total_epochs
         self.min_lr = float(min_lr)  # Ensure float type
         self.base_lrs = [float(group['lr']) for group in optimizer.param_groups]  # Ensure float type
-        
+
         super().__init__(optimizer, last_epoch)
-    
+
     def get_lr(self):
         """Compute learning rate for current epoch."""
         if self.last_epoch < self.warmup_epochs:
@@ -48,16 +48,16 @@ class WarmupCosineScheduler(_LRScheduler):
             else:
                 progress = (self.last_epoch - self.warmup_epochs) / remaining_epochs
             progress = min(1.0, progress)
-            
+
             cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
-            return [self.min_lr + (float(base_lr) - self.min_lr) * cosine_decay 
+            return [self.min_lr + (float(base_lr) - self.min_lr) * cosine_decay
                     for base_lr in self.base_lrs]
 
 
 class WarmupMultiStepScheduler(_LRScheduler):
     """
     Multi-step LR scheduler with linear warmup.
-    
+
     Args:
         optimizer: PyTorch optimizer
         warmup_epochs: Number of warmup epochs
@@ -65,7 +65,7 @@ class WarmupMultiStepScheduler(_LRScheduler):
         gamma: LR decay factor at each milestone
         min_lr: Minimum learning rate
     """
-    
+
     def __init__(
         self,
         optimizer,
@@ -80,9 +80,9 @@ class WarmupMultiStepScheduler(_LRScheduler):
         self.gamma = gamma
         self.min_lr = float(min_lr)  # Ensure float type
         self.base_lrs = [float(group['lr']) for group in optimizer.param_groups]  # Ensure float type
-        
+
         super().__init__(optimizer, last_epoch)
-    
+
     def get_lr(self):
         """Compute learning rate."""
         if self.last_epoch < self.warmup_epochs:
@@ -99,7 +99,7 @@ class WarmupConstantScheduler(_LRScheduler):
     """
     Constant LR after warmup (useful for fine-tuning).
     """
-    
+
     def __init__(
         self,
         optimizer,
@@ -108,9 +108,9 @@ class WarmupConstantScheduler(_LRScheduler):
     ):
         self.warmup_epochs = warmup_epochs
         self.base_lrs = [float(group['lr']) for group in optimizer.param_groups]  # Ensure float type
-        
+
         super().__init__(optimizer, last_epoch)
-    
+
     def get_lr(self):
         """Compute learning rate."""
         if self.last_epoch < self.warmup_epochs:
@@ -123,13 +123,13 @@ class WarmupConstantScheduler(_LRScheduler):
 class WarmupCosinePlateauScheduler(_LRScheduler):
     """
     Cosine annealing scheduler with warmup and plateau detection.
-    
+
     Combines:
     1. Linear warmup
     2. Cosine annealing until plateau detected
     3. Step reduction on plateau
     4. Return to cosine after cooldown
-    
+
     Args:
         optimizer: PyTorch optimizer
         warmup_epochs: Number of epochs for linear warmup
@@ -140,7 +140,7 @@ class WarmupCosinePlateauScheduler(_LRScheduler):
         max_reductions: Maximum number of LR reductions
         cooldown: Epochs to wait after reduction before resuming
     """
-    
+
     def __init__(
         self,
         optimizer,
@@ -161,27 +161,27 @@ class WarmupCosinePlateauScheduler(_LRScheduler):
         self.max_reductions = max_reductions
         self.cooldown = cooldown
         self.base_lrs = [float(group['lr']) for group in optimizer.param_groups]
-        
+
         # Plateau detection state
         self.best_loss = float('inf')
         self.plateau_counter = 0
         self.num_reductions = 0
         self.cooldown_counter = 0
         self.current_lr_scale = 1.0
-        
+
         super().__init__(optimizer, last_epoch)
-    
+
     def get_lr(self):
         """Compute learning rate for current epoch."""
         # Warmup phase
         if self.last_epoch < self.warmup_epochs:
             alpha = self.last_epoch / max(1, self.warmup_epochs)
             return [max(self.min_lr, float(base_lr) * alpha) for base_lr in self.base_lrs]
-        
+
         # Check if in cooldown after reduction
         if self.cooldown_counter > 0:
             self.cooldown_counter -= 1
-        
+
         # Cosine annealing phase (adjusted by current scale)
         remaining_epochs = self.total_epochs - self.warmup_epochs
         if remaining_epochs <= 0:
@@ -189,30 +189,30 @@ class WarmupCosinePlateauScheduler(_LRScheduler):
         else:
             progress = (self.last_epoch - self.warmup_epochs) / remaining_epochs
         progress = min(1.0, progress)
-        
+
         cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
-        
+
         # Apply current scale from plateau reductions
         return [
             max(self.min_lr, float(base_lr) * self.current_lr_scale * cosine_decay)
             for base_lr in self.base_lrs
         ]
-    
+
     def step(self, loss=None, epoch=None):
         """Step the scheduler with optional loss for plateau detection."""
         if loss is not None:
             self._update_plateau_state(loss)
-        
+
         if epoch is None:
             self.last_epoch += 1
         else:
             self.last_epoch = epoch
-        
+
         self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
-        
+
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group['lr'] = lr
-    
+
     def _update_plateau_state(self, loss: float):
         """Update plateau detection state and apply LR reduction if needed."""
         # Check for improvement
@@ -221,21 +221,21 @@ class WarmupCosinePlateauScheduler(_LRScheduler):
             self.plateau_counter = 0
         else:
             self.plateau_counter += 1
-        
+
         # Check if should reduce LR
-        if (self.plateau_counter >= self.plateau_patience and 
-            self.cooldown_counter == 0 and 
+        if (self.plateau_counter >= self.plateau_patience and
+            self.cooldown_counter == 0 and
             self.num_reductions < self.max_reductions):
-            
+
             # Reduce learning rate
             self.current_lr_scale *= self.reduction_factor
             self.num_reductions += 1
             self.plateau_counter = 0
             self.cooldown_counter = self.cooldown
-            
+
             print(f"  LR reduced to {self.current_lr_scale:.3f}x due to plateau "
                   f"(reduction {self.num_reductions}/{self.max_reductions})")
-    
+
     def state_dict(self):
         """Get state for checkpointing."""
         return {
@@ -246,7 +246,7 @@ class WarmupCosinePlateauScheduler(_LRScheduler):
             'current_lr_scale': self.current_lr_scale,
             'last_epoch': self.last_epoch,
         }
-    
+
     def load_state_dict(self, state_dict):
         """Load state from checkpoint."""
         self.best_loss = state_dict.get('best_loss', float('inf'))
@@ -260,7 +260,7 @@ class WarmupCosinePlateauScheduler(_LRScheduler):
 class PlateauLRScheduler:
     """
     Wrapper around ReduceLROnPlateau with warmup support.
-    
+
     Args:
         optimizer: PyTorch optimizer
         mode: 'min' or 'max'
@@ -271,7 +271,7 @@ class PlateauLRScheduler:
         min_lr: Minimum learning rate
         warmup_epochs: Number of warmup epochs
     """
-    
+
     def __init__(
         self,
         optimizer,
@@ -291,10 +291,10 @@ class PlateauLRScheduler:
         self.cooldown = cooldown
         self.min_lr = min_lr
         self.warmup_epochs = warmup_epochs
-        
+
         self.base_lrs = [group['lr'] for group in optimizer.param_groups]
         self.current_epoch = 0
-        
+
         # Create ReduceLROnPlateau (will be used after warmup)
         self.plateau_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -306,14 +306,14 @@ class PlateauLRScheduler:
             min_lr=min_lr,
             verbose=False,
         )
-    
+
     def step(self, loss=None, epoch=None):
         """Step the scheduler."""
         if epoch is not None:
             self.current_epoch = epoch
         else:
             self.current_epoch += 1
-        
+
         # Warmup phase
         if self.current_epoch < self.warmup_epochs:
             alpha = self.current_epoch / max(1, self.warmup_epochs)
@@ -325,7 +325,7 @@ class PlateauLRScheduler:
         else:
             # Just increment internal counter
             self.plateau_scheduler.step()
-    
+
     def state_dict(self):
         """Get state for checkpointing."""
         return {
@@ -333,7 +333,7 @@ class PlateauLRScheduler:
             'current_epoch': self.current_epoch,
             'base_lrs': self.base_lrs,
         }
-    
+
     def load_state_dict(self, state_dict):
         """Load state from checkpoint."""
         self.plateau_scheduler.load_state_dict(state_dict['plateau_scheduler'])
@@ -344,27 +344,27 @@ class PlateauLRScheduler:
 def create_scheduler(optimizer, config: dict, stage: str = 'stage1'):
     """
     Factory function to create scheduler based on config.
-    
+
     Args:
         optimizer: PyTorch optimizer
         config: Training configuration dict
         stage: 'stage1' or 'stage2'
-        
+
     Returns:
         Scheduler instance
     """
     stage_cfg = config.get('training', {}).get(stage, {})
     adaptive_cfg = config.get('training', {}).get('adaptive_lr', {})
-    
+
     scheduler_name = stage_cfg.get('scheduler', 'cosine')
     warmup_epochs = stage_cfg.get('warmup_epochs', 10)
     epochs = stage_cfg.get('epochs', 100)
     min_lr = stage_cfg.get('min_lr', 1e-7)
-    
+
     # Check if adaptive LR is enabled for this stage
     use_adaptive = adaptive_cfg.get('enabled', False)
     adaptive_scheduler = adaptive_cfg.get('scheduler', 'plateau')
-    
+
     # Override with adaptive scheduler if enabled
     if use_adaptive and adaptive_scheduler == 'plateau':
         plateau_cfg = adaptive_cfg.get('plateau_config', {})
@@ -381,7 +381,7 @@ def create_scheduler(optimizer, config: dict, stage: str = 'stage1'):
         print(f"  Using PlateauLRScheduler (patience={plateau_cfg.get('patience', 8)}, "
               f"factor={plateau_cfg.get('factor', 0.5)})")
         return scheduler
-    
+
     if use_adaptive and adaptive_scheduler == 'warmup_cosine_plateau':
         wc_plateau_cfg = adaptive_cfg.get('warmup_cosine_plateau_config', {})
         scheduler = WarmupCosinePlateauScheduler(
@@ -396,7 +396,7 @@ def create_scheduler(optimizer, config: dict, stage: str = 'stage1'):
         )
         print(f"  Using WarmupCosinePlateauScheduler (plateau_patience={wc_plateau_cfg.get('plateau_patience', 8)})")
         return scheduler
-    
+
     # Standard schedulers (non-adaptive)
     if scheduler_name == 'cosine':
         scheduler = WarmupCosineScheduler(
@@ -423,5 +423,5 @@ def create_scheduler(optimizer, config: dict, stage: str = 'stage1'):
     else:
         # Fallback to base trainer's scheduler
         return None
-    
+
     return scheduler

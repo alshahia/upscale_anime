@@ -593,8 +593,8 @@ def main():
     # Phase 2 v3 still uses the legacy 0.5*L1 + 0.2*MS-SSIM + 0.05*LPIPS recipe
     # regardless of --loss to keep that contract stable for any SPAN resumers.
     if not use_phase3 and args.loss == "twin":
-        print(f"[recipe] --loss twin ignored: only effective under Phase 3 SRVGG spec "
-              f"(use_phase3=False here). Falling back to LPIPS-VGG.")
+        print("[recipe] --loss twin ignored: only effective under Phase 3 SRVGG spec "
+              "(use_phase3=False here). Falling back to LPIPS-VGG.")
         args.loss = "vgg"
     print(f"[recipe] phase3={use_phase3}  arch={args.arch}  teacher={args.teacher}  "
           f"lambda_adv={args.lambda_adv}  shortcut_anneal={args.shortcut_anneal}"
@@ -627,7 +627,7 @@ def main():
         # spec: L_grad = 0.1 * EdgeLoss even when D is off).
         from anime_sr.losses.adv_losses.edge_loss import EdgeLoss
         edge_loss = EdgeLoss().to(device)
-        print(f"[adv] D=off  edge_loss=ok  (lambda_adv=0)")
+        print("[adv] D=off  edge_loss=ok  (lambda_adv=0)")
 
     # ---- optimizers (Phase 3 handoff A.4: TTUR for G/D) ----
     g_params = list(student.parameters())

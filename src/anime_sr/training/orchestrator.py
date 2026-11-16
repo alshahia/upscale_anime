@@ -3,7 +3,6 @@ Training Orchestrator - Master trainer for all modes
 Supports: model_a, model_b, both_parallel, both_sequential, ensemble, full
 """
 import torch
-import torch.nn as nn
 from typing import Dict, Optional
 from enum import Enum
 from pathlib import Path
@@ -26,40 +25,40 @@ class TrainingMode(Enum):
 class TrainingOrchestrator:
     """
     Master orchestrator for training.
-    
+
     Handles:
     - Mode selection and validation
     - Trainer instantiation
     - Multi-model training coordination
     - Checkpoint management across modes
     """
-    
+
     def __init__(self, config: Dict):
         self.config = config
         self.mode = self._get_training_mode()
-        
+
         # Device
         self.device = torch.device(
-            config.get('training', {}).get('device', 'cuda') 
+            config.get('training', {}).get('device', 'cuda')
             if torch.cuda.is_available() else 'cpu'
         )
-        
+
         # Checkpoints
         self.checkpoint_dir = Path(config.get('paths', {}).get('checkpoint_dir', 'checkpoints'))
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Active trainers
         self.trainer_a: Optional[ModelATrainer] = None
         self.trainer_b: Optional[ModelBTrainer] = None
-        
-        print(f"Training Orchestrator initialized")
+
+        print("Training Orchestrator initialized")
         print(f"Mode: {self.mode.value}")
         print(f"Device: {self.device}")
-    
+
     def _get_training_mode(self) -> TrainingMode:
         """Determine training mode from config"""
         mode_str = self.config.get('training', {}).get('mode', 'model_a')
-        
+
         try:
             return TrainingMode(mode_str)
         except ValueError:
@@ -67,101 +66,101 @@ class TrainingOrchestrator:
                 f"Unknown training mode: {mode_str}\n"
                 f"Available modes: {[m.value for m in TrainingMode]}"
             )
-    
+
     def setup(self):
         """Setup trainers based on mode"""
-        
+
         if self.mode == TrainingMode.MODEL_A:
             print("\nSetting up Model A trainer...")
             self.trainer_a = ModelATrainer(self.config)
-        
+
         elif self.mode == TrainingMode.MODEL_B:
             print("\nSetting up Model B trainer...")
             self.trainer_b = ModelBTrainer(self.config)
-        
+
         elif self.mode == TrainingMode.BOTH_PARALLEL:
             print("\nSetting up both models for parallel training...")
             self.trainer_a = ModelATrainer(self.config)
             self.trainer_b = ModelBTrainer(self.config)
             print("Models will be trained in parallel (alternating batches)")
-        
+
         elif self.mode == TrainingMode.BOTH_SEQUENTIAL:
             print("\nSetting up both models for sequential training...")
             self.trainer_a = ModelATrainer(self.config)
             self.trainer_b = ModelBTrainer(self.config)
             print("Model A will be trained first, then Model B")
-        
+
         elif self.mode == TrainingMode.ENSEMBLE:
             print("\nSetting up Ensemble trainer...")
             print("Loading pre-trained Model A and Model B...")
             # Ensemble trainer is created in _train_ensemble after checkpoint paths are validated
-        
+
         elif self.mode == TrainingMode.FULL:
             print("\nSetting up full pipeline: A -> B -> Ensemble...")
             self.trainer_a = ModelATrainer(self.config)
             self.trainer_b = ModelBTrainer(self.config)
             print("Complete pipeline will be executed")
-        
+
         elif self.mode == TrainingMode.AUTO_STAGE:
             print("\nSetting up automated multi-stage training...")
             from anime_sr.training.auto_stage_trainer import AutoStageTrainer
             self.auto_trainer = AutoStageTrainer(self.config)
             print("Stage 1 -> Stage 2 automation enabled")
-    
+
     def train(self, train_loader, val_loader=None) -> None:
         """
         Execute training based on mode.
-        
+
         Args:
             train_loader: Training data loader
             val_loader: Validation data loader (optional)
         """
         if self.mode == TrainingMode.MODEL_A:
             return self._train_model_a(train_loader, val_loader)
-        
+
         elif self.mode == TrainingMode.MODEL_B:
             return self._train_model_b(train_loader, val_loader)
-        
+
         elif self.mode == TrainingMode.BOTH_PARALLEL:
             return self._train_both_parallel(train_loader, val_loader)
-        
+
         elif self.mode == TrainingMode.BOTH_SEQUENTIAL:
             return self._train_both_sequential(train_loader, val_loader)
-        
+
         elif self.mode == TrainingMode.ENSEMBLE:
             return self._train_ensemble(train_loader, val_loader)
-        
+
         elif self.mode == TrainingMode.FULL:
             return self._train_full_pipeline(train_loader, val_loader)
-        
+
         elif self.mode == TrainingMode.AUTO_STAGE:
             return self._train_auto_stage(train_loader, val_loader)
-        
+
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
-    
+
     def _train_model_a(self, train_loader, val_loader) -> None:
         """Train Model A only"""
         print("\n" + "="*60)
         print("Training Model A (NTIRE + MTKD + FAKD)")
         print("="*60)
-        
+
         self.trainer_a.train(train_loader, val_loader)
-        
+
         print("\nModel A training complete!")
         print(f"Best checkpoint: {self.checkpoint_dir / 'best.pth'}")
-    
+
     def _train_model_b(self, train_loader, val_loader) -> None:
         """Train Model B only"""
         print("\n" + "="*60)
         print("Training Model B (Mamba-PAN + MTKD + FAKD)")
         print("="*60)
-        
+
         self.trainer_b.train(train_loader, val_loader)
-        
+
         print("\nModel B training complete!")
         print(f"Best checkpoint: {self.checkpoint_dir / 'best.pth'}")
-    
+
     def _train_both_parallel(self, train_loader, val_loader) -> None:
         """
         Train both models in parallel (alternating batches).
@@ -244,9 +243,9 @@ class TrainingOrchestrator:
                     if val_b['loss'] < self.trainer_b.best_loss:
                         self.trainer_b.best_loss = val_b['loss']
                         self.trainer_b.save_checkpoint(epoch, optimizer_b, is_best=True)
-        
+
         print("\nParallel training complete!")
-    
+
     def _train_both_sequential(self, train_loader, val_loader) -> None:
         """
         Train Model A first, then Model B.
@@ -254,19 +253,19 @@ class TrainingOrchestrator:
         print("\n" + "="*60)
         print("Training Both Models Sequentially")
         print("="*60)
-        
+
         # Stage 1: Train Model A
         print("\n>>> Stage 1: Training Model A")
         self._train_model_a(train_loader, val_loader)
-        
+
         # Stage 2: Train Model B
         print("\n>>> Stage 2: Training Model B")
         self._train_model_b(train_loader, val_loader)
-        
+
         print("\nSequential training complete!")
         print(f"Model A: {self.checkpoint_dir / 'model_a_best.pth'}")
         print(f"Model B: {self.checkpoint_dir / 'model_b_best.pth'}")
-    
+
     def _train_ensemble(self, train_loader, val_loader) -> None:
         """
         Train ensemble from frozen Model A and B.
@@ -274,11 +273,11 @@ class TrainingOrchestrator:
         print("\n" + "="*60)
         print("Training Ensemble")
         print("="*60)
-        
+
         # Get checkpoint paths from config
         checkpoint_a = self.config.get('paths', {}).get('model_a_checkpoint')
         checkpoint_b = self.config.get('paths', {}).get('model_b_checkpoint')
-        
+
         if not checkpoint_a or not checkpoint_b:
             raise ValueError(
                 "Ensemble mode requires model_a_checkpoint and model_b_checkpoint in config.\n"
@@ -287,15 +286,15 @@ class TrainingOrchestrator:
                 "    model_a_checkpoint: 'checkpoints/model_a_best.pth'\n"
                 "    model_b_checkpoint: 'checkpoints/model_b_best.pth'"
             )
-        
+
         # Import ensemble trainer
         from anime_sr.training.ensemble_trainer import EnsembleTrainer
         from anime_sr.models.ensemble import create_ensemble_teacher
-        
+
         # Create ensemble teacher from frozen checkpoints
         print(f"\nLoading Model A from: {checkpoint_a}")
         print(f"Loading Model B from: {checkpoint_b}")
-        
+
         try:
             ensemble_teacher = create_ensemble_teacher(
                 checkpoint_a,
@@ -306,17 +305,17 @@ class TrainingOrchestrator:
         except Exception as e:
             print(f"[ERROR] Failed to create ensemble teacher: {e}")
             raise
-        
+
         # Create ensemble trainer
         self.trainer_ensemble = EnsembleTrainer(self.config, ensemble_teacher)
-        
+
         # Train tiny student
         print("\nTraining Tiny Student with ensemble distillation...")
         self.trainer_ensemble.train(train_loader, val_loader)
-        
+
         print("\nEnsemble training complete!")
         print(f"Tiny student saved to: {self.checkpoint_dir / 'ensemble_best.pth'}")
-    
+
     def _train_full_pipeline(self, train_loader, val_loader) -> None:
         """
         Full pipeline: A → B → Ensemble
@@ -324,11 +323,11 @@ class TrainingOrchestrator:
         print("\n" + "="*60)
         print("Full Training Pipeline")
         print("="*60)
-        
+
         # Phase 1: Train Model A
         print("\n[Phase 1/3] Training Model A...")
         self._train_model_a(train_loader, val_loader)
-        
+
         # Save Model A checkpoint to model-specific path
         best_a = self.checkpoint_dir / 'best.pth'
         model_a_checkpoint = self.checkpoint_dir / 'model_a_best.pth'
@@ -336,11 +335,11 @@ class TrainingOrchestrator:
             import shutil
             shutil.copy2(best_a, model_a_checkpoint)
             print(f"Saved Model A checkpoint to: {model_a_checkpoint}")
-        
+
         # Phase 2: Train Model B
         print("\n[Phase 2/3] Training Model B...")
         self._train_model_b(train_loader, val_loader)
-        
+
         # Save Model B checkpoint to model-specific path
         best_b = self.checkpoint_dir / 'best.pth'
         model_b_checkpoint = self.checkpoint_dir / 'model_b_best.pth'
@@ -348,22 +347,22 @@ class TrainingOrchestrator:
             import shutil
             shutil.copy2(best_b, model_b_checkpoint)
             print(f"Saved Model B checkpoint to: {model_b_checkpoint}")
-        
+
         # Phase 3: Train Ensemble
         print("\n[Phase 3/3] Training Ensemble...")
-        
+
         # Update config with checkpoint paths for ensemble
         if 'paths' not in self.config:
             self.config['paths'] = {}
         self.config['paths']['model_a_checkpoint'] = str(model_a_checkpoint)
         self.config['paths']['model_b_checkpoint'] = str(model_b_checkpoint)
-        
+
         self._train_ensemble(train_loader, val_loader)
-        
+
         print("\n" + "="*60)
         print("Full pipeline complete!")
         print("="*60)
-    
+
     def _train_auto_stage(self, train_loader, val_loader) -> None:
         """
         Automated multi-stage training (Stage 1 -> Stage 2).
@@ -374,9 +373,9 @@ class TrainingOrchestrator:
         print("="*60)
         print("Stage 1: Knowledge Aggregation -> Stage 2: Student Distillation")
         print("="*60)
-        
+
         results = self.auto_trainer.train(train_loader, val_loader)
-        
+
         print("\n" + "="*60)
         print("Automated training complete!")
         print("="*60)
@@ -385,24 +384,24 @@ class TrainingOrchestrator:
         print(f"Stage 2: {'[OK]' if results['stage2_completed'] else '[FAIL]'}")
         print(f"  Best checkpoint: {results.get('stage2_best_checkpoint', 'N/A')}")
         print("="*60)
-    
+
     def save_metadata(self) -> None:
         """Save training metadata"""
         import json
-        
+
         # Convert config to dict if it's a Config object
         config_dict = self.config.to_dict() if hasattr(self.config, 'to_dict') else self.config
-        
+
         # Build checkpoint paths
         checkpoint_a = None
         checkpoint_b = None
-        
+
         if self.trainer_a is not None:
             checkpoint_a = str(self.checkpoint_dir / 'model_a_best.pth')
-        
+
         if self.trainer_b is not None:
             checkpoint_b = str(self.checkpoint_dir / 'model_b_best.pth')
-        
+
         metadata = {
             'mode': self.mode.value,
             'config': config_dict,
@@ -411,21 +410,21 @@ class TrainingOrchestrator:
                 'model_b': checkpoint_b,
             }
         }
-        
+
         metadata_path = self.checkpoint_dir / 'training_metadata.json'
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
-        
+
         print(f"Metadata saved to: {metadata_path}")
 
 
 def create_orchestrator(config: Dict) -> TrainingOrchestrator:
     """
     Factory function to create training orchestrator.
-    
+
     Args:
         config: Configuration dictionary
-    
+
     Returns:
         TrainingOrchestrator instance
     """

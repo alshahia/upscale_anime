@@ -129,18 +129,18 @@ class Conv3XC(nn.Module):
 class SPAB(nn.Module):
     """
     SPAN Attention Block from neosr.
-    
+
     Structure:
     x -> Conv3XC(c1_r) -> SiLU -> Conv3XC(c2_r) -> SiLU -> Conv3XC(c3_r)
     sim_att = sigmoid(out3) - 0.5
     out = (out3 + x) * sim_att
-    
+
     Returns: (out, out1, sim_att)
     - out: final output
     - out1: output of c1_r (used for concatenation in main model)
     - sim_att: attention map
     """
-    
+
     def __init__(self, in_channels: int, mid_channels: int = None,
                  out_channels: int = None, bias: bool = False):
         super().__init__()
@@ -148,31 +148,31 @@ class SPAB(nn.Module):
             mid_channels = in_channels
         if out_channels is None:
             out_channels = in_channels
-        
+
         self.c1_r = Conv3XC(in_channels, mid_channels, gain1=2, s=1)
         self.c2_r = Conv3XC(mid_channels, mid_channels, gain1=2, s=1)
         self.c3_r = Conv3XC(mid_channels, out_channels, gain1=2, s=1)
         self.act1 = nn.SiLU(inplace=True)
-    
+
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         out1 = self.c1_r(x)
         out1_act = self.act1(out1)
-        
+
         out2 = self.c2_r(out1_act)
         out2_act = self.act1(out2)
-        
+
         out3 = self.c3_r(out2_act)
-        
+
         sim_att = torch.sigmoid(out3) - 0.5
         out = (out3 + x) * sim_att
-        
+
         return out, out1, sim_att
 
 
 class NeosrSPAN(nn.Module):
     """
     SPAN model matching neosr exactly.
-    
+
     Forward flow:
     1. conv_1(x) -> out_feature
     2. block_1(out_feature) -> out_b1, _, _
@@ -185,7 +185,7 @@ class NeosrSPAN(nn.Module):
     9. conv_cat([out_feature, out_b6, out_b1, out_b5_2])
     10. upsampler(out)
     """
-    
+
     def __init__(
         self,
         num_in_ch: int = 3,
@@ -203,19 +203,19 @@ class NeosrSPAN(nn.Module):
         mamba_mlp_ratio: float = 2.0,
     ):
         super().__init__()
-        
+
         self.upscale = upscale
         self.img_range = img_range
         self.mean = nn.Parameter(torch.Tensor(rgb_mean).view(1, 3, 1, 1), requires_grad=False)
-        
+
         if not norm:
             self.register_buffer("no_norm", torch.zeros(1))
         else:
             self.no_norm = None
-        
+
         # Shallow feature extraction
         self.conv_1 = Conv3XC(num_in_ch, feature_channels, gain1=2, s=1)
-        
+
         # Factory: pick attention block class. Default `conv3xc` keeps v6
         # warm-start checkpoints loadable; opt-in `mamba_v2` swaps in
         # MambaIRv2 ASSM blocks (v7 opt-in).
@@ -230,7 +230,7 @@ class NeosrSPAN(nn.Module):
         else:
             SAB_CLS = SPAB
             sab_kwargs = {}
-        
+
         # 6 attention blocks (named individually, not ModuleList)
         self.block_1 = SAB_CLS(feature_channels, bias=bias, **sab_kwargs)
         self.block_2 = SAB_CLS(feature_channels, bias=bias, **sab_kwargs)
@@ -238,11 +238,11 @@ class NeosrSPAN(nn.Module):
         self.block_4 = SAB_CLS(feature_channels, bias=bias, **sab_kwargs)
         self.block_5 = SAB_CLS(feature_channels, bias=bias, **sab_kwargs)
         self.block_6 = SAB_CLS(feature_channels, bias=bias, **sab_kwargs)
-        
+
         # After blocks
         self.conv_cat = conv_layer(feature_channels * 4, feature_channels, kernel_size=1, bias=True)
         self.conv_2 = Conv3XC(feature_channels, feature_channels, gain1=2, s=1)
-        
+
         # Upsampler
         self.upsampler = nn.Sequential(
             conv_layer(feature_channels, num_out_ch * (upscale ** 2), kernel_size=3),
@@ -262,11 +262,11 @@ class NeosrSPAN(nn.Module):
     @property
     def use_checkpointing(self):
         return self._use_checkpointing
-    
+
     @property
     def is_norm(self):
         return self.no_norm is None
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.is_norm:
             mean = self.mean.type_as(x)
@@ -294,7 +294,7 @@ class NeosrSPAN(nn.Module):
         output = self.upsampler(out)
 
         return output
-    
+
     def load_neosr_weights(self, checkpoint_path: str, strict: bool = False) -> Dict:
         """Load weights from neosr/Phhofm checkpoint format."""
         try:
@@ -303,7 +303,7 @@ class NeosrSPAN(nn.Module):
             import warnings
             warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
             ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-        
+
         if isinstance(ckpt, dict):
             for key in ['params', 'params_ema', 'state_dict', 'model_state_dict']:
                 if key in ckpt:
@@ -313,12 +313,12 @@ class NeosrSPAN(nn.Module):
                 state = ckpt
         else:
             state = ckpt
-        
+
         model_state = self.state_dict()
         loaded = []
         skipped = []
         mismatched = []
-        
+
         for ckpt_key, ckpt_val in state.items():
             if ckpt_key in model_state:
                 if ckpt_val.shape == model_state[ckpt_key].shape:
@@ -328,9 +328,9 @@ class NeosrSPAN(nn.Module):
                     mismatched.append((ckpt_key, str(ckpt_val.shape), str(model_state[ckpt_key].shape)))
             else:
                 skipped.append(ckpt_key)
-        
+
         self.load_state_dict(model_state, strict=strict)
-        
+
         return {
             'loaded': len(loaded),
             'skipped': len(skipped),

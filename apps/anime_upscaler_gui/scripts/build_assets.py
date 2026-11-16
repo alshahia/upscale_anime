@@ -24,7 +24,8 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parents[1]
 ROOT = HERE
-ASSETS = ROOT / "assets"
+# Assets live inside the package so package-data ships them in the wheel.
+ASSETS = ROOT / "anime_upscaler_gui" / "assets"
 PHOSPHOR = ASSETS / "icons" / "phosphor"
 
 

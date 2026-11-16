@@ -14,19 +14,16 @@ def app(shared_tk_root):
     from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.status_bar import _StatusBar
     paths = _AppPaths()
     s = _Settings(paths)
-    a = UpscaleGUI.__new__(UpscaleGUI)
-    if not getattr(shared_tk_root, "_aug_tk_used", False):
-        tk.Tk.__init__(a)
-        a.title("test")
-        shared_tk_root._aug_tk_used = True
-    else:
-        a = tk.Toplevel(shared_tk_root)
-        # Bind the methods the tests call
-        for name in ("_show_about", "_on_theme_change", "_confirm_destructive",
-                     "_reset_settings", "_bind_shortcuts", "_save_settings",
-                     "_move_app_data", "_export_settings", "_import_settings",
-                     "_open_settings_folder"):
-            setattr(a, name, getattr(UpscaleGUI, name).__get__(a, type(a)))
+    # A Toplevel off the session root -- never a second tk.Tk(): creating and
+    # destroying one breaks Tk for the rest of the process on Windows
+    # (see conftest.py).
+    a = tk.Toplevel(shared_tk_root)
+    # Bind the methods the tests call
+    for name in ("_show_about", "_on_theme_change", "_confirm_destructive",
+                 "_reset_settings", "_bind_shortcuts", "_save_settings",
+                 "_move_app_data", "_export_settings", "_import_settings",
+                 "_open_settings_folder"):
+        setattr(a, name, getattr(UpscaleGUI, name).__get__(a, type(a)))
     a.paths = paths
     a.settings = s
     a._resume_boxes = {}

@@ -5,29 +5,28 @@ EMA, checkpointing, logging, and learning rate scheduling
 import torch
 import torch.nn as nn
 from pathlib import Path
-from typing import Dict, Optional, Any, Callable
-import json
+from typing import Dict, Optional, Any
 import time
 
 
 class Callback:
     """Base callback class"""
-    
+
     def on_train_begin(self, logs: Dict = None):
         pass
-    
+
     def on_train_end(self, logs: Dict = None):
         pass
-    
+
     def on_epoch_begin(self, epoch: int, logs: Dict = None):
         pass
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         pass
-    
+
     def on_batch_begin(self, batch: int, logs: Dict = None):
         pass
-    
+
     def on_batch_end(self, batch: int, logs: Dict = None):
         pass
 
@@ -37,13 +36,13 @@ class EMACallback(Callback):
     Exponential Moving Average callback.
     Maintains EMA version of model parameters.
     """
-    
+
     def __init__(self, model: nn.Module, decay: float = 0.999):
         self.model = model
         self.decay = decay
         self.ema_model = self._create_ema_model(model)
         self.num_updates = 0
-    
+
     def _create_ema_model(self, model: nn.Module) -> nn.Module:
         """Create EMA model copy"""
         import copy
@@ -51,32 +50,32 @@ class EMACallback(Callback):
         for param in ema_model.parameters():
             param.requires_grad = False
         return ema_model
-    
+
     def update(self):
         """Update EMA parameters"""
         self.num_updates += 1
-        
+
         # Compute decay rate with warmup
         decay = min(self.decay, (1 + self.num_updates) / (10 + self.num_updates))
-        
+
         with torch.no_grad():
             for ema_param, model_param in zip(self.ema_model.parameters(), self.model.parameters()):
                 ema_param.data.mul_(decay).add_(model_param.data, alpha=1 - decay)
-    
+
     def on_batch_end(self, batch: int, logs: Dict = None):
         self.update()
-    
+
     def get_model(self) -> nn.Module:
         """Get EMA model"""
         return self.ema_model
-    
+
     def apply_ema(self):
         """Apply EMA weights to original model (for evaluation)"""
         self.backup = {}
         for name, param in self.model.named_parameters():
             self.backup[name] = param.data.clone()
             param.data.copy_(self.ema_model.state_dict()[name])
-    
+
     def restore_original(self):
         """Restore original model weights"""
         if hasattr(self, 'backup'):
@@ -90,7 +89,7 @@ class CheckpointCallback(Callback):
     Model checkpointing callback.
     Saves checkpoints at intervals and keeps best model.
     """
-    
+
     def __init__(
         self,
         model: nn.Module,
@@ -105,32 +104,32 @@ class CheckpointCallback(Callback):
         self.optimizer = optimizer
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.save_interval = save_interval
         self.keep_last_n = keep_last_n
         self.monitor = monitor
         self.mode = mode
-        
+
         self.best_value = float('inf') if mode == "min" else float('-inf')
         self.checkpoints = []
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         if logs is None:
             logs = {}
-        
+
         # Save regular checkpoint
         if epoch % self.save_interval == 0:
             self._save_checkpoint(epoch, logs, is_best=False)
-        
+
         # Save best checkpoint
         current_value = logs.get(self.monitor)
         if current_value is not None:
             is_better = (current_value < self.best_value) if self.mode == "min" else (current_value > self.best_value)
-            
+
             if is_better:
                 self.best_value = current_value
                 self._save_checkpoint(epoch, logs, is_best=True)
-    
+
     def _save_checkpoint(self, epoch: int, logs: Dict, is_best: bool = False):
         """Save checkpoint"""
         checkpoint = {
@@ -139,18 +138,18 @@ class CheckpointCallback(Callback):
             'optimizer_state_dict': self.optimizer.state_dict(),
             'logs': logs,
         }
-        
+
         # Save checkpoint
         if is_best:
             path = self.checkpoint_dir / 'best.pth'
         else:
             path = self.checkpoint_dir / f'epoch_{epoch}.pth'
-        
+
         torch.save(checkpoint, path)
-        
+
         if not is_best:
             self.checkpoints.append(path)
-            
+
             # Cleanup old checkpoints
             if len(self.checkpoints) > self.keep_last_n:
                 old_checkpoint = self.checkpoints.pop(0)
@@ -160,11 +159,11 @@ class CheckpointCallback(Callback):
 
 class TensorBoardCallback(Callback):
     """TensorBoard logging callback"""
-    
+
     def __init__(self, log_dir: str = "logs", enabled: bool = True):
         self.enabled = enabled
         self.writer = None
-        
+
         if enabled:
             try:
                 from torch.utils.tensorboard import SummaryWriter
@@ -172,29 +171,29 @@ class TensorBoardCallback(Callback):
             except ImportError:
                 print("Warning: TensorBoard not available. Install with: pip install tensorboard")
                 self.enabled = False
-        
+
         self.global_step = 0
-    
+
     def on_batch_end(self, batch: int, logs: Dict = None):
         if not self.enabled or logs is None:
             return
-        
+
         # Log metrics
         for name, value in logs.items():
             if isinstance(value, (int, float)):
                 self.writer.add_scalar(f'train/{name}', value, self.global_step)
-        
+
         self.global_step += 1
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         if not self.enabled or logs is None:
             return
-        
+
         # Log epoch metrics
         for name, value in logs.items():
             if isinstance(value, (int, float)):
                 self.writer.add_scalar(f'epoch/{name}', value, epoch)
-    
+
     def on_train_end(self, logs: Dict = None):
         if self.enabled and self.writer:
             self.writer.close()
@@ -202,15 +201,15 @@ class TensorBoardCallback(Callback):
 
 class LRSchedulerCallback(Callback):
     """Learning rate scheduling callback"""
-    
+
     def __init__(self, optimizer: torch.optim.Optimizer, scheduler: Any):
         self.optimizer = optimizer
         self.scheduler = scheduler
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         if self.scheduler:
             self.scheduler.step()
-            
+
             # Log learning rate
             lr = self.optimizer.param_groups[0]['lr']
             if logs is not None:
@@ -219,27 +218,27 @@ class LRSchedulerCallback(Callback):
 
 class ProgressCallback(Callback):
     """Progress printing callback"""
-    
+
     def __init__(self, print_interval: int = 1):
         self.print_interval = print_interval
         self.epoch_times = []
-    
+
     def on_epoch_begin(self, epoch: int, logs: Dict = None):
         self.epoch_start_time = time.time()
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         epoch_time = time.time() - self.epoch_start_time
         self.epoch_times.append(epoch_time)
-        
+
         if epoch % self.print_interval == 0:
             avg_time = sum(self.epoch_times[-10:]) / min(len(self.epoch_times), 10)
-            
+
             log_str = f"Epoch {epoch}"
             if logs:
                 for key, value in logs.items():
                     if isinstance(value, float):
                         log_str += f" - {key}: {value:.4f}"
-            
+
             log_str += f" - time: {epoch_time:.1f}s (avg: {avg_time:.1f}s)"
             print(log_str)
 
@@ -247,13 +246,13 @@ class ProgressCallback(Callback):
 class EarlyStoppingCallback(Callback):
     """
     Early stopping callback with multiple trigger conditions.
-    
+
     Stops training when:
     - No improvement for `patience` epochs
     - Loss change becomes negligible (< min_delta)
     - Loss diverges (increases for divergence_patience epochs)
     - Training is stable but not improving (plateau detection)
-    
+
     Args:
         monitor: Metric to monitor (e.g., "val_loss", "train_loss", "psnr")
         mode: "min" for loss (lower is better), "max" for metrics (higher is better)
@@ -265,7 +264,7 @@ class EarlyStoppingCallback(Callback):
         plateau_slope_threshold: Slope threshold for plateau detection
         verbose: Whether to print stopping information
     """
-    
+
     def __init__(
         self,
         monitor: str = "val_loss",
@@ -287,7 +286,7 @@ class EarlyStoppingCallback(Callback):
         self.min_epochs = min_epochs
         self.plateau_slope_threshold = plateau_slope_threshold
         self.verbose = verbose
-        
+
         # State tracking
         self.best_value = float('inf') if mode == "min" else float('-inf')
         self.best_epoch = 0
@@ -296,11 +295,11 @@ class EarlyStoppingCallback(Callback):
         self.stopped_epoch = 0
         self.should_stop = False
         self.best_checkpoint_path = None
-        
+
         # Loss history for trend analysis
         self.values = []
         self.epochs = []
-    
+
     def on_train_begin(self, logs: Dict = None):
         """Reset state at training start."""
         self.best_value = float('inf') if self.mode == "min" else float('-inf')
@@ -312,20 +311,20 @@ class EarlyStoppingCallback(Callback):
         self.best_checkpoint_path = None
         self.values = []
         self.epochs = []
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         """Check for early stopping conditions."""
         if logs is None:
             logs = {}
-        
+
         current_value = logs.get(self.monitor)
         if current_value is None:
             return
-        
+
         # Track history
         self.values.append(current_value)
         self.epochs.append(epoch)
-        
+
         # Check for improvement
         if self._is_better(current_value, self.best_value):
             improvement = abs(self.best_value - current_value)
@@ -334,7 +333,7 @@ class EarlyStoppingCallback(Callback):
                 self.best_epoch = epoch
                 self.counter = 0
                 self.divergence_counter = 0
-                
+
                 # Track best checkpoint path if available in logs
                 if 'checkpoint_path' in logs:
                     self.best_checkpoint_path = logs['checkpoint_path']
@@ -348,7 +347,7 @@ class EarlyStoppingCallback(Callback):
                     self.divergence_counter += 1
                 else:
                     self.divergence_counter = 0
-        
+
         # Check stopping conditions (only after min_epochs)
         if epoch >= self.min_epochs:
             stop_reason = self._should_stop(epoch, current_value)
@@ -358,38 +357,38 @@ class EarlyStoppingCallback(Callback):
                 if self.verbose:
                     print(f"\nEarly stopping triggered at epoch {epoch}: {stop_reason}")
                     print(f"  Best {self.monitor}: {self.best_value:.6f} at epoch {self.best_epoch}")
-        
+
         # Add convergence info to logs
         logs['epochs_without_improvement'] = self.counter
         logs['best_epoch'] = self.best_epoch
         logs['best_value'] = self.best_value
-    
+
     def _is_better(self, current: float, best: float) -> bool:
         """Check if current value is better than best."""
         if self.mode == "min":
             return current < best
         else:
             return current > best
-    
+
     def _should_stop(self, epoch: int, current_value: float) -> Optional[str]:
         """Check if training should stop. Returns stop reason or None."""
         # Check patience (no improvement)
         if self.counter >= self.patience:
             return f"No improvement in {self.monitor} for {self.patience} epochs"
-        
+
         # Check divergence
         if self.divergence_counter >= self.divergence_patience:
             return f"Loss diverging for {self.divergence_patience} consecutive epochs"
-        
+
         # Check plateau (flat loss curve)
         if len(self.values) >= 5:
             recent_values = self.values[-5:]
             slope = self._compute_slope(recent_values)
             if abs(slope) < self.plateau_slope_threshold:
                 return f"Loss curve plateaued (slope={slope:.2e})"
-        
+
         return None
-    
+
     def _compute_slope(self, values: list) -> float:
         """Compute linear regression slope."""
         if len(values) < 2:
@@ -402,20 +401,20 @@ class EarlyStoppingCallback(Callback):
         except ImportError:
             # Simple finite difference
             return (values[-1] - values[0]) / (len(values) - 1)
-    
+
     def on_train_end(self, logs: Dict = None):
         """Handle training end - restore best weights if needed."""
         if self.should_stop and self.verbose:
             print(f"Training stopped early at epoch {self.stopped_epoch}")
             print(f"Restoring best weights from epoch {self.best_epoch}")
-        
+
         # Add early stopping info to logs
         if logs is not None:
             logs['early_stopped'] = self.should_stop
             logs['stopped_epoch'] = self.stopped_epoch if self.should_stop else None
             logs['best_epoch'] = self.best_epoch
             logs['best_value'] = self.best_value
-    
+
     def get_status(self) -> Dict:
         """Get current early stopping status."""
         return {
@@ -427,7 +426,7 @@ class EarlyStoppingCallback(Callback):
             'divergence_counter': self.divergence_counter,
             'patience': self.patience,
         }
-    
+
     def state_dict(self) -> Dict:
         """Get state for checkpointing."""
         return {
@@ -440,7 +439,7 @@ class EarlyStoppingCallback(Callback):
             'values': self.values.copy(),
             'epochs': self.epochs.copy(),
         }
-    
+
     def load_state_dict(self, state: Dict):
         """Load state from checkpoint."""
         self.best_value = state.get('best_value', float('inf') if self.mode == "min" else float('-inf'))
@@ -458,18 +457,18 @@ class LRMonitorCallback(Callback):
     Monitor and log learning rate changes.
     Tracks LR reduction events and correlates with training progress.
     """
-    
+
     def __init__(self, optimizer, log_interval: int = 1):
         self.optimizer = optimizer
         self.log_interval = log_interval
         self.lr_history = []
         self.last_lr = None
         self.reduction_count = 0
-    
+
     def on_epoch_begin(self, epoch: int, logs: Dict = None):
         """Record LR at epoch start."""
         lr = self.optimizer.param_groups[0]['lr']
-        
+
         # Detect LR reduction
         if self.last_lr is not None and lr < self.last_lr * 0.99:
             self.reduction_count += 1
@@ -478,17 +477,17 @@ class LRMonitorCallback(Callback):
                 logs['lr_reduction_count'] = self.reduction_count
                 logs['lr_before'] = self.last_lr
                 logs['lr_after'] = lr
-        
+
         self.last_lr = lr
         self.lr_history.append((epoch, lr))
-        
+
         if logs is not None:
             logs['lr'] = lr
-    
+
     def get_lr_history(self) -> list:
         """Get recorded LR history."""
         return self.lr_history.copy()
-    
+
     def get_reduction_count(self) -> int:
         """Get number of LR reductions."""
         return self.reduction_count
@@ -497,14 +496,14 @@ class LRMonitorCallback(Callback):
 class StageMonitorCallback(Callback):
     """
     Monitor stage progress and emit transition signals.
-    
+
     Integrates with StageTransitionController to:
     - Track stage metrics
     - Detect stage completion
     - Trigger stage transitions
     - Log stage events to TensorBoard
     """
-    
+
     def __init__(
         self,
         stage_controller,
@@ -516,21 +515,21 @@ class StageMonitorCallback(Callback):
         self.log_interval = log_interval
         self.epoch_count = 0
         self.stage_complete = False
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         """Check for stage transition at epoch end."""
         if logs is None:
             logs = {}
-        
+
         self.epoch_count += 1
-        
+
         # Update stage progress
         self.stage_controller.update_stage_progress(
             stage=self.current_stage,
             epoch=epoch,
             metrics=logs,
         )
-        
+
         # Check if should advance stage
         if self.stage_controller.should_advance_stage(
             current_stage=self.current_stage,
@@ -540,31 +539,31 @@ class StageMonitorCallback(Callback):
             logs['stage_complete'] = True
             logs['advance_to_stage'] = self.current_stage + 1
             self.stage_complete = True
-            
+
             print(f"\n*** Stage {self.current_stage} complete! Ready to advance to Stage {self.current_stage + 1} ***\n")
-        
+
         # Add stage info to logs
         logs['current_stage'] = self.current_stage
         logs['stage_epochs'] = self.epoch_count
-    
+
     def on_train_end(self, logs: Dict = None):
         """Handle training end - mark stage complete."""
         if logs is None:
             logs = {}
-        
+
         # Mark current stage complete
         logs['stage_completed'] = self.current_stage
         logs['total_stage_epochs'] = self.epoch_count
-        
+
         # Print final status
         self.stage_controller.print_status()
-    
+
     def set_stage(self, stage: int):
         """Set current stage (for stage transitions)."""
         self.current_stage = stage
         self.epoch_count = 0
         self.stage_complete = False
-    
+
     def is_stage_complete(self) -> bool:
         """Check if current stage is complete."""
         return self.stage_complete
@@ -575,7 +574,7 @@ class ProgressiveCropCallback(Callback):
     Progressive crop size callback.
     Increases crop size during training for better generalization.
     """
-    
+
     def __init__(self, sizes: list = None, epochs_per_size: int = 25):
         """
         Args:
@@ -585,24 +584,24 @@ class ProgressiveCropCallback(Callback):
         self.sizes = sizes or [64, 96, 128, 160]
         self.epochs_per_size = epochs_per_size
         self.current_size_idx = 0
-    
+
     def on_train_begin(self, logs: Dict = None):
         """Initialize crop size."""
         self.current_size_idx = 0
-    
+
     def on_epoch_begin(self, epoch: int, logs: Dict = None):
         """Update crop size based on current epoch."""
         size_idx = min(epoch // self.epochs_per_size, len(self.sizes) - 1)
-        
+
         if size_idx != self.current_size_idx:
             self.current_size_idx = size_idx
             new_size = self.sizes[self.current_size_idx]
             print(f"\n[ProgressiveCrop] Epoch {epoch}: Increasing crop size to {new_size}")
-        
+
         # Store current crop size in logs
         if logs is not None:
             logs['crop_size'] = self.sizes[self.current_size_idx]
-    
+
     def get_current_size(self) -> int:
         """Get current crop size."""
         return self.sizes[min(self.current_size_idx, len(self.sizes) - 1)]
@@ -612,7 +611,7 @@ class LayerFreezeCallback(Callback):
     """
     Callback for progressive layer unfreezing during transfer learning.
     """
-    
+
     def __init__(self, model: nn.Module, freeze_schedule: Dict):
         """
         Args:
@@ -622,7 +621,7 @@ class LayerFreezeCallback(Callback):
         self.model = model
         self.freeze_schedule = freeze_schedule
         self.frozen_blocks = set()
-    
+
     def on_epoch_begin(self, epoch: int, logs: Dict = None):
         """Apply freeze/unfreeze schedule."""
         if 'unfreeze_schedule' in self.freeze_schedule:
@@ -632,13 +631,13 @@ class LayerFreezeCallback(Callback):
                         self._unfreeze_blocks(entry['unfreeze_blocks'])
                     if 'unfreeze_all' in entry and entry['unfreeze_all']:
                         self._unfreeze_all()
-                    
+
                     lr_mult = entry.get('lr_multiplier', 1.0)
                     print(f"[LayerFreeze] Epoch {epoch}: Unfroze layers, LR multiplier = {lr_mult}")
-                    
+
                     if logs is not None:
                         logs['lr_multiplier'] = lr_mult
-    
+
     def _freeze_initial_blocks(self, num_blocks: int):
         """Freeze first N blocks."""
         if hasattr(self.model, 'blocks'):
@@ -647,7 +646,7 @@ class LayerFreezeCallback(Callback):
                     param.requires_grad = False
                 self.frozen_blocks.add(i)
                 print(f"[LayerFreeze] Frozen block {i}")
-    
+
     def _unfreeze_blocks(self, count: int):
         """Unfreeze next N blocks (from beginning, lowest indices first)."""
         if hasattr(self.model, 'blocks'):
@@ -658,7 +657,7 @@ class LayerFreezeCallback(Callback):
                     param.requires_grad = True
                 self.frozen_blocks.discard(i)
                 print(f"[LayerFreeze] Unfrozen block {i}")
-    
+
     def _unfreeze_all(self):
         """Unfreeze all layers."""
         for param in self.model.parameters():
@@ -669,44 +668,44 @@ class LayerFreezeCallback(Callback):
 
 class CallbackList:
     """Manager for multiple callbacks"""
-    
+
     def __init__(self, callbacks: Optional[list] = None):
         self.callbacks = callbacks or []
-    
+
     def add(self, callback: Callback):
         self.callbacks.append(callback)
-    
+
     def on_train_begin(self, logs: Dict = None):
         for callback in self.callbacks:
             callback.on_train_begin(logs)
-    
+
     def on_train_end(self, logs: Dict = None):
         for callback in self.callbacks:
             callback.on_train_end(logs)
-    
+
     def on_epoch_begin(self, epoch: int, logs: Dict = None):
         for callback in self.callbacks:
             callback.on_epoch_begin(epoch, logs)
-    
+
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         for callback in self.callbacks:
             callback.on_epoch_end(epoch, logs)
-    
+
     def on_batch_begin(self, batch: int, logs: Dict = None):
         for callback in self.callbacks:
             callback.on_batch_begin(batch, logs)
-    
+
     def on_batch_end(self, batch: int, logs: Dict = None):
         for callback in self.callbacks:
             callback.on_batch_end(batch, logs)
-    
+
     def should_stop(self) -> bool:
         """Check if any callback is requesting training stop (e.g., early stopping)."""
         for callback in self.callbacks:
             if isinstance(callback, EarlyStoppingCallback) and callback.should_stop:
                 return True
         return False
-    
+
     def get_early_stopping_status(self) -> Optional[Dict]:
         """Get status from early stopping callback if present."""
         for callback in self.callbacks:

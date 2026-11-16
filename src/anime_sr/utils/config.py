@@ -15,7 +15,6 @@ import yaml
 import argparse
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, Tuple
-from dataclasses import dataclass, field
 
 
 # ------------------------------------------------------------
@@ -510,7 +509,7 @@ class Config:
             print(f"[WARNING] {warning_msg}")
         else:
             print(f"[WARNING] None of {keys} found in config, using default={default}")
-            print(f"  To fix: Add one of these keys to your config file")
+            print("  To fix: Add one of these keys to your config file")
 
         return default
 

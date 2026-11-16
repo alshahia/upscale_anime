@@ -4,18 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anime-upscaler-gui"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tk GUI wrapper around vendored anime super-resolution models (Real-ESRGAN compact, SPAN, ERANet, AnimeSR)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+# Dependency floors are kept identical to requirements.txt; the packaging
+# guard test (tests/test_packaging.py) fails if the two lists diverge.
 dependencies = [
-    "torch>=2.0",
-    "torchvision>=0.15",
-    "opencv-python>=4.8",
-    "numpy>=1.24",
-    "Pillow>=9.0",
-    "pyav>=10.0",
+    "torch>=2.12",
+    "torchvision>=0.27",
+    "opencv-python>=4.13",
+    "numpy>=2.4",
+    "Pillow>=12.2",
+    "pyav>=17.1",
+    # GPU monitor: provides the pynvml module. Pure Python, so it is safe to
+    # install on machines without an NVIDIA driver (the panel degrades to
+    # dashes when NVML cannot be initialised).
+    "nvidia-ml-py>=12.0",
+    # Drag-and-drop support; without it the GUI is file-picker only.
+    "tkinterdnd2-universal>=1.7",
+    # onnxruntime-gpu is optional and auto-detected at runtime.
 ]
 
 [project.scripts]
@@ -25,5 +34,13 @@ anime-upscaler-gui = "anime_upscaler_gui.__main__:main"
 where = ["."]
 include = ["anime_upscaler_gui*"]
 
+# Bundled runtime data. Both the preset catalog and the icon/splash asset
+# bundle live INSIDE the package so a wheel/sdist ships them next to the
+# code. Keep these globs in step with tests/test_packaging.py.
 [tool.setuptools.package-data]
-anime_upscaler_gui = ["../data/registry.json"]
+anime_upscaler_gui = [
+    "data/*.json",
+    "assets/splash/*",
+    "assets/icons/phosphor/outline/*",
+    "assets/icons/phosphor/duotone/*",
+]

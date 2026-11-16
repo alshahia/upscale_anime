@@ -1089,4 +1089,4 @@ class CustomDataset(Dataset):
 - [Training Guide](training.md) - Training procedures
 - [Development Setup](development.md) - Development environment
 - [Deployment Guide](deployment.md) - Production deployment
-- [API Server](../docs/PUBLIC_API.md) - REST API documentation
+- [API Server](PUBLIC_API.md) - REST API documentation

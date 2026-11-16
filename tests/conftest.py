@@ -85,6 +85,17 @@ def temp_data_dir():
     return TESTS_DIR / "temp_test_data"
 
 
+@pytest.fixture
+def temp_dir(tmp_path):
+    """Create a temporary directory for a single test.
+
+    Canonical ``temp_dir`` fixture. Tests that used to define their own
+    local ``temp_dir`` fixture (tests/e2e/test_e2e_data_pipeline.py,
+    tests/integration/test_full_pipeline.py) should use this one instead.
+    """
+    return tmp_path
+
+
 # ---------------------------------------------------------------------------
 # Test data fixtures
 # ---------------------------------------------------------------------------

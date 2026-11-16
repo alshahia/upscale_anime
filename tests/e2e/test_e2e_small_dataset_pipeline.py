@@ -81,15 +81,14 @@ class TestPhase1DatasetValidation:
         """Test validation output has expected structure."""
         try:
             from anime_sr.data.dataset_validation import validate_dataset
-            
-            report = validate_dataset(small_dataset_dir, check_duplicates=True)
-            
-            # Should return dict with results
-            assert isinstance(report, dict), "Should return dictionary"
-            assert len(report) > 0, "Should not be empty"
-            
-        except ImportError:
-            pytest.skip("Dataset validation module not available")
+        except ImportError as e:
+            pytest.skip(f"Dataset validation module not available: {e}")
+        
+        report = validate_dataset(small_dataset_dir, check_duplicates=True)
+        
+        # Should return dict with results
+        assert isinstance(report, dict), "Should return dictionary"
+        assert len(report) > 0, "Should not be empty"
 
 
 class TestPhase2SelfSupervisedPretrain:

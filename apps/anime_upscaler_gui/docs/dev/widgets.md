@@ -29,11 +29,11 @@ Use relative imports inside the package and existing tokens from `ui_constants.p
 
 ## Wiring a widget
 
-Import the widget from `widgets/__init__.py`, create it from `_build_ui`, and keep the app callback surface explicit. If a widget needs a new callback method in tests, update the Toplevel fallback bindings in `tests/test_async_blocking.py` and `tests/test_shortcuts.py` when applicable.
+Import the widget from `widgets/__init__.py`, create it from `_build_ui`, and keep the app callback surface explicit. If a widget needs a new callback method in tests, add it to the `Toplevel` binding lists in `tests/test_async_blocking.py` and `tests/test_shortcuts.py` when applicable.
 
 ## Tests
 
-Headless Tk tests use the session-scoped `shared_tk_root` fixture from `tests/conftest.py`. Tk only supports one root reliably in this Windows test setup; never create and destroy a fresh root per test file.
+Headless Tk tests use the session-scoped `shared_tk_root` fixture from `tests/conftest.py` and hang `tk.Toplevel(shared_tk_root)` off it. Tk only supports one root reliably in this Windows test setup; never create and destroy a fresh root per test file. `conftest.py`'s `_single_root_guard` enforces this — a second `tk.Tk()` raises a descriptive `AssertionError` instead of silently poisoning every later Tk test with `invalid command name "tcl_findLibrary"`.
 
 A minimal widget test should construct the panel, assert its key controls exist, and destroy only child widgets that the fixture owns. `winfo_ismapped()` is unreliable on withdrawn roots; use `pack_info()` or `grid_info()` to assert geometry.
 

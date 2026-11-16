@@ -14,14 +14,14 @@ Usage:
 """
 import torch
 import torch.nn as nn
-from typing import Dict, Optional, List, Tuple, Callable
+from typing import Dict, Optional, Tuple
 from pathlib import Path
 import numpy as np
 from PIL import Image
 
 try:
     from anime_sr.data.anime_degradation import (
-        AnimeBlur, DirectionalBlur, ColorQuantization, 
+        AnimeBlur, DirectionalBlur, ColorQuantization,
         BandingArtifact, RingingArtifact
     )
     from anime_sr.data.quality_analyzer import QualityAnalyzer
@@ -29,14 +29,14 @@ try:
 except ImportError:
     try:
         from anime_sr.data.anime_degradation import (
-            AnimeBlur, DirectionalBlur, ColorQuantization, 
+            AnimeBlur, DirectionalBlur, ColorQuantization,
             BandingArtifact, RingingArtifact
         )
         from anime_sr.data.quality_analyzer import QualityAnalyzer
         from anime_sr.data.compression_modules import CompressionPipeline
     except ImportError:
         from anime_degradation import (
-            AnimeBlur, DirectionalBlur, ColorQuantization, 
+            AnimeBlur, DirectionalBlur, ColorQuantization,
             BandingArtifact, RingingArtifact
         )
         from quality_analyzer import QualityAnalyzer
@@ -46,13 +46,13 @@ except ImportError:
 class PreprocessingManager:
     """
     Unified preprocessing orchestrator.
-    
+
     Selects and routes to appropriate handler based on mode configuration.
     Default mode is 'hybrid' (precomputed base + runtime augmentation).
     """
-    
+
     MODES = ['on_the_fly', 'precomputed', 'gpu_degradation', 'hybrid', 'quality_adaptive']
-    
+
     def __init__(
         self,
         config: Dict,
@@ -60,42 +60,42 @@ class PreprocessingManager:
     ):
         """
         Initialize PreprocessingManager.
-        
+
         Args:
             config: Preprocessing configuration dict
             device: torch device for GPU operations
         """
         self.config = config
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
+
         # Get mode
         self.mode = config.get('mode', 'hybrid')
         if self.mode not in self.MODES:
             raise ValueError(f"Invalid mode '{self.mode}'. Must be one of {self.MODES}")
-        
+
         # Initialize handlers based on mode
         self._init_handlers()
-    
+
     def _init_handlers(self):
         """Initialize appropriate handlers for the selected mode."""
         # Always init base capabilities
         self._init_quality_analyzer()
         self._init_line_enhancement()
-        
+
         # Mode-specific initialization
         if self.mode in ['on_the_fly', 'quality_adaptive']:
             self._init_on_the_fly_handler()
-        
+
         if self.mode in ['precomputed', 'hybrid']:
             self._init_precomputed_handler()
-        
+
         if self.mode in ['gpu_degradation', 'hybrid']:
             self._init_gpu_degradation_handler()
-        
+
         if self.mode == 'quality_adaptive':
             # Quality adaptive uses on_the_fly with quality-based config selection
             pass
-    
+
     def _init_quality_analyzer(self):
         """Initialize quality analyzer if enabled in config."""
         qa_config = self.config.get('quality_analyzer', {})
@@ -104,7 +104,7 @@ class PreprocessingManager:
             self.quality_analyzer = QualityAnalyzer(cache_scores=cache_scores)
         else:
             self.quality_analyzer = None
-    
+
     def _init_line_enhancement(self):
         """Initialize line enhancement (XDoG) if enabled."""
         le_config = self.config.get('line_enhancement', {})
@@ -116,7 +116,7 @@ class PreprocessingManager:
                     from anime_sr.data.line_enhancement import LineEnhancer
                 except ImportError:
                     from line_enhancement import LineEnhancer
-            
+
             self.line_enhancer = LineEnhancer(
                 sigma1=le_config.get('sigma1', 1.0),
                 sigma2=le_config.get('sigma2', 16.0),
@@ -125,19 +125,19 @@ class PreprocessingManager:
             )
         else:
             self.line_enhancer = None
-    
+
     def _init_on_the_fly_handler(self):
         """Initialize on-the-fly degradation handler."""
         otf_config = self.config.get('on_the_fly', {})
-        
+
         self.degrade_before_crop = otf_config.get('degrade_before_crop', True)
         self.shuffled_resize = otf_config.get('shuffled_resize', True)
         self.two_stage_compression = otf_config.get('two_stage_compression', True)
-        
+
         # Compression pipelines
         stage1_types = otf_config.get('compression_stage1', ['jpeg', 'webp'])
         stage2_types = otf_config.get('compression_stage2', ['avif', 'h264', 'jpeg'])
-        
+
         if self.two_stage_compression and CompressionPipeline is not None:
             try:
                 self.stage1_pipeline = CompressionPipeline(
@@ -154,10 +154,10 @@ class PreprocessingManager:
         else:
             self.stage1_pipeline = None
             self.stage2_pipeline = None
-        
+
         # On-the-fly degradation config
         self.otf_degradation_config = otf_config.get('degradation', {})
-    
+
     def _init_precomputed_handler(self):
         """Initialize precomputed dataset handler.
 
@@ -232,44 +232,44 @@ class PreprocessingManager:
             self.hr_files = []
             self._lr_cache = None
             self._hr_cache = None
-    
+
     def _init_gpu_degradation_handler(self):
         """Initialize GPU degradation handler (speed focus)."""
         gpu_config = self.config.get('gpu_degradation', {})
         modules_config = gpu_config.get('modules', {})
-        
+
         # Initialize GPU modules
         self.gpu_modules = nn.ModuleDict()
-        
+
         if modules_config.get('blur', True):
             self.gpu_modules['blur'] = AnimeBlur().to(self.device)
-        
+
         if modules_config.get('directional_blur', True):
             self.gpu_modules['directional_blur'] = DirectionalBlur().to(self.device)
-        
+
         if modules_config.get('quantization', True):
             self.gpu_modules['quantization'] = ColorQuantization().to(self.device)
-        
+
         if modules_config.get('banding', True):
             self.gpu_modules['banding'] = BandingArtifact().to(self.device)
-        
+
         if modules_config.get('ringing', True):
             self.gpu_modules['ringing'] = RingingArtifact().to(self.device)
-        
+
         # Probabilities for each module
         self.gpu_blur_prob = gpu_config.get('blur_prob', 0.5)
         self.gpu_noise_prob = gpu_config.get('noise_prob', 0.4)
         self.gpu_quant_prob = gpu_config.get('quantization_prob', 0.3)
-    
+
     def process(self, hr_tensor: torch.Tensor, idx: int = 0, hr_path: Path = None) -> torch.Tensor:
         """
         Main entry point - process HR tensor to LR tensor.
-        
+
         Args:
             hr_tensor: HR image tensor [B, C, H, W] in range [0, 1]
             idx: Index for precomputed loading (if applicable)
             hr_path: Path to HR image for hybrid mode (to find matching LR file)
-        
+
         Returns:
             LR tensor [B, C, H/scale, W/scale]
         """
@@ -288,23 +288,23 @@ class PreprocessingManager:
             return self._process_quality_adaptive(hr_tensor)
         else:
             raise NotImplementedError(f"Mode '{self.mode}' not implemented")
-    
+
     def _process_hybrid_fallback(self, hr_tensor: torch.Tensor, idx: int) -> torch.Tensor:
         """Fallback for hybrid mode when hr_path is not available."""
         if not self.precomputed_available:
             return self._process_on_the_fly(hr_tensor)
-        
+
         if self._lr_cache is not None:
             lr = self._lr_cache[idx]
         else:
             with Image.open(self.lr_files[idx]) as img:
                 lr = np.array(img)
-        
+
         lr_tensor = torch.from_numpy(lr).permute(2, 0, 1).float() / 255.0
         lr_tensor = lr_tensor.to(self.device)
         lr_tensor = self._apply_runtime_augmentation(lr_tensor)
         return lr_tensor
-    
+
     def _process_on_the_fly(self, hr_tensor: torch.Tensor) -> torch.Tensor:
         """On-the-fly CPU-based degradation using the shared DegradationPipeline.
 
@@ -336,7 +336,7 @@ class PreprocessingManager:
         lr_np = pipeline(hr_np)
         lr_tensor = torch.from_numpy(lr_np).permute(2, 0, 1).float() / 255.0
         return lr_tensor.to(self.device)
-    
+
     def _process_precomputed(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Load precomputed LR/HR pair."""
         if not self.precomputed_available:
@@ -344,7 +344,7 @@ class PreprocessingManager:
                 f"Precomputed data not found at {self.precomputed_base_dir}. "
                 "Run precompute_pairs.py first or use 'hybrid' mode."
             )
-        
+
         if self._lr_cache is not None:
             lr = self._lr_cache[idx]
             hr = self._hr_cache[idx]
@@ -353,69 +353,69 @@ class PreprocessingManager:
                 lr = np.array(img)
             with Image.open(self.hr_files[idx]) as img:
                 hr = np.array(img)
-        
+
         # Convert to tensors
         lr_tensor = torch.from_numpy(lr).permute(2, 0, 1).float() / 255.0
         hr_tensor = torch.from_numpy(hr).permute(2, 0, 1).float() / 255.0
-        
+
         return lr_tensor.to(self.device), hr_tensor.to(self.device)
-    
+
     def _process_gpu_degradation(self, hr_tensor: torch.Tensor) -> torch.Tensor:
         """GPU-accelerated degradation (speed focus)."""
         x = hr_tensor.to(self.device)
         generator = torch.Generator(device=self.device)
-        
+
         # Apply enabled GPU modules
         if 'blur' in self.gpu_modules and torch.rand(1, generator=generator) < self.gpu_blur_prob:
             x = self.gpu_modules['blur'](x, generator)
-        
+
         if 'directional_blur' in self.gpu_modules and torch.rand(1, generator=generator) < 0.3:
             x = self.gpu_modules['directional_blur'](x, generator)
-        
+
         if 'quantization' in self.gpu_modules and torch.rand(1, generator=generator) < self.gpu_quant_prob:
             x = self.gpu_modules['quantization'](x, generator)
-        
+
         # Downsample for LR
         scale = self.config.get('scale', 4)
         lr_h = x.shape[2] // scale
         lr_w = x.shape[3] // scale
         x = torch.nn.functional.interpolate(x, size=(lr_h, lr_w), mode='bicubic')
-        
+
         if 'banding' in self.gpu_modules and torch.rand(1, generator=generator) < 0.4:
             x = self.gpu_modules['banding'](x, generator)
-        
+
         if 'ringing' in self.gpu_modules and torch.rand(1, generator=generator) < 0.3:
             x = self.gpu_modules['ringing'](x, generator)
-        
+
         return x
-    
+
     def _process_hybrid(self, hr_path: Path, precomputed_base_dir: Path = None) -> torch.Tensor:
         """
         Hybrid mode: Load precomputed base + apply runtime augmentation.
-        
+
         This is the DEFAULT mode for best speed/quality balance.
-        
+
         Args:
             hr_path: Path to the HR image (to find matching LR)
             precomputed_base_dir: Base directory for precomputed data (uses self.precomputed_base_dir if None)
         """
         base_dir = precomputed_base_dir or Path(self.precomputed_base_dir)
-        
+
         if not self.precomputed_available:
             return self._process_on_the_fly(torch.from_numpy(np.zeros((1,1,3), dtype=np.uint8)))
-        
+
         lr_name = hr_path.name
         lr_path = base_dir / 'lr' / lr_name
-        
+
         if not lr_path.exists():
             lr_path = base_dir / 'lr' / lr_name.replace('.png', '.jpg')
-        
+
         # Derive fallback LR size from the HR image and scale factor
         with Image.open(hr_path) as hr_img:
             hr_w, hr_h = hr_img.size
         scale = self.config.get('scale', 4)
         fallback_lr = np.zeros((max(1, hr_h // scale), max(1, hr_w // scale), 3), dtype=np.uint8)
-        
+
         if lr_path.exists():
             with Image.open(lr_path) as lr_img:
                 lr = np.array(lr_img)
@@ -427,34 +427,34 @@ class PreprocessingManager:
                 lr = fallback_lr
         else:
             lr = fallback_lr
-        
+
         lr_tensor = torch.from_numpy(lr).permute(2, 0, 1).float() / 255.0
         lr_tensor = lr_tensor.to(self.device)
-        
+
         lr_tensor = self._apply_runtime_augmentation(lr_tensor)
-        
+
         return lr_tensor
-    
+
     def _find_file_index(self, filename: str) -> Optional[int]:
         """Find the index of a file by name in lr_files."""
         for i, f in enumerate(self.lr_files):
             if f.name == filename:
                 return i
         return None
-    
+
     def _apply_runtime_augmentation(self, lr_tensor: torch.Tensor) -> torch.Tensor:
         """Apply runtime augmentation for hybrid mode."""
         x = lr_tensor.unsqueeze(0) if lr_tensor.dim() == 3 else lr_tensor
         generator = torch.Generator(device=self.device)
-        
+
         hybrid_config = self.config.get('hybrid', {})
         runtime_config = hybrid_config.get('runtime_augmentation', {})
-        
+
         # Blur
         if runtime_config.get('blur_prob', 0.3) > 0 and torch.rand(1) < runtime_config.get('blur_prob', 0.3):
             if 'blur' in self.gpu_modules:
                 x = self.gpu_modules['blur'](x, generator)
-        
+
         # Noise (additive Gaussian)
         noise_sigma = runtime_config.get('noise_sigma', [0, 15])
         if isinstance(noise_sigma, list) and len(noise_sigma) == 2:
@@ -462,14 +462,14 @@ class PreprocessingManager:
             if sigma > 0:
                 noise = torch.randn_like(x) * sigma / 255.0
                 x = x + noise
-        
+
         # Color quantization
         if runtime_config.get('quantization', True) and torch.rand(1) < runtime_config.get('quantization_prob', 0.3):
             if 'quantization' in self.gpu_modules:
                 x = self.gpu_modules['quantization'](x, generator)
-        
+
         return x.squeeze(0) if lr_tensor.dim() == 3 else x
-    
+
     def _process_quality_adaptive(self, hr_tensor: torch.Tensor) -> torch.Tensor:
         """Quality-adaptive degradation based on per-image analysis.
 
@@ -511,7 +511,7 @@ class PreprocessingManager:
         lr_np = pipeline(hr_np)
         lr_tensor = torch.from_numpy(lr_np).permute(2, 0, 1).float() / 255.0
         return lr_tensor.to(self.device)
-    
+
     def get_info(self) -> Dict:
         """Get information about the preprocessing configuration."""
         return {
@@ -521,32 +521,32 @@ class PreprocessingManager:
             'line_enhancement': self.line_enhancer is not None if hasattr(self, 'line_enhancer') else False,
             'quality_analyzer': self.quality_analyzer is not None if hasattr(self, 'quality_analyzer') else False,
         }
-    
+
     def __repr__(self) -> str:
         return f"PreprocessingManager(mode={self.mode}, device={self.device})"
 
 
 class OnTheFlyProcessor:
     """Handles on-the-fly degradation (legacy from base.py)."""
-    
+
     def __init__(self, config: Dict, device: torch.device = None):
         self.config = config
         self.device = device or torch.device('cpu')
-        
+
         # APISR-style options
         self.degrade_before_crop = config.get('degrade_before_crop', True)
         self.shuffled_resize = config.get('shuffled_resize', True)
         self.two_stage_compression = config.get('two_stage_compression', True)
-        
+
         # Initialize compression pipelines if enabled
         if self.two_stage_compression:
             self._init_compression_pipelines()
-    
+
     def _init_compression_pipelines(self):
         """Initialize compression pipelines for two-stage degradation."""
         stage1_types = self.config.get('compression_stage1', ['jpeg', 'webp'])
         stage2_types = self.config.get('compression_stage2', ['avif', 'h264', 'jpeg'])
-        
+
         if CompressionPipeline is not None:
             try:
                 self.stage1_pipeline = CompressionPipeline(
@@ -560,14 +560,14 @@ class OnTheFlyProcessor:
             except Exception:
                 self.stage1_pipeline = None
                 self.stage2_pipeline = None
-    
+
     def process(self, hr_tensor: torch.Tensor) -> torch.Tensor:
         """
         Apply on-the-fly degradation.
-        
+
         Args:
             hr_tensor: HR tensor [B, C, H, W]
-        
+
         Returns:
             LR tensor [B, C, H/scale, W/scale]
         """
@@ -589,7 +589,7 @@ if __name__ == "__main__":
         },
         'line_enhancement': {'enabled': False}
     }
-    
+
     manager = PreprocessingManager(config)
     print(manager)
     print(manager.get_info())

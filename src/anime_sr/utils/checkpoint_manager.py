@@ -314,7 +314,7 @@ class CheckpointManager:
 
     def print_run_info(self):
         """Print current run info."""
-        print(f"\n[Checkpoint Manager]")
+        print("\n[Checkpoint Manager]")
         print(f"  Run ID: {self.run_id}")
         print(f"  Run Name: {self.run_name}")
         print(f"  Checkpoint Dir: {self.checkpoint_dir}")

@@ -4,7 +4,7 @@
 
 **At the start of every session**, before reading any other section of this file:
 
-1. Read [`docs/PROJECT_MEMORY.md`](docs/PROJECT_MEMORY.md) — the canonical "where are we?" file. It has the current branch/HEAD, pending tasks, empirical anchors (PSNR/lap_var numbers), decision log, and halt conditions.
+1. Read [`docs/PROJECT_MEMORY.md`](PROJECT_MEMORY.md) — the canonical "where are we?" file. It has the current branch/HEAD, pending tasks, empirical anchors (PSNR/lap_var numbers), decision log, and halt conditions.
 2. Confirm the branch and HEAD match what you intend to work on.
 3. Cross-reference any task you pick up against the "Pending tasks" section.
 

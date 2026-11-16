@@ -20,8 +20,7 @@ tests/
 ├── e2e/                     # End-to-end tests (full pipeline)
 ├── gui/                     # GUI tests (see note below)
 └── utils/                   # Shared test utilities
-    ├── test_data_manager.py # Test data management
-    └── enhanced_dummy_generator.py  # Dummy data generation
+    └── test_data_manager.py # Test data management
 ```
 
 ## Running Tests

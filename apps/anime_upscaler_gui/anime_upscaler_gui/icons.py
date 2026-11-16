@@ -1,9 +1,9 @@
 """Phase 11/13: Icon registry.
 
 Resolves `assets/icons/phosphor/...` paths to `tk.PhotoImage` and caches
-them so we don't re-decode the same file. Adds a `_safe_image()` helper
-that returns `None` if the file is missing — keeps the GUI launchable
-even when the asset bundle isn't built yet (e.g. fresh clone).
+the decoded images so we don't re-decode the same file. Returns `None`
+when an asset is missing -- keeps the GUI launchable even when the asset
+bundle isn't built yet (e.g. fresh clone).
 """
 from __future__ import annotations
 
@@ -14,21 +14,56 @@ from typing import Optional
 
 
 def _root_assets() -> Path:
-    """`apps/anime_upscaler_gui/assets/` from the package import."""
-    return Path(__file__).resolve().parent.parent / "assets"
+    """Asset bundle directory (``<package>/assets``).
+
+    Assets live *inside* the package so [tool.setuptools.package-data]
+    ships them in the wheel and sdist. The legacy sibling directory is kept
+    as a fallback for source trees that predate the move.
+    """
+    pkg = Path(__file__).resolve().parent
+    local = pkg / "assets"
+    if local.is_dir():
+        return local
+    return pkg.parent / "assets"
 
 
 @lru_cache(maxsize=64)
+def _decode(path: str, master_key: int) -> tk.PhotoImage:
+    """Decode one icon for the interpreter selected by `master_key`.
+
+    Only *successful* decodes end up in the cache: `lru_cache` never
+    memoises a raised exception, so a transient Tk failure cannot poison
+    the cache and permanently disable an icon for the rest of the session.
+    """
+    master = _master_for(master_key)
+    if master is not None:
+        return tk.PhotoImage(file=path, master=master)
+    return tk.PhotoImage(file=path)
+
+
 def _load(path: str, master_key: int = 0) -> Optional[tk.PhotoImage]:
-    """Cache by (path, master_id) so Tk images attached to different roots don't collide."""
+    """Decode `path`, returning `None` when it is missing or undecodable.
+
+    Tk 8.6 on Windows has a quirk where the *first* `image create photo
+    ... -file` issued against a freshly created interpreter can fail with a
+    **message-less** `TclError` even though the file is perfectly readable;
+    an immediate identical retry succeeds. So we retry exactly once for the
+    empty-message case, and never for a real error (a bad path or
+    undecodable data always carries a message). Without this, one transient
+    hiccup would make the icon resolve to `None` for the whole session.
+    """
     p = Path(path)
     if not p.exists():
         return None
-    master = _master_for(master_key)
     try:
-        return tk.PhotoImage(file=str(p), master=master) if master is not None else tk.PhotoImage(file=str(p))
-    except tk.TclError:
-        return None
+        return _decode(str(p), master_key)
+    except tk.TclError as exc:
+        if exc.args and exc.args[0]:
+            return None
+        try:
+            return _decode(str(p), master_key)
+        except tk.TclError:
+            return None
 
 
 def _master_for(key: int):

@@ -15,7 +15,7 @@ import torch
 from PIL import Image
 from onnxruntime.quantization import CalibrationDataReader
 
-from anime_sr.models.students import RFDN, build_student
+from anime_sr.models.students import build_student
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 EXPORT_DIR = ROOT / "anime_upscaler" / "export"

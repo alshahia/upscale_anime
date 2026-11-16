@@ -14,9 +14,8 @@ Pins the Q4 contract:
     gpu_util JobEvent without touching the pynvml poll thread.
 """
 import time
+import tkinter as tk
 from pathlib import Path
-
-import pytest
 
 from apps.anime_upscaler_gui.anime_upscaler_gui import pipeline
 from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline import (
@@ -122,21 +121,15 @@ def test_maybe_emit_gpu_util_uses_correct_message_format():
 
 
 # ---- _GPUMonitor widget: apply_event ----
-def test_gpu_monitor_apply_event_parses_message():
+def test_gpu_monitor_apply_event_parses_message(shared_tk_root):
     """apply_event() updates the three StringVars from a gpu_util JobEvent."""
-    # The widget needs a Tk root; we build a minimal one and use
-    # update_idletasks so the StringVar reads are flushed.
-    import tkinter as tk
     from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.gpu_monitor import (
         _GPUMonitor,
     )
-    # Phase E proxy imports + tk in test mode is fragile on Windows
-    # without a display. Skip cleanly if Tk can't init.
-    try:
-        root = tk.Tk()
-        root.withdraw()
-    except Exception as e:
-        pytest.skip(f"no Tk root available: {e}")
+    # A Toplevel off the session root -- never a second tk.Tk(), which breaks
+    # Tk for the rest of the process on Windows (see conftest.py).
+    root = tk.Toplevel(shared_tk_root)
+    root.withdraw()
     try:
         # app is only referenced for layout; pass a stub.
         class _Stub:
@@ -159,17 +152,14 @@ def test_gpu_monitor_apply_event_parses_message():
         root.destroy()
 
 
-def test_gpu_monitor_apply_event_tolerates_malformed_message():
+def test_gpu_monitor_apply_event_tolerates_malformed_message(shared_tk_root):
     """apply_event() must not raise on a malformed gpu_util message."""
-    import tkinter as tk
     from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.gpu_monitor import (
         _GPUMonitor,
     )
-    try:
-        root = tk.Tk()
-        root.withdraw()
-    except Exception as e:
-        pytest.skip(f"no Tk root available: {e}")
+    # A Toplevel off the session root -- never a second tk.Tk() (see conftest.py).
+    root = tk.Toplevel(shared_tk_root)
+    root.withdraw()
     try:
         class _Stub:
             pass

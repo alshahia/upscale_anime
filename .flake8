@@ -1,0 +1,25 @@
+[flake8]
+# Aligned with black's line length (pyproject.toml [tool.black] line-length = 120).
+# The vendored virtualenv (.venv) must stay excluded: third-party packages such
+# as sympy contain files whose nesting exceeds pyflakes' recursion budget, which
+# turns a repo-wide lint run into an interpreter crash rather than findings.
+max-line-length = 120
+extend-ignore =
+    E203,
+    W503
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    env,
+    build,
+    dist,
+    *.egg-info,
+    .pytest_cache,
+    .mypy_cache,
+    tmp,
+    Python
+per-file-ignores =
+    # Tests may use longer fixture/assert expressions.
+    tests/*: E501

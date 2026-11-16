@@ -1,0 +1,76 @@
+# MkDocs configuration for the anime-sr documentation site.
+# Build: mkdocs build --strict   Serve locally: mkdocs serve
+site_name: anime-sr
+site_description: Anime super-resolution with progressive ensemble distillation
+repo_url: https://github.com/user/upscale_anime
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.top
+    - content.code.copy
+
+# Only the stable, maintained documents are part of the site. Session state
+# files, agent instructions and one-off implementation summaries are excluded:
+# they churn constantly and their internal links rot within days.
+exclude_docs: |
+  - ENHANCEMENT_IMPLEMENTATION_SUMMARY.md
+  - FIXES_APPLIED.md
+  - IMPLEMENTATION_COMPLETE.md
+  - IMPLEMENTATION_SUMMARY.md
+  - NAN_FIX_ANALYSIS.md
+  - PHASE1_IMPLEMENTATION_SUMMARY.md
+  - PHASE2_IMPLEMENTATION_SUMMARY.md
+  - PHASE3_IMPLEMENTATION_SUMMARY.md
+  - SPAN_CHECKPOINT_IMPLEMENTATION_SUMMARY.md
+  - SPAN_COMPLETE_IMPLEMENTATION_SUMMARY.md
+  - STAGE1_IMPLEMENTATION_SUMMARY.md
+  - TRAINING_CONTROL_SYSTEM_SUMMARY.md
+  - TRAINING_FIXES_SUMMARY.md
+  - VERIFICATION_COMPLETE.md
+  - PROJECT_COMPLETION_SUMMARY.md
+  - PROJECT_STATUS.md
+  - MODEL_ANALYSIS.md
+  - PREPROCESSING_PIPELINE_FIX_PLAN.md
+  - PREPROCESSING_PIPELINE_TASKS.md
+  - PLAN.md
+  - gui_audit.md
+  - TRANSFER_LEARNING_DIAGNOSIS.md
+  - v7_finetune_fix_verification.md
+  - v7_finetune_root_cause.md
+  - v7_finetune_result_2026_08.md
+  - AGENTS.md
+  - CLAUDE.md
+  - PROJECT_MEMORY.md
+
+nav:
+  - Home: index.md
+  - Getting started:
+    - User Guide: USER_GUIDE.md
+    - Quick Reference: QUICK_REFERENCE.md
+  - Usage:
+    - CLI Reference: cli.md
+    - Configuration: configuration.md
+    - Config Reference: config_reference.md
+    - Training: training.md
+    - Training Guide: training_guide.md
+  - Architecture:
+    - Architecture: architecture.md
+    - Models: models.md
+    - Model Architectures: model_architectures.md
+  - Integration:
+    - API: api.md
+    - Public API: PUBLIC_API.md
+    - Deployment: deployment.md
+    - Development: development.md
+  - Reference:
+    - Troubleshooting: troubleshooting.md
+    - Dataset Analysis: DATASET_ANALYSIS.md
+    - Degradation Spec: APISR_DEGRADATION_SPEC.md
+    - Small Dataset Guide: SMALL_DATASET_TECHNIQUES_GUIDE.md
+    - V7 Results: v7_results.md
+    - V8 Results: v8_results.md
+    - Realtime 4K Report: rfdn_realtime_report.md

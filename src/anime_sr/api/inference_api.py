@@ -7,14 +7,13 @@ import os
 import sys
 import io
 import base64
-import json
 import logging
 import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import asyncio
-import uuid
+from contextlib import asynccontextmanager
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -22,11 +21,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Form
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from PIL import Image
-import numpy as np
 
 from anime_sr.models.span.checkpoint_compatible_exact import CheckpointCompatibleSPANExact
 from anime_sr.inference.engine import InferenceEngine
@@ -39,12 +37,85 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global variables
+
+
+def _apply_config(config: Optional[Dict[str, Any]]) -> None:
+    """Apply a configuration dict to the module-level API settings."""
+    global API_KEY
+    api_cfg = config.get("api", config)
+    if api_cfg.get("api_key"):
+        API_KEY = api_cfg["api_key"]
+    if api_cfg.get("allowed_origins"):
+        global ALLOWED_ORIGINS
+        ALLOWED_ORIGINS = (
+            api_cfg["allowed_origins"].split(",")
+            if isinstance(api_cfg["allowed_origins"], str)
+            else list(api_cfg["allowed_origins"])
+        )
+
+
+def create_app(config: Optional[Dict[str, Any]] = None) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Args:
+        config: Optional configuration dict (api.api_key, api.allowed_origins,
+            ...). Applied before the app is returned.
+
+    Returns:
+        The configured FastAPI application. Routes and middleware are
+        registered at module level, so the same configured singleton is
+        returned on every call.
+    """
+    if config:
+        _apply_config(config)
+    return app
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Application lifespan: replaces deprecated startup/shutdown events."""
+    # --- startup ---
+    logger.info("Starting Anime Super-Resolution API...")
+
+    # Initialize performance optimizer
+    optimizers["default"] = PerformanceOptimizer()
+
+    # Load default models
+    default_models = ["checkpoint_compatible"]
+    for model_name in default_models:
+        try:
+            await load_model(model_name)
+        except Exception as e:
+            logger.warning(f"Could not load default model {model_name}: {e}")
+
+    logger.info(f"API started successfully. Loaded {len(inference_engines)} models.")
+
+    yield
+
+    # --- shutdown ---
+    logger.info("Shutting down API...")
+
+    # Clean up models
+    for model_name in list(inference_engines.keys()):
+        try:
+            del inference_engines[model_name]
+        except Exception as e:
+            logger.warning(f"Error cleaning up model {model_name}: {e}")
+
+    # Clear CUDA cache
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    logger.info("API shutdown complete.")
+
+
 app = FastAPI(
     title="Anime Super-Resolution API",
     description="Production-ready API for anime image super-resolution",
     version="2.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -186,48 +257,14 @@ async def get_model(model_name: str) -> InferenceEngine:
         return inference_engines[model_name]
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize API on startup."""
-    logger.info("Starting Anime Super-Resolution API...")
-    
-    # Initialize performance optimizer
-    optimizers["default"] = PerformanceOptimizer()
-    
-    # Load default models
-    default_models = ["checkpoint_compatible"]
-    for model_name in default_models:
-        try:
-            await load_model(model_name)
-        except Exception as e:
-            logger.warning(f"Could not load default model {model_name}: {e}")
-    
-    logger.info(f"API started successfully. Loaded {len(inference_engines)} models.")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
-    logger.info("Shutting down API...")
-    
-    # Clean up models
-    for model_name in list(inference_engines.keys()):
-        try:
-            del inference_engines[model_name]
-        except Exception as e:
-            logger.warning(f"Error cleaning up model {model_name}: {e}")
-    
-    # Clear CUDA cache
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    logger.info("API shutdown complete.")
+# NOTE: startup/shutdown lifecycle lives in the lifespan context manager
+# above (FastAPI deprecated @app.on_event in 0.93).
 
 
 async def load_model(model_name: str):
     """Load a model into memory."""
     logger.info(f"Loading model: {model_name}")
-    
+
     try:
         # Determine model configuration
         if model_name == "checkpoint_compatible":
@@ -250,7 +287,7 @@ async def load_model(model_name: str):
                 model_config = config["model"]
             else:
                 raise ValueError(f"Unknown model: {model_name}")
-        
+
         # Create model
         if model_config["type"] == "checkpoint_compatible":
             model = CheckpointCompatibleSPANExact(
@@ -259,7 +296,7 @@ async def load_model(model_name: str):
                 hidden_channels=model_config["hidden_channels"],
                 num_blocks=model_config["num_blocks"]
             )
-            
+
             # Load checkpoint
             checkpoint_path = model_config.get("checkpoint_path", "checkpoints/span/spanx4_ch48.pth")
             if Path(checkpoint_path).exists():
@@ -273,7 +310,7 @@ async def load_model(model_name: str):
                     import warnings
                     warnings.warn("Loading checkpoint with pickle fallback - only use with trusted sources!", UserWarning, stacklevel=2)
                     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-                
+
                 # Handle different checkpoint formats
                 if "model_state_dict" in checkpoint:
                     model.load_state_dict(checkpoint["model_state_dict"])
@@ -290,23 +327,32 @@ async def load_model(model_name: str):
                     model.load_state_dict(checkpoint)
             else:
                 logger.warning(f"Checkpoint not found: {checkpoint_path}")
-        
+
         else:
             raise ValueError(f"Unsupported model type: {model_config['type']}")
-        
+
         # Optimize model for inference
         model = optimize_model_for_inference(model)
-        
+
         # Create inference engine
         device = "cuda" if torch.cuda.is_available() else "cpu"
         engine = InferenceEngine(model, device=device)
-        
+
         # Cache model and engine
         models[model_name] = model
         inference_engines[model_name] = engine
-        
+
         logger.info(f"Successfully loaded model: {model_name}")
-        
+
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        logger.error(f"Checkpoint missing for model {model_name}: {e}")
+        raise HTTPException(status_code=404, detail=f"Checkpoint not found for model: {model_name}")
+    except RuntimeError as e:
+        # e.g. the weights_only/pickle safety refusal from InferenceEngine
+        logger.error(f"Could not load model {model_name}: {e}")
+        raise HTTPException(status_code=400, detail=f"Refusing to load model '{model_name}': untrusted checkpoint format")
     except Exception as e:
         logger.error(f"Failed to load model {model_name}: {e}")
         raise HTTPException(status_code=500, detail=f"Could not load model: {model_name}")
@@ -328,11 +374,11 @@ async def health_check():
     """Health check endpoint."""
     start_time = getattr(app.state, "start_time", datetime.now())
     uptime = (datetime.now() - start_time).total_seconds()
-    
+
     # Get memory usage
     optimizer = optimizers.get("default", PerformanceOptimizer())
     memory_info = optimizer.get_memory_info()
-    
+
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(),
@@ -347,16 +393,16 @@ async def health_check():
 async def list_models():
     """List available models."""
     model_list = []
-    
+
     for model_name, engine in inference_engines.items():
         # Get model info
         model = engine.model
         total_params = sum(p.numel() for p in model.parameters())
-        
+
         # Get memory usage
         optimizer = optimizers.get("default", PerformanceOptimizer())
         memory_info = optimizer.get_memory_info()
-        
+
         model_info = ModelInfo(
             name=model_name,
             type="CheckpointCompatibleSPANExact",
@@ -366,9 +412,9 @@ async def list_models():
             status="loaded",
             description=f"SPAN-F model with {total_params:,} parameters"
         )
-        
+
         model_list.append(model_info)
-    
+
     return model_list
 
 
@@ -393,12 +439,12 @@ async def inference_endpoint(
     return_base64: bool = Form(False, description="Return image as base64 string"),
 ):
     """Perform inference on uploaded image."""
-    
+
     # Validate scale BEFORE loading any model so bad input returns 400
     # without paying the cost of a model load.
     if scale_factor not in [2, 3, 4]:
         raise HTTPException(status_code=400, detail="Scale factor must be 2, 3, or 4")
-    
+
     # Rebuild the request model from the individual multipart form fields.
     # (A Pydantic model cannot be combined with File in this FastAPI version.)
     request = InferenceRequest(
@@ -408,10 +454,10 @@ async def inference_endpoint(
         tile_size=tile_size,
         return_base64=return_base64,
     )
-    
+
     # Load the model (validates model_name against the whitelist)
     engine = await get_model(request.model_name)
-    
+
     try:
         # Read image
         image_data = await image.read()
@@ -426,24 +472,24 @@ async def inference_endpoint(
             img = img.convert("RGB")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
-        
+
         # Get image info
         input_size = {"width": img.width, "height": img.height}
-        
+
         # Perform inference
         start_time = datetime.now()
-        
+
         # Use secure temp files
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_input:
             img.save(tmp_input.name)
             temp_input_path = tmp_input.name
-        
+
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_output:
             temp_output_path = tmp_output.name
-        
+
         try:
             img.save(temp_input_path)
-            
+
             # Run inference
             result = engine.process_image(
                 temp_input_path,
@@ -452,20 +498,20 @@ async def inference_endpoint(
                 enhance_faces=request.enhance_faces,
                 tile_size=request.tile_size
             )
-            
+
             processing_time = (datetime.now() - start_time).total_seconds()
-            
+
             # Get output image info
             output_img = Image.open(temp_output_path)
             output_size = {"width": output_img.width, "height": output_img.height}
-            
+
             # Convert to base64 if requested
             image_data = None
             if request.return_base64:
                 buffered = io.BytesIO()
                 output_img.save(buffered, format="PNG")
                 image_data = base64.b64encode(buffered.getvalue()).decode()
-            
+
             # Create response
             response = InferenceResponse(
                 success=True,
@@ -479,17 +525,17 @@ async def inference_endpoint(
                 image_data=image_data,
                 message="Inference completed successfully"
             )
-            
+
             # Schedule cleanup
             background_tasks.add_task(cleanup_temp_files, temp_input_path, temp_output_path)
-            
+
             return response
-            
+
         except Exception as e:
             # Cleanup on error
             cleanup_temp_files(temp_input_path, temp_output_path)
             raise HTTPException(status_code=500, detail=f"Inference failed: {e}")
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -525,7 +571,7 @@ async def get_stats():
     """Get system statistics."""
     optimizer = optimizers.get("default", PerformanceOptimizer())
     memory_info = optimizer.get_memory_info()
-    
+
     stats = {
         "models": {
             name: {
@@ -543,7 +589,7 @@ async def get_stats():
             "current_device": torch.cuda.current_device() if torch.cuda.is_available() else None
         }
     }
-    
+
     return stats
 
 
@@ -578,7 +624,7 @@ async def general_exception_handler(request, exc):
 if __name__ == "__main__":
     # Set startup time
     app.state.start_time = datetime.now()
-    
+
     # Run the API
     uvicorn.run(
         "inference_api:app",

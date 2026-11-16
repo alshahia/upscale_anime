@@ -238,7 +238,7 @@ def _register_builtin_archs():
     ))
     register_arch(ArchSpec(
         kind="era",
-        detect=lambda s: "era" if "head.weight" in s and "body.0.conv.core.1.weight" in s else None,
+        detect=lambda s: "era" if "head.weight" in s and "body.0.conv.sk.weight" in s else None,
         loader=_load_era,
         default_scale=2,
     ))
@@ -247,7 +247,7 @@ def _register_builtin_archs():
         detect=lambda s: "animesr" if "recurrent_cell.conv_s1_first.0.weight" in s else None,
         loader=_load_animesr,
         default_scale=4,
-        capability=Capability(recurrent_frames=3, tta=False),
+        capability=Capability(recurrent_frames=3, tta=False, tiled=False, tensorrt=False, batch_video=False, pad_multiple=4, out_multiple=4),
     ))
     register_arch(ArchSpec(
         kind="rfdn_student",

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Comprehensive test runner for the anime super-resolution project.
 Runs unit tests, integration tests, and performance benchmarks.
@@ -31,10 +31,10 @@ class TestRunner:
         try:
             # Run pytest with coverage
             cmd = [
-                "python", "-m", "pytest", 
+                sys.executable, "-m", "pytest", 
                 "tests/", 
                 "-v", 
-                "--cov=src",
+                "--cov=anime_sr",
                 "--cov-report=term-missing",
                 "--cov-report=html:htmlcov",
                 "--cov-report=xml",
@@ -169,7 +169,7 @@ class TestRunner:
         try:
             # Test basic inference
             cmd = [
-                "python", "scripts/inference.py",
+                sys.executable, "scripts/inference.py",
                 "--checkpoint", "checkpoints/span/spanx4_ch48.pth",
                 "--input", "data/test_hr/dummy_0000.png",
                 "--output", "test_output.png"
@@ -377,7 +377,11 @@ Total Time: {total_time:.2f} seconds
         report += f"- Passed: {passed_tests}\n"
         report += f"- Failed: {failed_tests}\n"
         report += f"- Errors: {error_tests}\n"
-        report += f"- Success Rate: {passed_tests/total_tests*100:.1f}%\n\n"
+        if total_tests > 0:
+            success_rate = passed_tests / total_tests * 100
+            report += f"- Success Rate: {success_rate:.1f}%\n\n"
+        else:
+            report += "- Success Rate: n/a (no test suites ran)\n\n"
         
         # Detailed results
         for test_name, result in self.results.items():

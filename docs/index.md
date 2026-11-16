@@ -58,10 +58,10 @@ python -m anime_sr serve --port 8000
 
 ### Advanced Topics
 
-- [Configuration](../docs/configuration.md) - Configuration system
-- [Architecture](../docs/architecture.md) - System architecture
-- [User Guide](../docs/USER_GUIDE.md) - End-user guide
-- [Public API](../docs/PUBLIC_API.md) - REST API documentation
+- [Configuration](configuration.md) - Configuration system
+- [Architecture](architecture.md) - System architecture
+- [User Guide](USER_GUIDE.md) - End-user guide
+- [Public API](PUBLIC_API.md) - REST API documentation
 
 ---
 

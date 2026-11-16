@@ -19,29 +19,23 @@ import pytest
 
 @pytest.fixture
 def app(shared_tk_root):
-    """One shared UpscaleGUI shell for the whole module.
+    """An UpscaleGUI-like shell hanging off the session-scoped Tk root.
 
-    The first call in the session creates a real UpscaleGUI Tk root; later
-    tests share the same root (Tk only allows one per process). We then
-    bind the needed methods onto the Toplevel fallback so tests can use
-    them as if it were the real shell.
+    Tk allows only one root per process, so the shell is always a Toplevel
+    with the methods under test bound onto it. Never create a second
+    `tk.Tk()` here: destroying one breaks Tk for the rest of the process on
+    Windows (see conftest.py).
     """
     from apps.anime_upscaler_gui.anime_upscaler_gui.app import UpscaleGUI
     from apps.anime_upscaler_gui.anime_upscaler_gui.settings import _AppPaths, _Settings
     from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.status_bar import _StatusBar
     paths = _AppPaths()
     s = _Settings(paths)
-    a = UpscaleGUI.__new__(UpscaleGUI)
-    if not getattr(shared_tk_root, "_aug_tk_used", False):
-        tk.Tk.__init__(a)
-        a.title("test")
-        shared_tk_root._aug_tk_used = True
-    else:
-        a = tk.Toplevel(shared_tk_root)
-        # Bind methods from UpscaleGUI onto the Toplevel so tests can call them.
-        for name in ("_ask_frame_error_action", "_wait_resume_action",
-                     "_show_about", "_on_theme_change"):
-            setattr(a, name, getattr(UpscaleGUI, name).__get__(a, type(a)))
+    a = tk.Toplevel(shared_tk_root)
+    # Bind methods from UpscaleGUI onto the Toplevel so tests can call them.
+    for name in ("_ask_frame_error_action", "_wait_resume_action",
+                 "_show_about", "_on_theme_change"):
+        setattr(a, name, getattr(UpscaleGUI, name).__get__(a, type(a)))
     a.paths = paths
     a.settings = s
     a._resume_boxes = {}
@@ -183,3 +177,127 @@ def test_wait_resume_cleans_up_box(app):
     t.cancel()
     assert action == "skip"
     assert 5 not in app._resume_boxes
+
+
+def test_wait_resume_action_sees_cancel_while_modal_is_open(app):
+    """Cancel-during-resume must resolve the box AND keep the events queued.
+
+    Regression for H4. The drain loop inside `_wait_resume_action` used to
+    hand every pending control event back through `self.ctl_queue` -- a name
+    that only exists on the worker, not on the GUI. With a control event
+    pending while the resume modal was open, the very first drain iteration
+    raised AttributeError, the modal never resolved, and the job hung.
+
+    This reproduces that state for real: the resume modal is opened on the
+    GUI thread (driven by `mainloop()` below, exactly as production does), a
+    cancel for the modal's job arrives while it is up, and the worker thread
+    parked in the poll loop must resolve the box as ABORT_JOB and put the
+    events back on `self._ctl_queue` in FIFO order so the worker's own drain
+    still sees them.
+    """
+    from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline import ABORT_JOB
+    from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline.jobs import JobControlEvent
+
+    result = {}
+
+    def _worker():
+        # Runs on a background thread, like the worker thread that calls
+        # on_frame_error -> _wait_resume_action in production.
+        result["action"] = app._wait_resume_action(9, 3, "codec died")
+
+    def _drain_modals():
+        """Close any modal the resume path opened (test hygiene)."""
+        for w in list(app.winfo_children()):
+            if isinstance(w, tk.Toplevel):
+                try:
+                    w.destroy()
+                except tk.TclError:
+                    pass
+
+    # A control event for a different job: the drain loop has to move it out
+    # of the way and put it back, which is where the broken attribute was hit.
+    app._ctl_queue.put(JobControlEvent(kind="pause", job_id=77))
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    # _wait_resume_action installs its OWN box (and pops it again before it
+    # returns), so grab the live one rather than a pre-seeded placeholder.
+    box = None
+    waited = time.time() + 5.0
+    while box is None and time.time() < waited:
+        box = app._resume_boxes.get(9)
+        app.after(10, app.quit)
+        app.mainloop()
+    assert box is not None, "_wait_resume_action never registered a resume box"
+    try:
+        # 1. Pump the GUI event loop until the resume modal is really up.
+        deadline = time.time() + 5.0
+        modal = None
+        while modal is None and time.time() < deadline:
+            app.after(50, app.quit)
+            app.mainloop()
+            modal = next((w for w in app.winfo_children()
+                          if isinstance(w, tk.Toplevel)), None)
+        assert modal is not None, "resume modal never opened"
+        assert not result.get("action"), "worker resolved the box before the modal opened"
+
+        # 2. Cancel while the modal is open.
+        app._ctl_queue.put(JobControlEvent(kind="cancel", job_id=9))
+
+        # 3. Keep pumping until the worker thread resolves the box.
+        while t.is_alive() and time.time() < deadline:
+            app.after(50, app.quit)
+            app.mainloop()
+    finally:
+        _drain_modals()
+
+    t.join(timeout=5.0)
+    assert not t.is_alive(), (
+        "_wait_resume_action hung: the drain loop choked on a pending ctl event"
+    )
+    assert result["action"] == ABORT_JOB
+    assert box["_done"] is True
+    assert box["action"] == ABORT_JOB
+    # Events were handed BACK to the worker channel, in FIFO order, so the
+    # worker unwinds as a clean cancel instead of losing the event.
+    requeued = []
+    while True:
+        try:
+            requeued.append(app._ctl_queue.get_nowait())
+        except queue.Empty:
+            break
+    assert [(e.kind, e.job_id) for e in requeued] == [("pause", 77), ("cancel", 9)]
+
+
+def test_wait_resume_action_without_pending_events_keeps_polling(app):
+    """No pending controls: the loop keeps waiting for the user's pick."""
+    from apps.anime_upscaler_gui.anime_upscaler_gui.pipeline import SKIP_FRAME
+    result = {}
+
+    def _worker():
+        result["action"] = app._wait_resume_action(21, 0, "x")
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    # The box belongs to _wait_resume_action; fetch the live one before
+    # signalling it, the same way the test above does.
+    box = None
+    waited = time.time() + 5.0
+    while box is None and time.time() < waited:
+        box = app._resume_boxes.get(21)
+        app.after(10, app.quit)
+        app.mainloop()
+    assert box is not None, "_wait_resume_action never registered a resume box"
+    try:
+        # The loop only exits on _done or its 120s deadline; with an empty
+        # control queue it must keep polling rather than return early (or blow
+        # up on the drain).
+        deadline = time.time() + 2.0
+        while t.is_alive() and time.time() < deadline:
+            app.after(50, app.quit)
+            app.mainloop()
+    finally:
+        box["_done"] = True
+    t.join(timeout=5.0)
+    assert result.get("action") == SKIP_FRAME, (
+        "_wait_resume_action returned early with no user pick and no cancel"
+    )

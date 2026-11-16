@@ -26,7 +26,7 @@ from .state import FormState, Job, JobStatus
 APP_DIR_NAME = "anime_upscaler_gui"
 SETTINGS_FILE = "settings.json"
 # Optional preset-catalog extension in the app-data folder (same schema as the
-# bundled apps/anime_upscaler_gui/data/registry.json; entries override by id).
+# bundled anime_upscaler_gui/data/registry.json; entries override by id).
 REGISTRY_FILE = "registry.json"
 
 

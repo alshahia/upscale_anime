@@ -9,7 +9,6 @@ Recommended to increase num_proj at end of finetuning for better results.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
 
 
 class FDLLoss(nn.Module):

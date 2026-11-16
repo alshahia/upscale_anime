@@ -11,9 +11,9 @@ from typing import Optional, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
-from .edsr import EDSR, create_edsr
-from .rcan import RCAN, create_rcan
-from .swinir import SwinIR, create_swinir
+from .edsr import create_edsr
+from .rcan import create_rcan
+from .swinir import create_swinir
 
 
 def auto_detect_architecture(checkpoint: Dict) -> Optional[str]:
@@ -261,23 +261,23 @@ def load_teacher_model(
             ckpt_state = checkpoint.get('state_dict', checkpoint.get('params', checkpoint.get('model', checkpoint)))
         else:
             ckpt_state = checkpoint
-        
+
         # SwinIR-M (large) has embed_dim=180, SwinIR-S (small) has embed_dim=60
         conv_first_weight = None
         if 'conv_first.weight' in ckpt_state:
             conv_first_weight = ckpt_state['conv_first.weight']
         elif 'module.conv_first.weight' in ckpt_state:
             conv_first_weight = ckpt_state['module.conv_first.weight']
-        
+
         if conv_first_weight is not None:
             embed_dim = conv_first_weight.shape[0]  # Output channels = embed_dim
             if embed_dim == 180:
                 large = True
-                print(f"  Detected SwinIR-M (large, embed_dim=180)")
+                print("  Detected SwinIR-M (large, embed_dim=180)")
             elif embed_dim == 60:
                 large = False
-                print(f"  Detected SwinIR-S (small, embed_dim=60)")
-    
+                print("  Detected SwinIR-S (small, embed_dim=60)")
+
     # Create model
     model = create_teacher_model(arch, scale, large=large)
 

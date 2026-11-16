@@ -58,7 +58,7 @@ def test_detection_matches_registry_kind_strings():
     cases = [
         ({"conv_1.sk.weight": 1, "upsampler.0.weight": 1}, "span"),
         ({"body.0.weight": 1, "body.34.weight": 1}, "srvgg"),
-        ({"head.weight": 1, "tail.weight": 1, "body.0.conv.ek.weight": 1}, "era"),
+        ({"head.weight": 1, "tail.weight": 1, "body.0.conv.sk.weight": 1}, "era"),
         ({"recurrent_cell.conv_s1_first.0.weight": 1}, "animesr"),
         ({"head.weight": 1, "body_tail.weight": 1, "pa.pa_conv.weight": 1,
           "upsampler.0.weight": 1, "blocks.0.d1.weight": 1}, "rfdn_student"),

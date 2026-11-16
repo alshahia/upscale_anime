@@ -14,7 +14,6 @@ Supports two pseudo-GT modes:
 """
 import numpy as np
 import cv2
-from typing import Tuple
 
 
 def usm_sharpen(

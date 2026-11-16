@@ -138,10 +138,7 @@ anime-sr export --checkpoint <path> --format onnx [options]
 | `--checkpoint` | str | required | Path to model checkpoint |
 | `--format` | str | `onnx` | Export format (`onnx`, `torchscript`) |
 | `--output` | str | `exports/student.onnx` | Output file path |
-| `--model` | str | auto | Model type (`rfdn`, `srvgg`, `mambair`, `auto`) |
-| `--half` | flag | False | Export in FP16 (ONNX only) |
-| `--opset` | int | 17 | ONNX opset version |
-| `--verify` | flag | False | Verify export parity |
+| `--model` | str | `span` | Model type (`span`, `mamba_pan`, `ensemble`) |
 
 #### Examples
 
@@ -149,14 +146,14 @@ anime-sr export --checkpoint <path> --format onnx [options]
 # Export to ONNX
 anime-sr export --checkpoint runs/distill_v1/student_best.pt --format onnx
 
-# Export to FP16 ONNX
-anime-sr export --checkpoint runs/distill_v1/student_best.pt --format onnx --half
+# Explicit output path and architecture
+anime-sr export --checkpoint runs/distill_v1/student_best.pt --format onnx --output exports/student.onnx --model span
 
 # Export to TorchScript
 anime-sr export --checkpoint runs/distill_v1/student_best.pt --format torchscript
 
-# Verify export
-anime-sr export --checkpoint runs/distill_v1/student_best.pt --verify
+# Quiet export
+anime-sr export --checkpoint runs/distill_v1/student_best.pt --format onnx --output exports/student.onnx --quiet
 ```
 
 ---
@@ -205,39 +202,31 @@ export DSH_MAX_FILE_SIZE_MB=10
 
 ---
 
-### `gui`
+### Graphical interface
 
-Launch the graphical user interface.
-
-```bash
-anime-sr gui [options]
-```
-
-#### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `--config` | str | `configs/default.yaml` | Path to configuration file |
-| `--port` | int | 7860 | GUI port |
-
-#### Examples
+The desktop GUI is a standalone Tkinter application, not a subcommand of
+`anime-sr`:
 
 ```bash
-# Launch GUI
-anime-sr gui
+# From the repository root
+python -m apps.anime_upscaler_gui
 
-# Custom port
-anime-sr gui --port 8080
+# Windows: double-click the launcher
+apps\anime_upscaler_gui\LAUNCHER.bat
 ```
+
+See `apps/anime_upscaler_gui/README.md` for the full walkthrough.
 
 ---
 
 ### `validate`
 
-Validate a trained model against a test dataset.
+Check that a checkpoint loads cleanly (architecture match and parameter count
+are reported). Dataset-based metric evaluation (PSNR/SSIM) is not implemented
+yet.
 
 ```bash
-anime-sr validate --checkpoint <path> --data <path> [options]
+anime-sr validate --checkpoint <path> [options]
 ```
 
 #### Options
@@ -245,23 +234,16 @@ anime-sr validate --checkpoint <path> --data <path> [options]
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--checkpoint` | str | required | Path to model checkpoint |
-| `--data` | str | required | Path to test dataset |
-| `--model` | str | auto | Model type (`rfdn`, `srvgg`, `mambair`, `auto`) |
-| `--batch-size` | int | 1 | Batch size for evaluation |
-| `--save-results` | flag | False | Save results to file |
-| `--output` | str | `validation_results.json` | Results output path |
+| `--model` | str | auto | Model type (`span`, `neosr_span`, `mamba_pan`, `tiny_student`) |
 
 #### Examples
 
 ```bash
-# Validate model
-anime-sr validate --checkpoint runs/distill_v1/student_best.pt --data data/test/
+# Validate that a checkpoint loads
+anime-sr validate --checkpoint runs/distill_v1/student_best.pt
 
-# Save results
-anime-sr validate --checkpoint runs/distill_v1/student_best.pt --data data/test/ --save-results
-
-# Custom batch size
-anime-sr validate --checkpoint runs/distill_v1/student_best.pt --data data/test/ --batch-size 4
+# Validate as a specific architecture
+anime-sr validate --checkpoint ./checkpoints/animesr.pth --model neosr_span
 ```
 
 ---
@@ -282,9 +264,6 @@ anime-sr benchmark --checkpoint <path> [options]
 | `--model` | str | auto | Model type (`rfdn`, `srvgg`, `mambair`, `auto`) |
 | `--input` | str | None | Input image for benchmarking |
 | `--iterations` | int | 100 | Number of iterations |
-| `--warmup` | int | 10 | Number of warmup iterations |
-| `--device` | str | auto | Device (`cuda`, `cpu`, `auto`) |
-| `--tile` | int | 0 | Tile size for tiled inference |
 
 #### Examples
 
@@ -296,10 +275,7 @@ anime-sr benchmark --checkpoint runs/distill_v1/student_best.pt
 anime-sr benchmark --checkpoint runs/distill_v1/student_best.pt --input test.png
 
 # Custom iterations
-anime-sr benchmark --checkpoint runs/distill_v1/student_best.pt --iterations 200 --warmup 20
-
-# CPU benchmark
-anime-sr benchmark --checkpoint runs/distill_v1/student_best.pt --device cpu
+anime-sr benchmark --checkpoint runs/distill_v1/student_best.pt --iterations 200
 ```
 
 ---
@@ -450,7 +426,7 @@ anime-sr infer --input large.png --checkpoint runs/student/student_best.pt --til
 
 ```bash
 # 1. Export model
-anime-sr export --checkpoint runs/student/student_best.pt --format onnx --half
+anime-sr export --checkpoint runs/student/student_best.pt --format onnx --output exports/student.onnx
 
 # 2. Start API server
 anime-sr serve --config configs/api.yaml --port 8000
@@ -487,9 +463,12 @@ anime-sr infer --input image.png --checkpoint model.pt --model auto
 
 **Slow inference**
 ```bash
-# Use FP16 ONNX
-anime-sr export --checkpoint model.pt --format onnx --half
-anime-sr infer --input image.png --onnx exports/student.onnx
+# Export to ONNX
+anime-sr export --checkpoint model.pt --format onnx --output exports/student.onnx
+
+# NOTE: the CLI has no --onnx inference flag. Run the exported model with
+# onnxruntime directly, or use the desktop GUI (apps/anime_upscaler_gui),
+# which has an ONNX backend.
 
 # Disable TTA
 anime-sr infer --input image.png --checkpoint model.pt  # without --tta

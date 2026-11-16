@@ -4,7 +4,6 @@ Base class for all Super-Resolution models
 import logging
 import torch
 import torch.nn as nn
-from pickle import UnpicklingError
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
@@ -16,13 +15,13 @@ class BaseSRModel(nn.Module, ABC):
     Abstract base class for Super-Resolution models.
     All models (SPAN, Mamba-PAN, Ensemble, TinyStudent) should inherit from this.
     """
-    
+
     def __init__(self, scale: int = 4, in_channels: int = 3, out_channels: int = 3):
         super().__init__()
         self.scale = scale
         self.in_channels = in_channels
         self.out_channels = out_channels
-        
+
     @abstractmethod
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -33,7 +32,7 @@ class BaseSRModel(nn.Module, ABC):
             High-resolution output [B, C, H*scale, W*scale]
         """
         pass
-    
+
     def get_feature_maps(self, x: torch.Tensor, layer_indices: Optional[list] = None) -> Dict[int, torch.Tensor]:
         """
         Extract intermediate feature maps for FAKD distillation
@@ -45,11 +44,11 @@ class BaseSRModel(nn.Module, ABC):
         """
         # Default implementation - override in subclasses for efficiency
         return {}
-    
+
     def count_parameters(self) -> int:
         """Count trainable parameters"""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
-    
+
     def get_model_info(self) -> Dict[str, Any]:
         """Get model information for logging"""
         return {
@@ -59,7 +58,7 @@ class BaseSRModel(nn.Module, ABC):
             'in_channels': self.in_channels,
             'out_channels': self.out_channels,
         }
-    
+
     def load_pretrained(self, checkpoint_path: str, strict: bool = True):
         """Load pretrained weights"""
         try:
@@ -74,12 +73,12 @@ class BaseSRModel(nn.Module, ABC):
             state_dict = checkpoint['model']
         else:
             state_dict = checkpoint
-        
+
         # Remove 'module.' prefix if present (from DataParallel)
         state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
         self.load_state_dict(state_dict, strict=strict)
         print(f"Loaded pretrained weights from {checkpoint_path}")
-    
+
     def save_checkpoint(self, path: str, epoch: int, optimizer_state: Optional[dict] = None, **kwargs):
         """Save model checkpoint"""
         checkpoint = {
@@ -90,5 +89,5 @@ class BaseSRModel(nn.Module, ABC):
         }
         if optimizer_state is not None:
             checkpoint['optimizer'] = optimizer_state
-        
+
         torch.save(checkpoint, path)

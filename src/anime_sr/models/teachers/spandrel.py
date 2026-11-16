@@ -394,4 +394,3 @@ if __name__ == "__main__":
                   [tuple(f.shape) for f in taps])
         except Exception as e:      # noqa: BLE001 smoke reports failures
             print(p.name, "FAIL:", type(e).__name__, str(e)[:120])
-

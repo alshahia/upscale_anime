@@ -132,11 +132,11 @@ class TwinPerceptualLoss(nn.Module):
                         resnet.load_state_dict(filtered, strict=False)
                         print(f"[TwinPerceptualLoss] Loaded Danbooru ResNet50 weights: {len(filtered)} keys")
                     else:
-                        print(f"[TwinPerceptualLoss] No matching Danbooru weights found, using ImageNet")
+                        print("[TwinPerceptualLoss] No matching Danbooru weights found, using ImageNet")
                 except Exception as e:
                     print(f"[TwinPerceptualLoss] Failed to load Danbooru weights: {e}, using ImageNet")
             else:
-                print(f"[TwinPerceptualLoss] Danbooru weights not found, using ImageNet ResNet50")
+                print("[TwinPerceptualLoss] Danbooru weights not found, using ImageNet ResNet50")
 
         resnet.eval()
         for param in resnet.parameters():

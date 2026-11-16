@@ -156,6 +156,9 @@ training:
     debug_nan: false
     
     # Experimental features
+    # aggregation_type: feature  -> feature-space aggregation (see
+    # src/anime_sr/distillation/mtkd/feature_aggregation.py); also accepts
+    # simple, adaptive, dctswin, multiscale.
     feature_aggregation: false
     meta_learning: false
     contrastive_enabled: false

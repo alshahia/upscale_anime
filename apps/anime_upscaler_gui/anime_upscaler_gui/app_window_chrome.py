@@ -38,9 +38,7 @@ class WindowChromeMixin:
         self.settings.data.locale = next_locale
         self.settings.save()
         self.logger.info("locale switched to %s", next_locale)
-        self._build_ui()
-        self._refresh_model_dropdown()
-        self.models_panel.refresh_listbox()
+        self._rebuild_ui()
 
     def _confirm_destructive(self, title: str, message: str) -> bool:
         """Show a yes/no confirmation for a destructive action.

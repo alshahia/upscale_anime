@@ -149,7 +149,7 @@ class TestGracefulFallback:
     def test_avif_falls_back_gracefully(self, monkeypatch):
         """When `import pillow_heif` fails, AVIFCompression must still
         produce a valid output via the JPEG fallback path."""
-        from data import compression_modules as cm
+        from anime_sr.data import compression_modules as cm
         # Force the module to think pillow_heif is not available.
         monkeypatch.setattr(cm, '_PILLOW_HEIF_AVAILABLE', False)
         enc = cm.AVIFCompression(quality_range=(40, 70))
@@ -163,7 +163,7 @@ class TestGracefulFallback:
     def test_pyav_falls_back_gracefully(self, monkeypatch):
         """When `import av` fails, PyAVVideoCompression must still
         produce a valid output via the JPEG fallback path."""
-        from data import compression_modules as cm
+        from anime_sr.data import compression_modules as cm
         monkeypatch.setattr(cm, '_AV_AVAILABLE', False)
         enc = cm.PyAVVideoCompression(codec='h264', crf_range=(18, 35))
         assert enc._available is False
@@ -177,7 +177,7 @@ class TestGracefulFallback:
         """When BOTH PyAV and imageio_ffmpeg are missing, the
         VideoCodecCompression facade must still return a valid image
         (JPEG fallback) instead of raising."""
-        from data import compression_modules as cm
+        from anime_sr.data import compression_modules as cm
         monkeypatch.setattr(cm, '_AV_AVAILABLE', False)
         monkeypatch.setattr(cm, '_IMAGEIO_FFMPEG_AVAILABLE', False)
         enc = cm.VideoCodecCompression(codec='h264', crf_range=(18, 35))
@@ -211,7 +211,7 @@ class TestCodecSpeedSmoke:
         (subprocess spawn dominates); the new in-process paths are
         5-50ms. A regression above 100ms/frame would point back at the
         subprocess path or an init that runs every call."""
-        from data import compression_modules as cm
+        from anime_sr.data import compression_modules as cm
         img = _random_rgb(64, 64, seed=99)
         results = {}
 
@@ -250,7 +250,7 @@ class TestCodecSpeedSmoke:
         resize pipeline) must still complete in reasonable time. The
         padding pass adds at most 1-3 rows/cols of zero-overhead edge
         padding, so odd-dim should be within 2x of even-dim."""
-        from data import compression_modules as cm
+        from anime_sr.data import compression_modules as cm
         img_odd = _random_rgb(13, 13, seed=101)
         img_even = _random_rgb(64, 64, seed=102)
         odd_ms = _bench(lambda: cm.PyAVVideoCompression('h264', (18, 35))(img_odd), n=5)

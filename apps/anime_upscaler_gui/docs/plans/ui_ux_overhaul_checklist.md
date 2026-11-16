@@ -3,10 +3,16 @@
 **Plan:** [`ui_ux_overhaul.md`](ui_ux_overhaul.md)
 **Audit:** [`../audit/ui_ux_audit.md`](../audit/ui_ux_audit.md)
 **Resume:** [`../RESUME.md`](../RESUME.md) — read this first if resuming in a fresh session
-**Last updated:** 2026-07-26
-**Test count:** 198/198 passing (179 prior + 19 assets)
+**Last updated:** 2026-10-11
+**Test count:** 388/388 passing (2026-10-11)
+**Status:** All 14 phases complete — this checklist is now historical.
 
 > Use this as the daily standup checklist. One phase per PR. After each phase: `pytest tests/` ✓ + `python -m py_compile <files>` ✓ + 10s GUI smoke ✓.
+
+> ⚠️ **Production-readiness follow-up (2026-10-11):** the overhaul is functionally
+> complete, but a review found four ship blockers and several production gaps.
+> See [`../audit/gui_review_2026-10.md`](../audit/gui_review_2026-10.md) and the
+> fix plan [`production_readiness_fixes.md`](production_readiness_fixes.md).
 
 ---
 
@@ -107,7 +113,7 @@
 - [x] 7.10b `tests/test_error_map.py` (8 tests: URLError, POSIX+Windows disk-full, EACCES, ENOENT, RuntimeError, ValueError, custom exception)
 
 **Skipped (deferred):**
-- 7.1/7.2/7.11 DnD: tkinterdnd2 dependency; defer to user
+- [x] 7.1/7.2/7.11 DnD: tkinterdnd2 dependency + real drop handler (wired; the TypeError on drop was fixed 2026-10-11, PR-02)
 - 7.8 "Localize model tags": the kind strings ("span"/"srvgg"/etc.) are technical identifiers, not user-facing copy
 - 7.12/7.13 Icon bundles: no assets; Phase 11 will add them
 

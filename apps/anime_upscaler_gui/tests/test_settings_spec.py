@@ -109,7 +109,7 @@ def test_setting_spec_is_frozen():
         spec.key = "something_else"  # type: ignore[misc]
 
 
-def test_every_panel_key_is_built_into_a_panel_var():
+def test_every_panel_key_is_built_into_a_panel_var(shared_tk_root):
     """Every spec's var_name must become an attribute on the live SettingsPanel.
 
     This is the cross-module contract: SETTING_SPECS + SettingsPanel together
@@ -121,7 +121,8 @@ def test_every_panel_key_is_built_into_a_panel_var():
     from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.settings_panel import SettingsPanel
     from apps.anime_upscaler_gui.anime_upscaler_gui.settings import Defaults
 
-    root = tk.Tk()
+    # A Toplevel off the session root -- never a second tk.Tk() (see conftest.py).
+    root = tk.Toplevel(shared_tk_root)
     try:
         root.withdraw()
         # SettingsPanel(parent, app) needs an app; the panel reads app.settings.data

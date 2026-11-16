@@ -4,7 +4,6 @@ Reference: https://arxiv.org/abs/1707.02921
 """
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ResidualBlock(nn.Module):

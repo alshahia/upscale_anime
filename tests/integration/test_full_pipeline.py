@@ -6,8 +6,6 @@ Tests end-to-end functionality including training, inference, and model loading.
 import pytest
 import torch
 import numpy as np
-import tempfile
-import shutil
 import os
 from pathlib import Path
 import yaml
@@ -21,13 +19,6 @@ from anime_sr.utils.config import load_config
 
 class TestFullPipeline:
     """Test the complete pipeline from training to inference."""
-    
-    @pytest.fixture
-    def temp_dir(self):
-        """Create temporary directory for tests."""
-        temp_dir = tempfile.mkdtemp()
-        yield Path(temp_dir)
-        shutil.rmtree(temp_dir)
     
     @pytest.fixture
     def sample_config(self, temp_dir):

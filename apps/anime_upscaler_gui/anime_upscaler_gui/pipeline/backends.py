@@ -212,8 +212,14 @@ def _cascade_count(model) -> int:
 class _PyTorchBackend:
     """Wraps a built model in a no-grad callable."""
 
-    def __init__(self, ckpt_path, kind: str, device, fp16: bool):
-        self.model = build(kind, ckpt_path).to(device).eval()
+    def __init__(self, ckpt_path, kind: str, device, fp16: bool, model=None):
+        # Phase: an already-built model is accepted (like _OnnxBackend's
+        # optional model=) so the worker does not load the checkpoint from
+        # disk twice per job -- it already built + moved + halved it before
+        # calling the backend selector.
+        if model is None:
+            model = build(kind, ckpt_path)
+        self.model = model.to(device).eval()
         if fp16:
             self.model = self.model.half()
         self.kind = kind
@@ -301,7 +307,10 @@ def _pytorch_predicate(ctx: BackendSelectionCtx) -> bool:
 
 
 def _pytorch_factory(ctx: BackendSelectionCtx):
-    return _PyTorchBackend(ctx.ckpt_path, ctx.kind, ctx.device, ctx.fp16)
+    # Reuse the model the caller already built; only build from the
+    # checkpoint when the selector was handed a None model.
+    return _PyTorchBackend(ctx.ckpt_path, ctx.kind, ctx.device, ctx.fp16,
+                           model=ctx.model)
 
 
 def init_default_backends() -> None:

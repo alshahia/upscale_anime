@@ -129,15 +129,13 @@ def test_empty_state_no_cta_when_label_missing(root):
 # ---- input panel empty state integration ----
 
 def test_input_panel_shows_empty_state_in_batch_mode(tmp_path, root):
-    from apps.anime_upscaler_gui.anime_upscaler_gui.app import UpscaleGUI
     from apps.anime_upscaler_gui.anime_upscaler_gui.settings import _AppPaths, _Settings
     from apps.anime_upscaler_gui.anime_upscaler_gui.widgets.input_panel import _InputPanel
     paths = _AppPaths(tmp_path)
     s = _Settings(paths)
-    app = UpscaleGUI.__new__(UpscaleGUI)
+    # A Toplevel off the session root -- never a second tk.Tk() (see conftest.py).
+    app = tk.Toplevel(root)
     # minimal stubs
-    tk.Tk.__init__(app)
-    app.title("t")
     app.paths = paths
     app.settings = s
     app._jobs = []

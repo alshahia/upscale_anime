@@ -33,7 +33,7 @@ import torch
 import torch.nn.functional as F
 
 from ..arch_registry import build
-from ..archs import capabilities as _arch_caps
+from ..arch_registry import capabilities as _arch_caps
 from ..decoders import (_AsyncReader, _Cv2Reader, _NvDecReader, _PyAvReader, _SkipFirstFrames,
                         load_image_rgb, save_image_rgb)
 from ..ffmpeg import extract_cut, ffmpeg_available, open_encoder
@@ -69,6 +69,22 @@ _PREFETCH_DEPTH = {"async": 8}
 # existing on_frame_error handler.
 class _JobCancelled(Exception):
     """Raised internally by the worker when a cancel control arrives."""
+
+
+def _unlink_partial_output(out_path) -> None:
+    """Best-effort delete of a partial output file.
+
+    Shared by the cancel path (``_run_one``) and the recurrent error path so
+    a job that never reached its "finished" event leaves no truncated file
+    behind. The caller must have closed the encoder handle first: on Windows
+    ffmpeg / cv2 keep the file open, and unlinking it early raises
+    PermissionError.
+    """
+    try:
+        if out_path.exists():
+            out_path.unlink()
+    except OSError:
+        pass
 
 
 # Q4 (perf/queue-controls-gpu-codec): light-weight GPU util probe used
@@ -320,12 +336,7 @@ class PipelineWorker(threading.Thread):
             # Clean up partial output. The encoder pipe is already closed
             # because _run_video/_run_image's `finally` block ran on the
             # way out. We just delete the file and emit a terminal event.
-            out = job.output_path
-            try:
-                if out.exists():
-                    out.unlink()
-            except OSError:
-                pass
+            _unlink_partial_output(job.output_path)
             self.emit(JobEvent(kind="cancelled", job_id=job.job_id,
                                 message="cancelled by user"))
         finally:
@@ -375,6 +386,13 @@ class PipelineWorker(threading.Thread):
             pw = (pm - w0 % pm) % pm
             if ph or pw:
                 x = F.pad(x, (0, pw, 0, ph), mode="reflect")
+        # Recurrent temporal models (animesr) need the 5-D
+        # (b, n, c, h, w) contract the same way the video path does; a
+        # still image has no temporal context, so the LR frame is
+        # replicated ``recurrent_frames`` times and the centre output
+        # frame is kept. Without this dispatch the 4-D input reaches
+        # MSRSW.forward, which unpacks five sizes and fails.
+        recurrent_frames = _arch_caps(job.kind).recurrent_frames
         try:
             if device.type == "cuda":
                 torch.cuda.synchronize()
@@ -383,12 +401,16 @@ class PipelineWorker(threading.Thread):
                 # Cascade: 2x model applied twice -> 4x; 4x model once.
                 n_cascade = (job.cascade_mode if job.cascade_mode is not None
                              else _cascade_count(backend.model))
-                y = x
-                for _ in range(n_cascade):
-                    if use_tta:
-                        y = _tta_forward(backend.model, y)
-                    else:
-                        y = backend(y)
+                if recurrent_frames > 0:
+                    y = self._recurrent_image_forward(
+                        backend, x, n_cascade, recurrent_frames)
+                else:
+                    y = x
+                    for _ in range(n_cascade):
+                        if use_tta:
+                            y = _tta_forward(backend.model, y)
+                        else:
+                            y = backend(y)
             if device.type == "cuda":
                 torch.cuda.synchronize()
             dt_ms = (time.perf_counter() - t0) * 1000.0
@@ -421,6 +443,25 @@ class PipelineWorker(threading.Thread):
             self.emit(JobEvent(kind="error", job_id=job.job_id,
                                 message=f"save failed: {job.output_path}"))
 
+    def _recurrent_image_forward(self, backend, x, n_cascade: int,
+                                 recurrent_frames: int):
+        """Still-image forward through a recurrent 5-D model.
+
+        ``x`` is (1, 3, H, W). It is replicated to (1, n, 3, H, W) so the
+        recurrent cell sees a full prev/cur/nxt context and the centre
+        output frame is returned as (1, 3, H', W'). This is the same trick
+        ``_OnnxBackend.__call__`` uses for still images on recurrent
+        kinds; without it every AnimeSR image job feeds 4-D input into
+        ``MSRSW.forward`` and dies unpacking ``b, n, c, h, w``.
+        """
+        n = max(1, int(recurrent_frames))
+        # (1, 3, H, W) -> (1, n, 3, H, W); repeat (not expand) so the model
+        # gets a real tensor rather than a stride-0 view.
+        y = x.unsqueeze(1).repeat(1, n, 1, 1, 1)
+        for _ in range(max(1, n_cascade)):
+            y = backend(y)
+        return y[:, n // 2]
+
     # --- video ---
     def _run_video(self, job: RunJob):
         self.emit(JobEvent(kind="started", job_id=job.job_id,
@@ -440,6 +481,12 @@ class PipelineWorker(threading.Thread):
                                 message=f"load failed: {e}", exc=e))
             return
         backend, backend_name = _make_backend(torch_model, ckpt_path, job.kind, device, job.fp16, job.use_tensorrt, job.tta, batch_size=job.batch_size)
+
+        # Recurrent temporal models (e.g. AnimeSR) need all frames at once
+        # for prev/cur/nxt context. Dispatch to a dedicated 5D path.
+        if _arch_caps(job.kind).recurrent_frames > 0:
+            self._run_video_recurrent(job, backend, device)
+            return
 
         if job.decode == "nvdec":
             # Q3: explicit NVDEC selection. _NvDecReader raises if the
@@ -704,6 +751,294 @@ class PipelineWorker(threading.Thread):
                 self.emit(JobEvent(kind="log", job_id=job.job_id,
                                     message=f"cut: {cut_path.name}"))
 
+
+    # --- recurrent video path (temporal models like AnimeSR) ---
+    def _run_video_recurrent(self, job: RunJob, backend, device):
+        """Video path for recurrent temporal models (e.g. AnimeSR).
+
+        These models expect 5D input (batch, num_frames, channels, H, W) and
+        use prev/cur/nxt frame context internally. The cut window is consumed
+        in sliding windows of ``Capability.recurrent_frames`` frames
+        (overlapping by one frame, so every output frame keeps its temporal
+        neighbours); each window is forwarded and encoded as soon as it is
+        produced. VRAM therefore stays bounded by the window size instead of
+        growing with the clip length.
+
+        Error model: "error" is terminal -- the event is emitted and the
+        partial output file is unlinked, and no "finished" event follows.
+        """
+        self.emit(JobEvent(kind="started", job_id=job.job_id,
+                            message=f"video (recurrent): {job.input_path.name}"))
+        self._drain_ctl_for_job(job.job_id)
+
+        # --- decoder setup ---
+        if job.decode == "nvdec":
+            sync = _NvDecReader(job.input_path)
+        elif job.decode == "pyav":
+            sync = _PyAvReader(job.input_path)
+        elif job.decode == "auto":
+            from ..decoders import _detect_nvdec_support, _HAS_PYAV
+            if _detect_nvdec_support():
+                sync = _NvDecReader(job.input_path)
+            elif _HAS_PYAV:
+                sync = _PyAvReader(job.input_path)
+            else:
+                sync = _Cv2Reader(job.input_path)
+        else:
+            sync = _Cv2Reader(job.input_path)
+        fps, total, w, h = sync.fps, sync.total, sync.w, sync.h
+        target_w = int(round(w * job.outscale))
+        target_h = int(round(h * job.outscale))
+
+        # Cut window
+        if fps > 0:
+            start_frame = int(round(job.cut_start_seconds * fps))
+        else:
+            start_frame = 0
+        if job.cut_end_seconds > 0 and fps > 0:
+            end_frame = int(round(job.cut_end_seconds * fps))
+            if total > 0:
+                end_frame = min(end_frame, total)
+        elif total > 0:
+            end_frame = total
+        else:
+            end_frame = -1
+        if end_frame >= 0 and end_frame <= start_frame:
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
+                                message="cut window is empty (end <= start)"
+                                        if end_frame == start_frame
+                                        else f"cut range exceeds video (fps={fps:g}, frames={total})"))
+            sync.release()
+            return
+        limit = max(end_frame - start_frame, 0) if end_frame > 0 else 0
+
+        # Re-open decoder and skip to start_frame
+        sync.release()
+        if job.decode == "nvdec":
+            sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
+        elif job.decode == "pyav":
+            sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+        elif job.decode == "auto":
+            from ..decoders import _detect_nvdec_support, _HAS_PYAV
+            if _detect_nvdec_support():
+                sync_reader = _SkipFirstFrames(_NvDecReader(job.input_path), start_frame)
+            elif _HAS_PYAV:
+                sync_reader = _SkipFirstFrames(_PyAvReader(job.input_path), start_frame)
+            else:
+                sync_reader = _SkipFirstFrames(_Cv2Reader(job.input_path), start_frame)
+        else:
+            cap = cv2.VideoCapture(str(job.input_path))
+            if start_frame > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            sync_reader = _Cv2Reader.from_cap(
+                cap, job.input_path, fps, total, w, h)
+
+        # --- encoder setup ---
+        out_path = job.output_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # H2: window/stride of the sliding chunker. The window is the arch's
+        # Capability.recurrent_frames (3 for AnimeSR) and the stride is one
+        # less, so consecutive windows share a frame of temporal context
+        # instead of restarting the recurrence on a hard cut. Every forward
+        # therefore sees at most `window` frames: a 10 s 4K cut becomes ~80
+        # chunks of ~150 MB instead of one 11.9 GB stack.
+        window = max(1, int(_arch_caps(job.kind).recurrent_frames or 1))
+        step = max(1, window - 1)
+        n_cascade = (job.cascade_mode if job.cascade_mode is not None
+                     else _cascade_count(backend.model))
+        n_cascade = max(1, int(n_cascade))
+        scale = getattr(backend.model, "scale",
+                        getattr(backend.model, "upscale", 4))
+
+        pipe = None
+        writer = None
+        use_pipe = False
+        # B1: track whether this job actually created the output file so the
+        # error path only unlinks what the encoder opened.
+        started_writing = False
+        failed = False
+        stage = "decode"  # which step an unexpected exception came from
+        try:
+            pipe = open_encoder(
+                out_path, fps, target_w, target_h,
+                crf=job.video_crf, preset=job.video_preset,
+                use_nvenc=job.use_nvenc, nvenc_preset=job.nvenc_preset, nvenc_qp=job.nvenc_qp,
+            )
+            use_pipe = pipe is not None
+            started_writing = True
+            if not use_pipe:
+                writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                         fps, (target_w, target_h))
+                if not writer.isOpened():
+                    self.emit(JobEvent(kind="error", job_id=job.job_id, message="no encoder (ffmpeg/cv2)"))
+                    failed = True
+                    return
+
+            # --- chunked inference: decode a window, forward it, encode it ---
+            t_wall = time.perf_counter()
+            last_emit = t_wall
+            n_frames = 0
+            preflighted = False
+            for chunk, skip in _recurrent_windows(sync_reader, window, step, limit):
+                # H1: pause / cancel at chunk granularity -- the same
+                # contract _run_video honors between frames.
+                self._drain_ctl_for_job(job.job_id)
+                self._check_pause(job.job_id)
+                if not preflighted:
+                    preflighted = True
+                    f_h, f_w = chunk[0].shape[:2]
+                    self._recurrent_vram_preflight(job, device, len(chunk), f_h, f_w, scale)
+                stage = "recurrent inference"
+                sr_bgrs, dt_ms = self._recurrent_chunk_forward(
+                    job, backend, device, chunk, n_cascade, target_h, target_w)
+                stage = "encode"
+                # The sliding window re-yields the previous chunk's last
+                # frame as its first frame; `skip` drops it so every output
+                # frame is written exactly once, in order.
+                new_bgrs = sr_bgrs[skip:]
+                if limit > 0:
+                    new_bgrs = new_bgrs[:max(0, limit - n_frames)]
+                for sr_bgr in new_bgrs:
+                    if use_pipe:
+                        _encode_write(pipe, sr_bgr)
+                    else:
+                        writer.write(sr_bgr)
+                n_frames += len(new_bgrs)
+                now = time.perf_counter()
+                if new_bgrs:
+                    # H1: same payload keys _run_video emits so the status
+                    # bar advances instead of freezing on a silent job.
+                    self.emit(JobEvent(
+                        kind="progress", job_id=job.job_id,
+                        progress=(n_frames / limit) if limit > 0 else -1.0,
+                        fps=n_frames / max(now - t_wall, 1e-6),
+                        infer_ms=dt_ms,
+                        frame_idx=start_frame + n_frames - 1))
+                    # Q4: piggy-back a gpu_util emission on the progress tick.
+                    _maybe_emit_gpu_util(self.emit, job.job_id, [last_emit])
+                    last_emit = now
+                stage = "decode"  # the next window pull is a decode step
+            if n_frames == 0:
+                self.emit(JobEvent(kind="error", job_id=job.job_id,
+                                    message="no frames decoded"))
+                failed = True
+                return
+
+            wall = time.perf_counter() - t_wall
+            avg_fps = n_frames / max(wall, 1e-6)
+            self.emit(JobEvent(kind="finished", job_id=job.job_id,
+                                message=f"-> {out_path.name} ({n_frames} frames, {avg_fps:.2f} fps)",
+                                fps=avg_fps, progress=1.0))
+        except _JobCancelled:
+            # Cancel is owned by _run_one: it closes nothing here (the
+            # finally below already released the encoder), unlinks the
+            # partial output and emits the terminal "cancelled" event.
+            raise
+        except Exception as e:
+            # B1: "error" is terminal. Emit it and do NOT fall through to
+            # the "finished" emit -- a failed job used to be re-labelled
+            # DONE by the GUI and left its truncated output on disk.
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
+                               message=f"{stage} failed: {e}", exc=e))
+            failed = True
+        finally:
+            # Happy-path cleanup (pipe close + 30s wait + kill,
+            # writer.release, sync_reader.release). It also runs on the
+            # error / cancel path so the encoder handle is gone before the
+            # partial output file is unlinked (Windows keeps it locked).
+            if writer is not None:
+                writer.release()
+            elif pipe is not None:
+                try:
+                    pipe.stdin.close()
+                except OSError:
+                    pass
+                try:
+                    pipe.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    # Encoder wedged (e.g. NVENC session hang): kill it so
+                    # the worker thread doesn't block forever.
+                    pipe.kill()
+                    pipe.wait()
+            sync_reader.release()
+            if failed and started_writing:
+                _unlink_partial_output(out_path)
+
+    def _recurrent_chunk_forward(self, job, backend, device, frames_rgb,
+                                 n_cascade: int, target_h: int, target_w: int):
+        """Run one recurrent window through the backend.
+
+        ``frames_rgb`` holds at most ``Capability.recurrent_frames`` frames,
+        so the peak VRAM of the forward is bounded by the window size
+        instead of the cut length. Returns ``(list of BGR uint8 frames,
+        infer_ms)`` -- one entry per input frame, in order.
+        """
+        n = len(frames_rgb)
+        rgbs_in = [_downscale_if_needed(r, job.downscale_max_edge) for r in frames_rgb]
+        h_in, w_in = rgbs_in[0].shape[:2]
+        pinned_in = _pinned.get_input(h_in, w_in, n=n) if device.type == "cuda" else None
+        x = _to_tensor_batch(rgbs_in, device, job.fp16, pinned_in=pinned_in)
+        # (n, 3, H, W) -> (1, n, 3, H, W): the recurrent contract.
+        x = x.unsqueeze(0)
+
+        # Pad to the arch's pad_multiple (animesr needs H, W % 4 == 0).
+        pm = _arch_caps(job.kind).pad_multiple
+        if pm > 0:
+            ph = (pm - h_in % pm) % pm
+            pw = (pm - w_in % pm) % pm
+            if ph > 0 or pw > 0:
+                x = F.pad(x, (0, pw, 0, ph), mode="reflect")
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        with torch.no_grad():
+            # Cascade: 2x model applied twice -> 4x; 4x model once.
+            y = x
+            for _ in range(n_cascade):
+                y = backend(y)
+            if job.fp16:
+                y = y.float()
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+
+        # (1, n, 3, H*scale, W*scale) -> (n, 3, H*scale, W*scale)
+        y = y.squeeze(0)
+        out_h, out_w = int(y.shape[-2]), int(y.shape[-1])
+        pinned_out = _pinned.get_output(out_h, out_w, n=n) if device.type == "cuda" else None
+        sr_bgrs = _tensor_to_bgr_batch(y, pinned_out=pinned_out,
+                                       target_h=target_h, target_w=target_w)
+        return sr_bgrs, dt_ms
+
+    def _recurrent_vram_preflight(self, job, device, n_frames: int,
+                                  height: int, width: int, scale) -> None:
+        """Warn when the first recurrent chunk is unlikely to fit in VRAM.
+
+        Chunking already bounds the *peak* by the window size; this cheap
+        pre-flight estimate turns the remaining risk into a visible log
+        line so the user can shorten the cut or lower downscale_max_edge.
+        vram.estimate() has no frame-count axis, so the recurrent path
+        keeps its own local copy of that conservative math.
+        """
+        if device.type != "cuda" or job.gpu_guard_mode == "off":
+            return
+        try:
+            free, _total = torch.cuda.mem_get_info()
+        except Exception:
+            return
+        if free <= 0:
+            return
+        est = _recurrent_vram_estimate(n_frames, height, width, job.fp16, scale)
+        if est > 0.6 * free:
+            self.emit(JobEvent(
+                kind="log", job_id=job.job_id,
+                message=f"VRAM pre-flight: a {n_frames}-frame chunk at "
+                        f"{height}x{width} needs ~{est / 1e9:.2f} GB of "
+                        f"{free / 1e9:.2f} GB free VRAM; shorten the cut "
+                        f"window or lower downscale_max_edge to stay in budget"))
+
     # --- batched video path (Phase 1.C) ---
     def _process_video_batch(
         self, job, backend, device, frames_rgb: "list",
@@ -851,6 +1186,73 @@ class PipelineWorker(threading.Thread):
 # ============================================================================ #
 # Batching + helper
 # ============================================================================ #
+def _recurrent_windows(frames, window: int, step: int, limit: int = 0):
+    """Yield ``(window_frames, skip)`` sliding windows over a frame stream.
+
+    ``window`` is ``Capability.recurrent_frames`` (3 for AnimeSR) and
+    ``step`` its stride (``window - 1``), so consecutive windows share one
+    frame of temporal context. Each yielded list holds at most ``window``
+    frames, which bounds host RAM (only two windows are ever resident) and
+    VRAM (the model never holds the whole cut window at once) no matter how
+    long the cut is.
+
+    ``skip`` is how many leading frames of the window were already emitted
+    by the previous window (the shared context frame); the caller drops
+    them so every output frame is produced exactly once. ``limit`` caps the
+    number of frames the caller is still allowed to emit; 0 means "run to
+    EOF".
+    """
+    window = max(1, int(window))
+    step = max(1, min(int(step), window))
+    buf: List[Any] = []
+    win_idx = 0      # window counter; window k starts at k * step
+    produced = 0     # frames whose output has already been handed out
+    for frame in frames:
+        if limit > 0 and produced >= limit:
+            break
+        buf.append(frame)
+        if len(buf) < window:
+            continue
+        start = win_idx * step
+        skip = min(max(produced - start, 0), len(buf))
+        yield buf, skip
+        produced = start + window
+        win_idx += 1
+        buf = buf[step:]  # keep only the context frame the next window needs
+    if buf and (limit <= 0 or produced < limit):
+        # Trailing partial window (clip shorter than one window, or the
+        # last frames that never filled one).
+        start = win_idx * step
+        skip = min(max(produced - start, 0), len(buf))
+        if skip < len(buf):
+            yield buf, skip
+
+
+# H2: VRAM pre-flight for the recurrent path. This mirrors the conservative
+# math in anime_upscaler_gui/vram.py (output tensor + 4x activations + ~50 MB
+# model) multiplied by the number of frames the window holds resident at
+# once. vram.estimate() has no frame-count axis, so the recurrent path keeps
+# its own local copy instead of changing that shared helper's signature.
+_RECURRENT_VRAM_MODEL_BYTES = 50 * 1024 * 1024
+_RECURRENT_VRAM_ACT_FACTOR = 4
+
+
+def _recurrent_vram_estimate(n_frames: int, height: int, width: int,
+                             fp16: bool, scale: int = 4) -> int:
+    """Cheap upper-bound VRAM estimate (bytes) for one recurrent chunk."""
+    db = 2 if fp16 else 4
+    try:
+        scale = int(scale)
+    except (TypeError, ValueError):
+        scale = 4
+    out_h = max(1, height * scale)
+    out_w = max(1, width * scale)
+    output_bytes = out_h * out_w * 3 * db * max(1, int(n_frames))
+    return (output_bytes
+            + output_bytes * _RECURRENT_VRAM_ACT_FACTOR
+            + _RECURRENT_VRAM_MODEL_BYTES)
+
+
 def _batched(it, batch_size: int, limit: int):
     """Yield (start_idx, frame) for batch_size=1 mode; returns single frames."""
     batch = []

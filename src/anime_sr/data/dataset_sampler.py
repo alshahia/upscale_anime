@@ -11,14 +11,14 @@ import numpy as np
 class DatasetSampler:
     """
     Handles dataset sampling with global ratio and per-dataset overrides.
-    
+
     Supports:
     - Global sample_ratio applied across all datasets
     - Per-dataset sample_ratio overrides
     - Hard caps on total images (max_images_total)
     - Weighted sampling across datasets
     """
-    
+
     def __init__(
         self,
         dataset_configs: List[Dict],
@@ -36,37 +36,37 @@ class DatasetSampler:
         self.seed = seed
         self.rng = random.Random(seed)
         self._rng = np.random.default_rng(seed)
-        
+
         # Parse dataset configs
         self.datasets = []
         for cfg in dataset_configs:
             if not cfg.get('enabled', True):
                 continue
-            
+
             # Skip validation datasets by default
             if cfg.get('is_validation', False) and not cfg.get('include_in_sampling', False):
                 continue
-            
+
             hr_dir = Path(cfg['hr_dir'])
             if not hr_dir.exists():
                 continue
-            
+
             # Get images
             hr_images = sorted(hr_dir.glob("*.png")) + \
                        sorted(hr_dir.glob("*.jpg")) + \
                        sorted(hr_dir.glob("*.jpeg"))
-            
+
             if len(hr_images) == 0:
                 continue
-            
+
             # Determine sample ratio
             if global_sample_ratio is not None:
                 sample_ratio = global_sample_ratio
             else:
                 sample_ratio = cfg.get('sample_ratio', 1.0)
-            
+
             num_to_use = int(len(hr_images) * sample_ratio)
-            
+
             self.datasets.append({
                 'name': cfg.get('name', hr_dir.name),
                 'hr_dir': hr_dir,
@@ -77,45 +77,45 @@ class DatasetSampler:
                 'weight': cfg.get('weight', 1.0),
                 'is_validation': cfg.get('is_validation', False)
             })
-        
+
         # Calculate total
         self.total_images = sum(ds['num_to_use'] for ds in self.datasets)
-        
+
         # Apply max_images_total cap if specified
         if max_images_total is not None:
             self._apply_global_cap(max_images_total)
-    
+
     def _apply_global_cap(self, max_total: int):
         """Apply hard cap on total images across all datasets."""
         if self.total_images <= max_total:
             return
-        
+
         # Proportional scaling to respect weights
         total_weight = sum(ds['weight'] for ds in self.datasets)
-        
+
         for ds in self.datasets:
             proportion = ds['weight'] / total_weight
             ds['num_to_use'] = max(1, int(max_total * proportion))
-        
+
         # Recalculate total
         self.total_images = sum(ds['num_to_use'] for ds in self.datasets)
-    
+
     def get_sampled_indices(self, dataset_idx: int) -> List[int]:
         """Get sampled indices for a specific dataset."""
         if dataset_idx >= len(self.datasets):
             return []
-        
+
         ds = self.datasets[dataset_idx]
         indices = list(range(ds['total_images']))
         self.rng.shuffle(indices)
         return indices[:ds['num_to_use']]
-    
+
     def get_image_paths(self, dataset_idx: int) -> List[Path]:
         """Get sampled image paths for a specific dataset."""
         ds = self.datasets[dataset_idx]
         sampled_indices = self.get_sampled_indices(dataset_idx)
         return [ds['images'][i] for i in sampled_indices]
-    
+
     def get_all_image_paths(self) -> List[Tuple[str, Path]]:
         """Get all sampled image paths with dataset name."""
         result = []
@@ -123,7 +123,7 @@ class DatasetSampler:
             for img_path in self.get_image_paths(self.datasets.index(ds)):
                 result.append((ds['name'], img_path))
         return result
-    
+
     def get_dataset_info(self) -> List[Dict]:
         """Get info about all datasets after sampling."""
         return [
@@ -137,10 +137,10 @@ class DatasetSampler:
             }
             for ds in self.datasets
         ]
-    
+
     def __len__(self) -> int:
         return self.total_images
-    
+
     def __repr__(self) -> str:
         lines = [f"DatasetSampler(total_images={self.total_images})"]
         for ds in self.datasets:
@@ -154,7 +154,7 @@ class DatasetSampler:
 def create_sampler_from_config(config: Dict) -> Optional[DatasetSampler]:
     """
     Create a DatasetSampler from configuration dict.
-    
+
     Expected config structure:
     {
         'data': {
@@ -166,13 +166,13 @@ def create_sampler_from_config(config: Dict) -> Optional[DatasetSampler]:
     """
     data_cfg = config.get('data', {})
     dataset_configs = data_cfg.get('datasets', [])
-    
+
     if not dataset_configs:
         return None
-    
+
     global_sample_ratio = data_cfg.get('sample_ratio')
     max_images_total = data_cfg.get('max_images_total')
-    
+
     return DatasetSampler(
         dataset_configs=dataset_configs,
         global_sample_ratio=global_sample_ratio,
@@ -201,7 +201,7 @@ if __name__ == "__main__":
             'enabled': True
         }
     ]
-    
+
     sampler = DatasetSampler(configs, max_images_total=3000)
     print(sampler)
     print(f"\nTotal sampled: {len(sampler)}")
