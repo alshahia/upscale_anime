@@ -41,3 +41,11 @@ class _OutputPanel(ttk.LabelFrame):
         ttk.Label(r2, text="Batch folder name:").pack(side="left", padx=(PAD_X * 2, 0))
         self.batch_folder_var = tk.StringVar(value=s.batch_folder_name)
         ttk.Entry(r2, textvariable=self.batch_folder_var, width=20).pack(side="left", padx=(PAD_X, 0))
+
+        # Task 10: live output settings. These widgets had no trace, so the rest
+        # of the app (and a rebuild from settings.data on theme change) only saw
+        # an edit after Save -- an unsaved choice was silently reverted by the
+        # rebuilt panel. Persist each edit immediately.
+        for var in (self.output_mode_var, self.suffix_var,
+                    self.batch_folder_var, self.output_dir_var):
+            var.trace_add("write", lambda *_: app._on_output_setting_changed())

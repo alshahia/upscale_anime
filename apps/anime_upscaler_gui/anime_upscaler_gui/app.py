@@ -122,6 +122,9 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                                        ctl_queue=self._ctl_queue)
         self._worker.start()
         self._running = False
+        # Task 10: True while the panel tree is (re)built from settings.data;
+        # the output-widget traces skip persistence then.
+        self._restoring_settings = False
         # Side-channel used by _wait_resume_action (worker thread -> GUI modal).
         # Keyed by job_id so concurrent frame errors don't trample each other.
         # Guarded by a lock: the worker thread pops boxes while the GUI thread
@@ -425,6 +428,22 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
             custom_output_dir=self.output_panel.output_dir_var.get(),
         )
 
+    def _on_output_setting_changed(self):
+        """Persist output widgets immediately so Start never uses stale state.
+
+        Called by every output-widget trace (Task 10). Without it, an edit only
+        reached settings.data on Save / start; a rebuild from settings.data
+        (theme change, locale switch) reverted the unsaved choice, and anything
+        reading settings.data saw stale output settings.
+        """
+        if getattr(self, "_restoring_settings", False):
+            return
+        data = self.settings.data
+        data.output_mode = self.output_panel.output_mode_var.get()
+        data.single_file_suffix = self.output_panel.suffix_var.get()
+        data.batch_folder_name = self.output_panel.batch_folder_var.get()
+        data.output_dir = self.output_panel.output_dir_var.get()
+
     def _compute_output_path_or_none(self, input_path: Path):
         """Build + validate the destination; None (with a dialog) on refusal.
 
@@ -643,7 +662,11 @@ class UpscaleGUI(SettingsIOMixin, WindowChromeMixin, _TK_BASE):
                 live_filter = self.input_panel.filter_var.get()
             except Exception:
                 pass
-        self._build_ui()
+        self._restoring_settings = True
+        try:
+            self._build_ui()
+        finally:
+            self._restoring_settings = False
         if live_mode is not None:
             self.input_panel.queue_mode_var.set(live_mode)
         if live_filter is not None:

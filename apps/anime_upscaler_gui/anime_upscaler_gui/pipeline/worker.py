@@ -332,8 +332,12 @@ class PipelineWorker(threading.Thread):
                 cancel = True
                 continue
             if evt.kind == "pause":
-                # Make sure a paused event exists for this job.
-                self._pause_events.setdefault(job_id, threading.Event())
+                # Make sure a paused event exists for this job AND clear it:
+                # setdefault() alone kept the event set by the last resume, so
+                # pause -> resume -> pause was a no-op (Task 10). A pause must
+                # block every time.
+                ev = self._pause_events.setdefault(job_id, threading.Event())
+                ev.clear()
                 self.emit(JobEvent(kind="log", job_id=job_id,
                                     message="paused by user"))
             elif evt.kind == "resume":
