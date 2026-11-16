@@ -37,7 +37,7 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install in editable mode
-pip install -e .
+pip install -e ".[dev]"
 
 # Install with optional dependencies
 pip install -e ".[dev]"      # Development tools
@@ -51,10 +51,10 @@ pip install -e ".[mamba]"    # Mamba model support
 
 ```bash
 # Train a model
-anime-sr train --config configs/train_config.yaml
+anime-sr train --config configs/base.yaml
 
 # Run inference
-anime-sr infer --checkpoint ./checkpoints/model_best.pt --input ./input_images --output ./output --scale 4
+anime-sr infer --checkpoint checkpoints/finetune_best.pth --input ./input_images --output ./output --scale 4
 
 # Export to ONNX
 anime-sr export --checkpoint ./checkpoints/model_best.pt --output ./exported/model.onnx --format onnx
@@ -71,6 +71,8 @@ anime-sr validate --checkpoint ./checkpoints/model_best.pt
 # Benchmark performance
 anime-sr benchmark --checkpoint ./checkpoints/model_best.pt --input ./input_images/sample.png --iterations 10
 ```
+
+Demonstration checkpoint, not a released model; see docs/status/MEASURED_STATUS_2026-11-16.md.
 
 ### Python API
 

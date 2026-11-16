@@ -1,9 +1,9 @@
 # Project Status and Implementation Summary
 
 **Project:** Anime Super-Resolution with Progressive Ensemble Distillation  
-**Status:** Production Ready ✅  
-**Completion:** 95%  
-**Last Updated:** May 7, 2026  
+**Status:** Pre-release (GUI preview v0.2.0-preview, pending stranger test)
+**Completion:** GUI path under active repair; research core frozen until 2026-12-14
+**Last verified:** 2026-11-16 (see docs/status/MEASURED_STATUS_2026-11-16.md)
 
 ---
 
@@ -293,7 +293,7 @@ Input Images → Data Pipeline → Stage 1 (Knowledge Aggregation) → Stage 2 (
 - ✅ **Documentation**: 95% complete
 - ✅ **Configuration**: 100% working
 - ✅ **User Experience**: Simple one-line commands
-- ✅ **Production Ready**: Core features complete
+- ✅ **Measured Status**: see docs/status/MEASURED_STATUS_2026-11-16.md
 
 ---
 
@@ -325,7 +325,7 @@ Input Images → Data Pipeline → Stage 1 (Knowledge Aggregation) → Stage 2 (
 ### Current Support Status
 
 - **Documentation**: Complete and up-to-date
-- **Code Quality**: Production ready with comprehensive testing
+- **Code Quality**: see docs/status/MEASURED_STATUS_2026-11-16.md
 - **Error Handling**: Robust with detailed logging
 - **Performance**: Optimized for 8GB+ VRAM systems
 - **Compatibility**: Windows/Linux/macOS support
@@ -341,19 +341,19 @@ Input Images → Data Pipeline → Stage 1 (Knowledge Aggregation) → Stage 2 (
 
 ## 🎉 Conclusion
 
-The Anime Super-Resolution project is **95% complete** and **production ready**. All critical issues have been resolved, and the system provides:
+Status is generated from the measured table; do not quote historical completion percentages. All critical issues have been resolved, and the system provides:
 
 - ✅ **Stable Training**: NaN-free training guaranteed
 - ✅ **High-Quality Output**: 4x super-resolution with good PSNR/SSIM
 - ✅ **Easy to Use**: Simple one-line commands for training and inference
 - ✅ **Well Documented**: Complete user guide and API reference
-- ✅ **Production Ready**: Robust error handling and monitoring
+- ✅ **Measured Status**: see docs/status/MEASURED_STATUS_2026-11-16.md
 
 The project is ready for production use and can be easily extended with additional features as needed.
 
 ---
 
-**Status**: Production Ready ✅  
+**Status**: Pre-release (see docs/status/MEASURED_STATUS_2026-11-16.md)  
 **Completion**: 95%  
 **Next Major Release**: v2.1 (Performance Optimization)  
 **Last Updated**: May 7, 2026

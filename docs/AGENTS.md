@@ -36,7 +36,7 @@ uv pip install -r requirements.txt
 ```
 # alwayes serach for local venv ( if exists) use it for all commands ( if not exist use the global python)
 
-No `pyproject.toml`, `setup.py`, or lockfile. Dependencies managed via `requirements.txt` only.
+Packaging: root `pyproject.toml` (anime-sr 0.1.0) and `apps/anime_upscaler_gui/pyproject.toml` (anime-upscaler-gui 0.2.0).
 
 ## Pretrained Checkpoints
 
@@ -115,10 +115,10 @@ src/                  # All library code (bare imports: from models..., from tra
   utils/              # config, metrics, pretrained_models, nan_handler
 scripts/              # All entry points (CLI scripts)
 configs/              # YAML configs; base.yaml is the root
-tests/                # pytest tests (no conftest.py, no pytest.ini)
+tests/                # pytest tests (root tests/ and apps/anime_upscaler_gui/tests/; conftest.py exists in both trees)
 ```
 
-**Import convention**: scripts add `src` to `sys.path` then use bare imports (`from models.span...`). Never use `src.` prefix. Match existing files.
+**Import convention**: Imports are package-qualified (`anime_sr.*`, `anime_upscaler_gui.*`).
 
 **Test coverage**: ~25-30% of `src/` modules have tests. No `conftest.py`, no `pytest.ini`. Many modules (orchestrator, ensemble_trainer, losses, utils) are untested. Don't assume test coverage is comprehensive.
 - **Trainer test stub pattern**: For tests of `NeosrSPANFinetuner` that don't need the full `__init__` (which loads data, builds discriminator, etc.), bypass `__init__` with `NeosrSPANFinetuner.__new__(cls)` and inject only the attributes the test needs. Canonical example: `tests/test_grad_scaler.py::TestGradScalerInitialization`. Reuse this pattern; do NOT call full `__init__` in unit tests.

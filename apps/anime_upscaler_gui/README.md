@@ -142,13 +142,12 @@ The AnimeSR recurrent model does not support spatial tiling and falls back to wh
 
 ## Standalone deployment
 
-```bash
-cp -r apps/anime_upscaler_gui ~/projects/anime-upscaler
-cp -r pretrained ~/projects/anime-upscaler/pretrained
-cd ~/projects/anime-upscaler
-python -m venv .venv
-.venv/bin/pip install -r requirements.txt
-./LAUNCHER.sh
+The GUI ships as a wheel attached to the GitHub pre-release. `--self-check` is added in Task 17.
+
+```powershell
+python -m venv .venv-anime-gui
+.venv-anime-gui/Scripts/python.exe -m pip install anime_upscaler_gui-0.2.0-py3-none-any.whl
+.venv-anime-gui/Scripts/anime-upscaler-gui.exe --self-check
 ```
 
 The app data folder is independent of the copied source, so settings survive moves and upgrades.
@@ -168,7 +167,7 @@ The test suite covers state validation, settings and queue persistence, model re
 - Drag-and-drop needs the `tkinterdnd2` dependency (declared in requirements.txt); without it the input panel falls back to the file picker.
 - ONNX is wired in the backend but is not exposed by the GUI.
 - Live video scrubbing re-decodes frames; the thumbnail strip is faster for long videos.
-- APISR, RRDB, and MambaIRv2 architecture classes are not included in this standalone GUI.
+- APISR, RRDB, and MambaIRv2 architecture classes are bundled inside the wheel under `anime_upscaler_gui/_models/`; see `scripts/sync_vendored_models.py`.
 - The Arabic catalog has 35 hand-translated strings; native-speaker review is pending before shipping to Arabic users.
 
 See the [UI/UX overhaul plan](docs/plans/ui_ux_overhaul.md) and [resume point](docs/RESUME.md) for the implementation roadmap.

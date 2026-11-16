@@ -43,7 +43,7 @@ Anime super-resolution project. Two production paths:
 Goal: train a student that beats v1 and approaches animevideov3 quality. Phase 3 attempts (adversarial v3 RFDN) failed D.2 quality gate (lap_var 22.3 vs threshold 35). Phase 4.I1 (nearest-residual RFDN) executed 2026-09-03 — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.97 dB). Phase 4.I2 (isolated adversarial) executed same day — both sub-runs D.2 FAIL (I2a 20.8, I2b 24.2). Phase 4.I3 (SRVGG-body student) executed same day — D.2 PASS but D.1 PSNR FAIL (oversharpened, 27.91 dB, student < bicubic = H6 halt). All three NOT PROMOTED. Per plan §5 "FAIL FAIL FAIL → ship animevideov3 baseline only". **Phase 4 closed.** Phase 5 (research landscape survey) completed 2026-09-03; see docs/research/anime_sr_2026/. Phase 5#1 (warm-start v1 -> SRVGG LPIPS), 5#2 (APISR balanced twin perceptual), and 5#2b (asymmetric twin 1.0/0.25) all executed same week — none break the SRVGG-body ceiling (27.87-27.98 dB, range 0.11 dB, loss-agnostic). **Phase 5#6 (pure-PyTorch MambaIRv2 113K params) executed 2026-09-06 — D.1 FAIL (26.17 dB), D.2 PASS-trivial (lap_var 6625 hallucinated HF), H6 triggered, D.3 FAIL (32 sec/frame). NOT PROMOTED.** Architectural hypothesis (state-space breaks SRVGG-body ceiling) DISCONFIRMED at 113K capacity. Awaiting user direction on next pivot (likely 5#3 FRAMER per §6 fallback chain).
 
 Working directory: `E:\python projects\upscale_anime`
-Branch: `feature/phase-1-realtime-4k`
+Branch: `release/gui-preview`
 HEAD: see §2 below.
 
 ---
@@ -65,7 +65,7 @@ HEAD: see §2 below.
 | `26ac928` | Phase 4 plan: I1 nearest-residual + I2 isolated adv + I3 SRVGG body |
 | `ad14781` | Phase 3.F: AGENTS.md lessons learned + v3 result doc |
 
-Last updated: 2026-09-03 (after Phase 4.I3 execution; **Phase 4 closed**).
+Updated: 2026-11-16.
 
 ---
 
