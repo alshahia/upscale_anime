@@ -665,6 +665,10 @@ class PipelineWorker(threading.Thread):
         skip_remaining = False
         proc = 0
         encode_rc = 0
+        # Task 9 follow-up: track a caught-stage failure so the finally can
+        # discard the truncated output even when the encoder dies mid-stream.
+        failed = False
+        stage = "decode"
         t_wall = time.perf_counter()
         last_emit = t_wall
         # Batched path is incompatible with TTA (8 augmentations x N would
@@ -689,6 +693,7 @@ class PipelineWorker(threading.Thread):
                 # flushed to the pipe).
                 self._drain_ctl_for_job(job.job_id)
                 self._check_pause(job.job_id)
+                stage = "decode"
                 # Normalize payload: single frame (np.ndarray H,W,3) for
                 # batch_size=1; list of N frames for batch_size>1.
                 if use_batch and isinstance(payload, list):
@@ -698,6 +703,7 @@ class PipelineWorker(threading.Thread):
                     last_emit_ref = [t_wall]
                     proc_ref = [proc]
                     skip_remaining_ref = [skip_remaining]
+                    stage = "encode"
                     self._process_video_batch(
                         job, backend, device, payload,
                         start_frame + frame_idx_global, limit,
@@ -758,12 +764,12 @@ class PipelineWorker(threading.Thread):
                         skip_remaining = True
                         continue
                     if action == ABORT_JOB:
-                        # A user cancel that arrived while the frame-error
-                        # modal was up is re-queued by the GUI's wait loop;
-                        # drain here so the job unwinds as a clean cancel
-                        # instead of a worker crash.
+                        # "Abort job" is a user cancel. Drain queued controls
+                        # first (the GUI may re-queue a cancel behind the
+                        # modal), then raise the cancellation type so _run_one
+                        # emits a clean cancelled and unlinks the partial.
                         self._drain_ctl_for_job(job.job_id)
-                        raise e
+                        raise _JobCancelled()
                     if action == RETRY_FRAME:
                         continue
                     continue
@@ -775,10 +781,12 @@ class PipelineWorker(threading.Thread):
                 pinned_out = _pinned.get_output(out_h_y, out_w_y, n=1) if device.type == "cuda" else None
                 sr_bgr = _tensor_to_bgr(y, pinned_out=pinned_out)
                 sr_bgr = _resize_keep_ar(sr_bgr, target_h, target_w)
+                stage = "encode"
                 if use_pipe:
                     _encode_write(pipe, sr_bgr)
                 else:
                     writer.write(sr_bgr)
+                stage = "decode"
                 proc += 1
                 now = time.perf_counter()
                 if now - last_emit > 0.5:
@@ -794,27 +802,59 @@ class PipelineWorker(threading.Thread):
                     # rate-limits itself to 1 Hz internally.
                     _maybe_emit_gpu_util(self.emit, job.job_id, [last_emit])
                     last_emit = now
+        except _JobCancelled:
+            # Cancel is owned by _run_one: it emits the terminal "cancelled"
+            # and unlinks the partial output. Just release the encoder and
+            # reader handles on the way out (the finally below does that).
+            raise
+        except Exception as e:
+            # Task 9 follow-up (Task 7 review): _encode_write raises when the
+            # encoder process dies mid-stream. Catch it here so the error is
+            # terminal (no "finished" can follow) and the truncated output is
+            # removed instead of escaping _run_one as a "worker crashed".
+            self.emit(JobEvent(kind="error", job_id=job.job_id,
+                                message=f"{stage} failed: {e}", exc=e))
+            failed = True
         finally:
             # Task 7: capture the encoder exit code. A non-zero rc must become
             # an "error" event with no "finished" and the output discarded --
             # it used to be ignored and the job was reported DONE.
-            if use_pipe:
-                pipe.stdin.close()
+            try:
+                if use_pipe:
+                    try:
+                        pipe.stdin.close()
+                    except OSError:
+                        pass
+                    try:
+                        encode_rc = pipe.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        # Encoder wedged (e.g. NVENC session hang): kill it so
+                        # the worker thread doesn't block forever.
+                        pipe.kill()
+                        encode_rc = pipe.wait()
+                else:
+                    writer.release()
+            finally:
+                # Task 9 follow-up: always release the reader and drop a
+                # truncated output, even when the pipe teardown raises. The
+                # old finally skipped the reader release when close() failed.
                 try:
-                    encode_rc = pipe.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    # Encoder wedged (e.g. NVENC session hang): kill it so
-                    # the worker thread doesn't block forever.
-                    pipe.kill()
-                    encode_rc = pipe.wait()
-            else:
-                writer.release()
-            sync_reader.release()
+                    sync_reader.release()
+                finally:
+                    if failed:
+                        _unlink_partial_output(out_path)
+
+        if failed:
+            return
 
         # Task 7: a non-zero encoder exit (or an empty/unusable output) is a
         # failure, not a finished job -- check before remuxing or reporting.
         if not _handle_encode_result(self, job, out_path, encode_rc, proc):
             return
+
+        # Task 9: a cancel that arrived while the encoder was winding down
+        # must not be reported as a finished job -- honour it before the mux.
+        self._drain_ctl_for_job(job.job_id)
 
         wall = time.perf_counter() - t_wall
         avg_fps = proc / max(wall, 1e-6)
@@ -832,6 +872,9 @@ class PipelineWorker(threading.Thread):
                                       duration_seconds=mux_duration)
         else:
             audio_ok = False  # cv2 fallback cannot mux audio
+
+        # Task 9: likewise a cancel that arrived during the audio remux.
+        self._drain_ctl_for_job(job.job_id)
 
         message = f"-> {out_path.name} ({proc} frames, {avg_fps:.2f} fps)"
         if not audio_ok and has_audio_stream(job.input_path):
@@ -1074,6 +1117,8 @@ class PipelineWorker(threading.Thread):
             # reporting; the output file is discarded by the helper.
             if not _handle_encode_result(self, job, out_path, encode_rc, n_frames):
                 return
+            # Task 9: do not report finished when a cancel is already pending.
+            self._drain_ctl_for_job(job.job_id)
             audio_ok = True
             if use_pipe:
                 mux_start, mux_duration = _audio_mux_window(
@@ -1083,6 +1128,9 @@ class PipelineWorker(threading.Thread):
                                           duration_seconds=mux_duration)
             else:
                 audio_ok = False  # cv2 fallback cannot mux audio
+
+            # Task 9: likewise a cancel that arrived during the remux.
+            self._drain_ctl_for_job(job.job_id)
 
             message = f"-> {out_path.name} ({n_frames} frames, {avg_fps:.2f} fps)"
             if not audio_ok and has_audio_stream(job.input_path):

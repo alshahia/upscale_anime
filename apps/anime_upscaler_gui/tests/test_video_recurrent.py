@@ -636,3 +636,40 @@ def test_recurrent_failed_encode_is_error_not_finished(monkeypatch, tmp_path):
     err = [e for e in evts if e.kind == "error"][-1]
     assert "encoder failed (exit 1)" in err.message, err.message
     assert not out_path.exists(), "the failed encode output must be discarded"
+
+
+# ---- Task 9: a cancel during the remux must beat "finished" ----
+def test_recurrent_cancel_during_audio_mux_is_not_reported_as_finished(
+        monkeypatch, tmp_path):
+    """A cancel that lands while the audio remux runs must not be lost.
+
+    Task 9 extended the recurrent path's control drain to after the remux (the
+    per-frame path got the same check): before that the job reported
+    "finished" even though a cancel was already pending.
+    """
+    _force_cpu(monkeypatch)
+    out_path = Path(str(tmp_path)) / "out.mp4"
+    pipe = _FakePipe(out_path)
+    job = _job(tmp_path, job_id=21)
+    _install(monkeypatch, _FakeRecurrentModel(), pipe, _frames(20))
+    w = _worker()
+    mux_calls = []
+
+    def fake_mux(out_path, input_path, **kw):
+        mux_calls.append(kw)
+        w.send_control(JobControlEvent(kind="cancel", job_id=21))
+        return True
+
+    monkeypatch.setattr(worker_mod, "_mux_job_audio", fake_mux)
+    w._run_one(job)
+
+    evts = _drain(w.out_queue)
+    kinds = _kinds(evts)
+    terminals = [e for e in evts
+                 if e.kind in ("finished", "error", "cancelled", "fatal_error")]
+    assert mux_calls, "the audio remux never ran; harness is wrong"
+    assert [t.kind for t in terminals] == ["cancelled"], (
+        "terminal trace: %s" % [t.kind for t in terminals])
+    assert "finished" not in kinds
+    assert not out_path.exists(), "cancelled job must unlink the partial output"
+
